@@ -1,0 +1,604 @@
+﻿
+===== 407 : async function getCurrentTermEndDate(): Promise<Timestamp> { =====
+
+function assertSubjectAccess(subscription: DocumentData | undefined) {
+  if (!subscription) throw new HttpsError("permission-denied", "Subject subscription is required.");
+  if (subscription.is_deleted === true) throw new HttpsError("permission-denied", "Subscription is deleted.");
+  if (subscription.status !== "active" && subscription.status !== "trial") {
+    throw new HttpsError("permission-denied", "Subscription is not active.");
+  }
+  if (subscription.is_frozen === true) throw new HttpsError("permission-denied", "Subscription is frozen.");
+  const endDate = subscription.end_date;
+  if (endDate?.toMillis && endDate.toMillis() <= Date.now()) {
+    throw new HttpsError("permission-denied", "Subscription has expired.");
+  }
+}
+
+async function getCurrentTermEndDate(): Promise<Timestamp> {
+  const settingsSnap = await db.collection("system_settings").limit(1).get();
+  if (settingsSnap.empty) {
+    throw new HttpsError("failed-precondition", "System settings configuration was not found.");
+  }
+
+  const termEndDate = dataOf(settingsSnap.docs[0].data()).current_term_end_date;
+  if (!(termEndDate instanceof Timestamp)) {
+    throw new HttpsError("failed-precondition", "Current term end date is not configured.");
+  }
+  if (termEndDate.toMillis() <= Date.now()) {
+    throw new HttpsError("failed-precondition", "Current term end date must be in the future.");
+  }
+
+  return termEndDate;
+}
+
+export const verifyPhonePassword = onCall(async (request) => {
+  const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
+  const password = getString(request.data?.password);
+
+  if (!phone || !password) {
+    throw new HttpsError("invalid-argument", "Valid Egyptian phone number and password are required.");
+  }
+
+  const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
+  if (userSnap.empty) {
+    await db.collection("auth_security_events").add({
+      event_type: "failed_login",
+      phone_number: phone,
+      created_at: FieldValue.serverTimestamp(),
+      created_by: "system",
+    });
+    throw new HttpsError("unauthenticated", "Invalid phone number or password.");
+  }
+
+  const userDoc = userSnap.docs[0];
+
+===== 413 : const termEndDate = dataOf(settingsSnap.docs[0].data()).current_term_end_date; =====
+  }
+  if (subscription.is_frozen === true) throw new HttpsError("permission-denied", "Subscription is frozen.");
+  const endDate = subscription.end_date;
+  if (endDate?.toMillis && endDate.toMillis() <= Date.now()) {
+    throw new HttpsError("permission-denied", "Subscription has expired.");
+  }
+}
+
+async function getCurrentTermEndDate(): Promise<Timestamp> {
+  const settingsSnap = await db.collection("system_settings").limit(1).get();
+  if (settingsSnap.empty) {
+    throw new HttpsError("failed-precondition", "System settings configuration was not found.");
+  }
+
+  const termEndDate = dataOf(settingsSnap.docs[0].data()).current_term_end_date;
+  if (!(termEndDate instanceof Timestamp)) {
+    throw new HttpsError("failed-precondition", "Current term end date is not configured.");
+  }
+  if (termEndDate.toMillis() <= Date.now()) {
+    throw new HttpsError("failed-precondition", "Current term end date must be in the future.");
+  }
+
+  return termEndDate;
+}
+
+export const verifyPhonePassword = onCall(async (request) => {
+  const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
+  const password = getString(request.data?.password);
+
+  if (!phone || !password) {
+    throw new HttpsError("invalid-argument", "Valid Egyptian phone number and password are required.");
+  }
+
+  const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
+  if (userSnap.empty) {
+    await db.collection("auth_security_events").add({
+      event_type: "failed_login",
+      phone_number: phone,
+      created_at: FieldValue.serverTimestamp(),
+      created_by: "system",
+    });
+    throw new HttpsError("unauthenticated", "Invalid phone number or password.");
+  }
+
+  const userDoc = userSnap.docs[0];
+  const user = dataOf(userDoc.data());
+
+  if (user.account_status && user.account_status !== "active") {
+    throw new HttpsError("permission-denied", "Account is not active.");
+  }
+
+
+===== 779 : await event.data!.ref.update({end_date: await getCurrentTermEndDate()}); =====
+
+export const enforceOneSubscriptionPerSubject = onDocumentCreated("subscriptions/{subscriptionId}", async (event) => {
+  const subscription = event.data?.data();
+  if (!subscription) return;
+  const subscriptionId = event.params.subscriptionId;
+  const studentId = getString(subscription.student_id);
+  const subjectId = getString(subscription.subject_id);
+  if (!studentId || !subjectId) throw new Error(`Invalid subscription data: ${subscriptionId}`);
+
+  if (
+    subscription.duration_type === "semester" &&
+    !(subscription.end_date instanceof Timestamp) &&
+    (subscription.status === "active" || subscription.status === "trial")
+  ) {
+    await event.data!.ref.update({end_date: await getCurrentTermEndDate()});
+  }
+
+  if (subscription.is_deleted === true || subscription.status !== "active") return;
+
+  const subscriptionsSnap = await db.collection("subscriptions")
+    .where("student_id", "==", studentId)
+    .where("subject_id", "==", subjectId)
+    .where("status", "==", "active")
+    .get();
+
+  const activeOthers = subscriptionsSnap.docs.filter(
+    (doc) => doc.id !== subscriptionId && doc.data().is_deleted !== true,
+  );
+  if (activeOthers.length === 0) return;
+
+  const currentSubscription = event.data;
+  if (!currentSubscription) return;
+
+  await currentSubscription.ref.update({
+    is_deleted: true,
+    deleted_at: FieldValue.serverTimestamp(),
+    deleted_by: "system",
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: "system",
+  });
+
+  await writeAnalyticsEvent(studentId, "Duplicate Subscription Rejected", subscriptionId, {
+    subject_id: subjectId,
+    rejected_subscription_id: subscriptionId,
+    existing_subscription_id: activeOthers[0].id,
+  });
+});
+
+async function sendNotificationNow(
+  notificationId: string,
+  notificationData: DocumentData,
+
+===== 1406 : export const activateFreePlan = onCall(async (request) => { =====
+    action_taken: getString(request.data?.actionTaken) ?? "notify_admin",
+    created_at: FieldValue.serverTimestamp(),
+  });
+
+  await writeAnalyticsEvent(userId, "Security Event", securityRef.id, {event_type: eventType, severity, context});
+
+  if (["high", "critical"].includes(severity)) {
+    await notifyUsersByRole("teacher", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
+    await notifyUsersByRole("admin", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
+  }
+
+  return {logged: true, securityEventId: securityRef.id};
+});
+
+export const activateFreePlan = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const requestedStudentType = getString(request.data?.studentType);
+  if (!studentId || !subjectId || !requestedStudentType) {
+    throw new HttpsError("invalid-argument", "studentId, subjectId and studentType are required.");
+  }
+
+  const studentSnap = await db.collection("users").doc(studentId).get();
+  if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const student = dataOf(studentSnap.data());
+  if (student.student_type !== requestedStudentType) {
+    throw new HttpsError("failed-precondition", "Student type does not match the student record.");
+  }
+
+  const subjectSnap = await db.collection("subjects").doc(subjectId).get();
+  if (!subjectSnap.exists || subjectSnap.data()?.is_deleted === true) {
+    throw new HttpsError("not-found", "Subject not found.");
+  }
+
+  const settingsSnap = await db.collection("system_settings").limit(1).get();
+  if (settingsSnap.empty) throw new HttpsError("failed-precondition", "System settings configuration was not found.");
+  const settings = dataOf(settingsSnap.docs[0].data());
+  if (settings.free_plan_enabled !== true) {
+    throw new HttpsError("failed-precondition", "Free Plan is disabled in system settings.");
+  }
+  const planKey = getString(settings.default_plan);
+  if (!planKey) throw new HttpsError("failed-precondition", "Default plan is not configured.");
+
+  const planSnap = await db.collection("plans")
+    .where("plan_key", "==", planKey)
+    .where("student_type", "==", requestedStudentType)
+    .where("is_active", "==", true)
+    .limit(1)
+    .get();
+  if (planSnap.empty) throw new HttpsError("failed-precondition", "Active default plan was not found.");
+
+===== 1452 : const endDate = await getCurrentTermEndDate(); =====
+    .where("student_type", "==", requestedStudentType)
+    .where("is_active", "==", true)
+    .limit(1)
+    .get();
+  if (planSnap.empty) throw new HttpsError("failed-precondition", "Active default plan was not found.");
+
+  const existingSnap = await db.collection("subscriptions")
+    .where("student_id", "==", studentId)
+    .where("subject_id", "==", subjectId)
+    .where("status", "==", "active")
+    .limit(1)
+    .get();
+  if (!existingSnap.empty) return {subscriptionId: existingSnap.docs[0].id, alreadyActive: true};
+
+  const endDate = await getCurrentTermEndDate();
+  const subscriptionRef = db.collection("subscriptions").doc();
+  await subscriptionRef.set({
+    student_id: studentId,
+    subject_id: subjectId,
+    plan_id: planSnap.docs[0].id,
+    duration_type: "semester",
+    start_date: FieldValue.serverTimestamp(),
+    end_date: endDate,
+    status: "active",
+    is_frozen: false,
+    frozen_at: null,
+    resumed_at: null,
+    is_gifted: false,
+    gifted_by: null,
+    renewal_count: 0,
+    previous_plan_id: null,
+    is_deleted: false,
+    created_at: FieldValue.serverTimestamp(),
+    updated_at: FieldValue.serverTimestamp(),
+    created_by: actorId,
+    updated_by: actorId,
+  });
+
+  await writeAnalyticsEvent(studentId, "Free Plan Activated", subscriptionRef.id, {subject_id: subjectId, plan_id: planSnap.docs[0].id, activated_by: actorId});
+  return {subscriptionId: subscriptionRef.id, alreadyActive: false};
+});
+
+export const onPaymentLogged = onCall(async (request) => {
+  const teacherId = requireTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const amount = getNumber(request.data?.amount);
+  const receiptNumber = getString(request.data?.receiptNumber);
+  const notes = getString(request.data?.notes);
+
+  if (!studentId || !subjectId || amount === null || amount < 0 || !receiptNumber) {
+
+===== 1548 : async function validateMembershipPlan(studentId: string, planId: string) { =====
+  }
+});
+
+async function getMembershipForMutation(studentId: string, subjectId: string) {
+  const snap = await db.collection("subscriptions")
+    .where("student_id", "==", studentId)
+    .where("subject_id", "==", subjectId)
+    .where("status", "==", "active")
+    .limit(1)
+    .get();
+  if (snap.empty) throw new HttpsError("not-found", "Active subscription was not found.");
+  return {ref: snap.docs[0].ref, data: dataOf(snap.docs[0].data())};
+}
+
+async function validateMembershipPlan(studentId: string, planId: string) {
+  const studentSnap = await db.collection("users").doc(studentId).get();
+  if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const studentType = getString(studentSnap.data()?.student_type);
+  if (!studentType) throw new HttpsError("failed-precondition", "Student type is not configured.");
+  const planSnap = await db.collection("plans").doc(planId).get();
+  if (!planSnap.exists) throw new HttpsError("not-found", "Membership plan was not found.");
+  const plan = dataOf(planSnap.data());
+  if (plan.is_active !== true || plan.student_type !== studentType) {
+    throw new HttpsError("failed-precondition", "Membership plan is not valid for this student.");
+  }
+}
+
+async function changeMembershipPlan(request: any, eventType: string) {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const newPlanId = getString(request.data?.newPlanId);
+  if (!studentId || !subjectId || !newPlanId) {
+    throw new HttpsError("invalid-argument", "studentId, subjectId and newPlanId are required.");
+  }
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, newPlanId);
+  await membership.ref.update({
+    previous_plan_id: getString(membership.data.plan_id),
+    plan_id: newPlanId,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+
+===== 1561 : async function changeMembershipPlan(request: any, eventType: string) { =====
+
+async function validateMembershipPlan(studentId: string, planId: string) {
+  const studentSnap = await db.collection("users").doc(studentId).get();
+  if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const studentType = getString(studentSnap.data()?.student_type);
+  if (!studentType) throw new HttpsError("failed-precondition", "Student type is not configured.");
+  const planSnap = await db.collection("plans").doc(planId).get();
+  if (!planSnap.exists) throw new HttpsError("not-found", "Membership plan was not found.");
+  const plan = dataOf(planSnap.data());
+  if (plan.is_active !== true || plan.student_type !== studentType) {
+    throw new HttpsError("failed-precondition", "Membership plan is not valid for this student.");
+  }
+}
+
+async function changeMembershipPlan(request: any, eventType: string) {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const newPlanId = getString(request.data?.newPlanId);
+  if (!studentId || !subjectId || !newPlanId) {
+    throw new HttpsError("invalid-argument", "studentId, subjectId and newPlanId are required.");
+  }
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, newPlanId);
+  await membership.ref.update({
+    previous_plan_id: getString(membership.data.plan_id),
+    plan_id: newPlanId,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({
+    end_date: await getCurrentTermEndDate(),
+    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+
+===== 1570 : await validateMembershipPlan(studentId, newPlanId); =====
+  if (plan.is_active !== true || plan.student_type !== studentType) {
+    throw new HttpsError("failed-precondition", "Membership plan is not valid for this student.");
+  }
+}
+
+async function changeMembershipPlan(request: any, eventType: string) {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const newPlanId = getString(request.data?.newPlanId);
+  if (!studentId || !subjectId || !newPlanId) {
+    throw new HttpsError("invalid-argument", "studentId, subjectId and newPlanId are required.");
+  }
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, newPlanId);
+  await membership.ref.update({
+    previous_plan_id: getString(membership.data.plan_id),
+    plan_id: newPlanId,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({
+    end_date: await getCurrentTermEndDate(),
+    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const freeze = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: true, frozen_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+
+===== 1581 : export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded")); =====
+    throw new HttpsError("invalid-argument", "studentId, subjectId and newPlanId are required.");
+  }
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, newPlanId);
+  await membership.ref.update({
+    previous_plan_id: getString(membership.data.plan_id),
+    plan_id: newPlanId,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({
+    end_date: await getCurrentTermEndDate(),
+    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const freeze = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: true, frozen_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Frozen", membership.ref.id, {subject_id: subjectId, frozen_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const resume = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: false, resumed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+
+===== 1582 : export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded")); =====
+  }
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, newPlanId);
+  await membership.ref.update({
+    previous_plan_id: getString(membership.data.plan_id),
+    plan_id: newPlanId,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({
+    end_date: await getCurrentTermEndDate(),
+    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const freeze = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: true, frozen_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Frozen", membership.ref.id, {subject_id: subjectId, frozen_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const resume = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: false, resumed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Resumed", membership.ref.id, {subject_id: subjectId, resumed_by: actorId});
+
+===== 1591 : end_date: await getCurrentTermEndDate(), =====
+  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+}
+
+export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+
+export const renew = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({
+    end_date: await getCurrentTermEndDate(),
+    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: actorId,
+  });
+  await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const freeze = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: true, frozen_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Frozen", membership.ref.id, {subject_id: subjectId, frozen_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const resume = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: false, resumed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Resumed", membership.ref.id, {subject_id: subjectId, resumed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const gift = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const planId = getString(request.data?.planId);
+  if (!studentId || !subjectId || !planId) throw new HttpsError("invalid-argument", "studentId, subjectId and planId are required.");
+
+===== 1629 : await validateMembershipPlan(studentId, planId); =====
+  if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await membership.ref.update({is_frozen: false, resumed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Resumed", membership.ref.id, {subject_id: subjectId, resumed_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});
+
+export const gift = onCall(async (request) => {
+  const actorId = requireAdminOrTeacher(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const planId = getString(request.data?.planId);
+  if (!studentId || !subjectId || !planId) throw new HttpsError("invalid-argument", "studentId, subjectId and planId are required.");
+  const membership = await getMembershipForMutation(studentId, subjectId);
+  await validateMembershipPlan(studentId, planId);
+  await membership.ref.update({previous_plan_id: getString(membership.data.plan_id), plan_id: planId, is_gifted: true, gifted_by: actorId, updated_at: FieldValue.serverTimestamp(), updated_by: actorId});
+  await writeAnalyticsEvent(studentId, "Membership Gifted", membership.ref.id, {subject_id: subjectId, plan_id: planId, gifted_by: actorId});
+  return {subscriptionId: membership.ref.id};
+});

@@ -1,0 +1,65 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return signedIn() ? request.auth.token.role : null;
+    }
+
+    function isTeacher() {
+      return signedIn() && role() == 'teacher';
+    }
+
+    function isAdmin() {
+      return signedIn() && role() == 'admin';
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isStaff() {
+      return isTeacher() || isAdmin();
+    }
+
+    function validImage() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/.*')
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    function validDocument() {
+      return request.resource != null
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
+    match /profile_photos/{userId}/{fileName} {
+      allow read: if isSelf(userId) || isStaff();
+      allow write: if (isSelf(userId) || isStaff()) && validImage();
+      allow delete: if isSelf(userId) || isStaff();
+    }
+
+    match /subject_thumbnails/{subjectId}/{fileName} {
+      allow read: if signedIn();
+      allow write: if isStaff() && validImage();
+      allow delete: if isStaff();
+    }
+
+    // PDFs and attachments are not public. Access is granted by a short-lived
+    // signed URL from a Cloud Function after membership validation.
+    match /lecture_resources/{lectureId}/{resourceId}/{fileName} {
+      allow read: if false;
+      allow write: if isStaff() && (validDocument() || validImage());
+      allow delete: if isStaff();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

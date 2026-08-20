@@ -1,0 +1,12 @@
+{
+  "name": "dr-tarek-security-tests",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node rules.test.js"
+  },
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "firebase": "^12.1.0"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  // Example (Standard Edition):
+  //
+  // "indexes": [
+  //   {
+  //     "collectionGroup": "widgets",
+  //     "queryScope": "COLLECTION",
+  //     "fields": [
+  //       { "fieldPath": "foo", "arrayConfig": "CONTAINS" },
+  //       { "fieldPath": "bar", "mode": "DESCENDING" }
+  //     ]
+  //   },
+  //
+  //  "fieldOverrides": [
+  //    {
+  //      "collectionGroup": "widgets",
+  //      "fieldPath": "baz",
+  //      "indexes": [
+  //        { "order": "ASCENDING", "queryScope": "COLLECTION" }
+  //      ]
+  //    },
+  //   ]
+  // ]
+  //
+  // Example (Enterprise Edition):
+  //
+  // "indexes": [
+  //   {
+  //     "collectionGroup": "reviews",
+  //     "queryScope": "COLLECTION_GROUP",
+  //     "apiScope": "MONGODB_COMPATIBLE_API",
+  //     "density": "DENSE",
+  //     "multikey": false,
+  //     "fields": [
+  //       { "fieldPath": "baz", "mode": "ASCENDING" }
+  //     ]
+  //   },
+  //   {
+  //     "collectionGroup": "items",
+  //     "queryScope": "COLLECTION_GROUP",
+  //     "apiScope": "MONGODB_COMPATIBLE_API",
+  //     "density": "SPARSE_ANY",
+  //     "multikey": true,
+  //     "fields": [
+  //       { "fieldPath": "baz", "mode": "ASCENDING" }
+  //     ]
+  //   },
+  // ]
+  "indexes": [
+    {
+      "collectionGroup": "lecture_progress",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_id", "mode": "ASCENDING" },
+        { "fieldPath": "updated_at", "mode": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subject_access_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "enabled", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subject_access_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subject_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "enabled", "mode": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

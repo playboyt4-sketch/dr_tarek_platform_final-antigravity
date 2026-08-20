@@ -1,0 +1,370 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return signedIn() ? request.auth.token.role : null;
+    }
+
+    function isTeacher() {
+      return signedIn() && role() == 'teacher';
+    }
+
+    function isAdmin() {
+      return signedIn() && role() == 'admin';
+    }
+
+    function isStudent() {
+      return signedIn()
+        && role() == 'student'
+        && request.auth.token.approved == true;
+    }
+
+    function isCenterStudent() {
+      return isStudent() && request.auth.token.student_type == 'center_student';
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isStaff() {
+      return isTeacher() || isAdmin();
+    }
+
+    function activeAdminPermission(permissionKey) {
+      return isAdmin()
+        && exists(/databases/$(database)/documents/admin_permissions/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admin_permissions/$(request.auth.uid)).data.is_active == true
+        && get(/databases/$(database)/documents/admin_permissions/$(request.auth.uid)).data.permissions[permissionKey] == true;
+    }
+
+    function canManageStudents() {
+      return isTeacher() || activeAdminPermission('admin_students');
+    }
+
+    function canManageContent() {
+      return isTeacher() || activeAdminPermission('admin_content');
+    }
+
+    function canCommunicate() {
+      return isTeacher() || activeAdminPermission('admin_chat');
+    }
+
+    function canViewAnalytics() {
+      return isTeacher() || activeAdminPermission('admin_analytics');
+    }
+
+    function canManageDevices() {
+      return isTeacher() || activeAdminPermission('admin_devices');
+    }
+
+    function canViewPayments() {
+      return isTeacher() || activeAdminPermission('admin_payments_view');
+    }
+
+    function canManagePayments() {
+      return isTeacher() || activeAdminPermission('admin_payments');
+    }
+
+    function canResetPassword() {
+      return isTeacher()
+        || activeAdminPermission('password_reset')
+        || activeAdminPermission('password.reset');
+    }
+
+    function canManageAcademicTerms() {
+      return isTeacher() || activeAdminPermission('admin_academic_terms');
+    }
+
+    function canManageSettings() {
+      return isTeacher() || activeAdminPermission('admin_settings');
+    }
+
+    function hasNoPasswordHash(data) {
+      return !data.keys().hasAny(['password_hash']);
+    }
+
+    function isApprovedContent(data) {
+      return isStudent()
+        && data.is_deleted != true
+        && data.status == 'published';
+    }
+
+    // User profiles are readable only after password_hash has been migrated
+    // out of users/{userId}. All sensitive transitions use Admin SDK Functions.
+    match /users/{userId} {
+      allow get, list: if signedIn()
+        && hasNoPasswordHash(resource.data)
+        && (isSelf(userId) || canManageStudents() || isTeacher());
+
+      allow create, delete: if false;
+
+      // Students may edit only non-sensitive profile fields. Role, approval,
+      // account status, device binding, grade, and secrets are immutable here.
+      allow update: if isSelf(userId)
+        && hasNoPasswordHash(resource.data)
+        && hasNoPasswordHash(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'full_name',
+          'display_handle',
+          'profile_photo',
+          'updated_at',
+          'updated_by'
+        ]);
+    }
+
+    // Password hashes and other authentication secrets are server-only.
+    match /user_secrets/{userId} {
+      allow read, write: if false;
+    }
+
+    match /admin_permissions/{adminId} {
+      allow get: if isTeacher()
+        || (isAdmin() && isSelf(adminId));
+      allow list: if isTeacher();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /admin_audit_log/{auditId} {
+      allow get, list: if isTeacher()
+        || (isAdmin() && resource.data.actor_id == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /users/{userId}/audit_events/{eventId} {
+      allow get, list: if isSelf(userId) || isTeacher() || canViewAnalytics();
+      allow write: if false;
+    }
+
+    match /devices/{deviceId} {
+      allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
+        || canManageDevices();
+      allow create, update, delete: if false;
+    }
+
+    match /device_change_requests/{requestId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canManageDevices();
+      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow update, delete: if canManageDevices();
+    }
+
+    match /device_security_alerts/{alertId} {
+      allow get, list: if canManageDevices() || canViewAnalytics();
+      allow write: if false;
+    }
+
+    match /auth_security_events/{eventId} {
+      allow get, list: if canManageDevices() || canViewAnalytics();
+      allow write: if false;
+    }
+
+    match /security_events/{eventId} {
+      allow get, list: if canManageDevices() || canViewAnalytics();
+      allow write: if false;
+    }
+
+    match /analytics_events/{eventId} {
+      allow get, list: if canViewAnalytics()
+        || (signedIn() && resource.data.user_id == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /subjects/{subjectId} {
+      allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /subject_sections/{sectionId} {
+      allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /lectures/{lectureId} {
+      allow get, list: if isApprovedContent(resource.data)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    // Raw lecture resources are delivered through authorized Functions/Bunny
+    // URLs. They are never directly writable or readable by a client.
+    match /lecture_resources/{resourceId} {
+      allow read, write: if false;
+    }
+
+    match /learning_progress/{progressId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canViewAnalytics();
+      allow create, update: if isStudent()
+        && request.resource.data.student_id == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /lecture_progress/{progressId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canViewAnalytics();
+      allow create, update: if isStudent()
+        && request.resource.data.student_id == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /subject_progress_summary/{summaryId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canViewAnalytics();
+      allow write: if false;
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canManageStudents()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /subject_access_assignments/{assignmentId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid && resource.data.is_deleted == false)
+        || canManageStudents()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /plans/{planId} {
+      allow get, list: if (isStudent() && resource.data.is_active == true)
+        || canManageStudents()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /custom_groups/{groupId} {
+      allow get, list: if signedIn();
+      allow write: if isTeacher() || canManageStudents();
+    }
+
+    match /plan_features/{featureId} {
+      allow get, list: if (isStudent() && resource.data.enabled == true)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
+        || canCommunicate()
+        || isTeacher();
+      allow create, update, delete: if false;
+
+      match /deliveries/{deliveryId} {
+        allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
+          || canCommunicate()
+          || isTeacher();
+        allow write: if false;
+      }
+    }
+
+    // Chat and Student Questions systems are removed from the current phase.
+    match /questions/{questionId} {
+      allow read, write: if false;
+    }
+
+    match /chat_threads/{threadId} {
+      allow read, write: if false;
+
+      match /messages/{messageId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /notes/{noteId} {
+      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid;
+      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
+    }
+
+    match /bookmarks/{bookmarkId} {
+      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid;
+      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
+    }
+
+    match /timeline_quizzes/{quizId} {
+      allow get, list: if isApprovedContent(resource.data)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /quiz_attempts/{attemptId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canViewAnalytics();
+      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
+        && resource.data.submitted_at == null;
+      allow delete: if false;
+    }
+
+    match /exams/{examId} {
+      allow get, list: if isApprovedContent(resource.data)
+        || canManageContent()
+        || isTeacher();
+      allow write: if false;
+    }
+
+    match /exam_attempts/{attemptId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canViewAnalytics();
+      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
+        && resource.data.submitted_at == null;
+      allow delete: if false;
+    }
+
+    match /payment_logs/{paymentId} {
+      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow write: if false;
+    }
+
+    // Academic periods are readable by every signed-in user (students need
+    // period state for their subscription boundaries). All writes happen
+    // exclusively through Teacher-only Cloud Functions.
+    match /academic_periods/{periodId} {
+      allow get, list: if signedIn();
+      allow write: if false;
+    }
+
+    // Platform-wide feature toggles are readable by staff; students read
+    // only enabled features. All writes go through Teacher-only Functions.
+    match /platform_features/{featureId} {
+      allow get, list: if isStaff()
+        || (isStudent() && resource.data.enabled == true);
+      allow write: if false;
+    }
+
+    match /system_settings/{settingId} {
+      allow get: if isTeacher() || canManageSettings();
+      allow list: if isTeacher();
+      allow write: if false;
+    }
+
+    match /password_reset_requests/{requestId} {
+      allow get, list: if isTeacher() || canManageStudents() || canResetPassword();
+      allow write: if false;
+    }
+
+    // Any collection not explicitly covered above is denied by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

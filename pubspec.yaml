@@ -1,0 +1,50 @@
+name: dr_tarek_platform
+description: "Dr. Tarek Platform - Educational Learning Management Platform."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^3.4.2
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+  cloud_functions: ^6.3.6
+  cloud_firestore: ^6.8.0
+  device_info_plus: ^13.2.0
+  package_info_plus: ^10.2.1
+  flutter_secure_storage: ^11.0.0
+  image_picker: ^1.2.3
+  firebase_storage: ^13.4.6
+  video_player: ^2.14.0
+  shared_preferences: ^2.5.3
+  connectivity_plus: ^6.1.4
+  uuid: ^4.5.1
+  chewie: ^1.15.0
+  flutter_cached_pdfview: ^0.4.4
+  url_launcher: ^6.3.1
+  screen_brightness: ^2.1.11
+  perfect_volume_control: ^1.0.6
+  lucide_icons: ^0.257.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+  fonts:
+    - family: Gardenia Summer
+      fonts:
+        - asset: assets/fonts/Gardenia Summer.ttf

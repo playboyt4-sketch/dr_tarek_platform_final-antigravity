@@ -1,0 +1,647 @@
+﻿============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\data\datasources\membership_remote_data_source.dart
+============================================================
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+
+class MembershipRemoteDataSource {
+  final FirebaseFirestore firestore;
+
+  const MembershipRemoteDataSource({
+    required this.firestore,
+  });
+
+  Future<List<MembershipPlan>> getPlans({
+    required String studentType,
+  }) async {
+    final snapshot = await firestore
+        .collection('plans')
+        .where('student_type', isEqualTo: studentType)
+        .where('is_active', isEqualTo: true)
+        .orderBy('display_order')
+        .get();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return MembershipPlan(
+        id: doc.id,
+        planName: data['plan_name'] as String? ?? '',
+        planKey: data['plan_key'] as String? ?? '',
+        studentType: data['student_type'] as String? ?? '',
+        displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
+        isActive: data['is_active'] == true,
+      );
+    }).toList();
+  }
+
+  Future<MembershipSubscription?> getActiveSubscription({
+    required String studentId,
+    required String subjectId,
+  }) async {
+    final snapshot = await firestore
+        .collection('subscriptions')
+        .where('student_id', isEqualTo: studentId)
+        .where('subject_id', isEqualTo: subjectId)
+        .where('status', isEqualTo: 'active')
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+
+    final doc = snapshot.docs.first;
+    final data = doc.data();
+
+    return MembershipSubscription(
+      id: doc.id,
+      studentId: data['student_id'] as String? ?? '',
+      subjectId: data['subject_id'] as String? ?? '',
+      planId: data['plan_id'] as String? ?? '',
+      durationType: data['duration_type'] as String? ?? '',
+      startDate: (data['start_date'] as Timestamp).toDate(),
+      endDate: (data['end_date'] as Timestamp?)?.toDate(),
+      status: data['status'] as String? ?? '',
+      isFrozen: data['is_frozen'] == true,
+      frozenAt: (data['frozen_at'] as Timestamp?)?.toDate(),
+      resumedAt: (data['resumed_at'] as Timestamp?)?.toDate(),
+      isGifted: data['is_gifted'] == true,
+      giftedBy: data['gifted_by'] as String?,
+      renewalCount: (data['renewal_count'] as num?)?.toInt() ?? 0,
+      previousPlanId: data['previous_plan_id'] as String?,
+    );
+  }
+
+  Future<List<PlanFeature>> getPlanFeatures({
+    required String planId,
+  }) async {
+    final snapshot = await firestore
+        .collection('plan_features')
+        .where('plan_id', isEqualTo: planId)
+        .get();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return PlanFeature(
+        id: doc.id,
+        planId: data['plan_id'] as String? ?? '',
+        featureKey: data['feature_key'] as String? ?? '',
+        enabled: data['enabled'] == true,
+        featureValue: data['feature_value'],
+      );
+    }).toList();
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\data\repositories\membership_repository_impl.dart
+============================================================
+import '../../domain/entities/membership_entities.dart';
+import '../../domain/repositories/membership_repository.dart';
+import '../datasources/membership_remote_data_source.dart';
+
+class MembershipRepositoryImpl implements MembershipRepository {
+  final MembershipRemoteDataSource remoteDataSource;
+
+  const MembershipRepositoryImpl({
+    required this.remoteDataSource,
+  });
+
+  @override
+  Future<List<MembershipPlan>> getAvailablePlans({
+    required String studentType,
+  }) {
+    return remoteDataSource.getPlans(
+      studentType: studentType,
+    );
+  }
+
+  @override
+  Future<MembershipSubscription?> getSubscription({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return remoteDataSource.getActiveSubscription(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+
+  @override
+  Future<List<PlanFeature>> getPlanFeatures({
+    required String planId,
+  }) {
+    return remoteDataSource.getPlanFeatures(
+      planId: planId,
+    );
+  }
+
+  @override
+  Future<bool> hasFeature({
+    required String planId,
+    required String featureKey,
+  }) async {
+    final features = await getPlanFeatures(planId: planId);
+
+    final feature = features.cast<PlanFeature?>().firstWhere(
+      (item) => item?.featureKey == featureKey,
+      orElse: () => null,
+    );
+
+    return feature?.enabled == true;
+  }
+}
+
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\entities\membership_entities.dart
+============================================================
+class MembershipPlan {
+  final String id;
+  final String planName;
+  final String planKey;
+  final String studentType;
+  final int displayOrder;
+  final bool isActive;
+
+  const MembershipPlan({
+    required this.id,
+    required this.planName,
+    required this.planKey,
+    required this.studentType,
+    required this.displayOrder,
+    required this.isActive,
+  });
+}
+
+class PlanFeature {
+  final String id;
+  final String planId;
+  final String featureKey;
+  final bool enabled;
+  final dynamic featureValue;
+
+  const PlanFeature({
+    required this.id,
+    required this.planId,
+    required this.featureKey,
+    required this.enabled,
+    this.featureValue,
+  });
+}
+
+class MembershipSubscription {
+  final String id;
+  final String studentId;
+  final String subjectId;
+  final String planId;
+  final String durationType;
+  final DateTime startDate;
+  final DateTime? endDate;
+  final String status;
+  final bool isFrozen;
+  final DateTime? frozenAt;
+  final DateTime? resumedAt;
+  final bool isGifted;
+  final String? giftedBy;
+  final int renewalCount;
+  final String? previousPlanId;
+
+  const MembershipSubscription({
+    required this.id,
+    required this.studentId,
+    required this.subjectId,
+    required this.planId,
+    required this.durationType,
+    required this.startDate,
+    required this.endDate,
+    required this.status,
+    required this.isFrozen,
+    required this.frozenAt,
+    required this.resumedAt,
+    required this.isGifted,
+    required this.giftedBy,
+    required this.renewalCount,
+    required this.previousPlanId,
+  });
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\entities\membership_plan.dart
+============================================================
+class MembershipPlan {
+  final String id;
+  final String planName;
+  final String planKey;
+  final String studentType;
+  final int displayOrder;
+  final bool isActive;
+
+  const MembershipPlan({
+    required this.id,
+    required this.planName,
+    required this.planKey,
+    required this.studentType,
+    required this.displayOrder,
+    required this.isActive,
+  });
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\entities\plan_feature.dart
+============================================================
+class PlanFeature {
+  final String id;
+  final String planId;
+  final String featureKey;
+  final bool enabled;
+  final dynamic featureValue;
+
+  const PlanFeature({
+    required this.id,
+    required this.planId,
+    required this.featureKey,
+    required this.enabled,
+    this.featureValue,
+  });
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\entities\student_subscription.dart
+============================================================
+class MembershipSubscription {
+  final String id;
+  final String studentId;
+  final String subjectId;
+  final String planId;
+  final String durationType;
+  final DateTime startDate;
+  final DateTime? endDate;
+  final String status;
+  final bool isFrozen;
+  final DateTime? frozenAt;
+  final DateTime? resumedAt;
+  final bool isGifted;
+  final String? giftedBy;
+  final int renewalCount;
+  final String? previousPlanId;
+
+  const MembershipSubscription({
+    required this.id,
+    required this.studentId,
+    required this.subjectId,
+    required this.planId,
+    required this.durationType,
+    required this.startDate,
+    required this.endDate,
+    required this.status,
+    required this.isFrozen,
+    required this.frozenAt,
+    required this.resumedAt,
+    required this.isGifted,
+    required this.giftedBy,
+    required this.renewalCount,
+    required this.previousPlanId,
+  });
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\repositories\membership_repository.dart
+============================================================
+import '../entities/membership_entities.dart';
+
+abstract class MembershipRepository {
+  Future<List<MembershipPlan>> getAvailablePlans({
+    required String studentType,
+  });
+
+  Future<List<PlanFeature>> getPlanFeatures({
+    required String planId,
+  });
+
+  Future<MembershipSubscription?> getSubscription({
+    required String studentId,
+    required String subjectId,
+  });
+
+  Future<MembershipSubscription> activateFreePlan({
+    required String studentId,
+    required String subjectId,
+    required String studentType,
+  });
+
+  Future<MembershipSubscription> upgrade({
+    required String studentId,
+    required String subjectId,
+    required String newPlanId,
+  });
+
+  Future<MembershipSubscription> downgrade({
+    required String studentId,
+    required String subjectId,
+    required String newPlanId,
+  });
+
+  Future<MembershipSubscription> renew({
+    required String studentId,
+    required String subjectId,
+  });
+
+  Future<MembershipSubscription> freeze({
+    required String studentId,
+    required String subjectId,
+  });
+
+  Future<MembershipSubscription> resume({
+    required String studentId,
+    required String subjectId,
+  });
+
+  Future<MembershipSubscription> gift({
+    required String studentId,
+    required String subjectId,
+    required String planId,
+    required String giftedBy,
+  });
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\activate_free_plan_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class ActivateFreePlanUseCase {
+  final MembershipRepository repository;
+
+  const ActivateFreePlanUseCase(this.repository);
+
+  Future<MembershipSubscription> execute({
+    required String studentId,
+    required String subjectId,
+    required String studentType,
+  }) {
+    return repository.activateFreePlan(
+      studentId: studentId,
+      subjectId: subjectId,
+      studentType: studentType,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\change_membership_plan_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class ChangeMembershipPlanUseCase {
+  final MembershipRepository repository;
+
+  const ChangeMembershipPlanUseCase(this.repository);
+
+  Future<MembershipSubscription> upgrade({
+    required String studentId,
+    required String subjectId,
+    required String newPlanId,
+  }) {
+    return repository.upgrade(
+      studentId: studentId,
+      subjectId: subjectId,
+      newPlanId: newPlanId,
+    );
+  }
+
+  Future<MembershipSubscription> downgrade({
+    required String studentId,
+    required String subjectId,
+    required String newPlanId,
+  }) {
+    return repository.downgrade(
+      studentId: studentId,
+      subjectId: subjectId,
+      newPlanId: newPlanId,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\freeze_membership_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class FreezeMembershipUseCase {
+  final MembershipRepository repository;
+
+  const FreezeMembershipUseCase(this.repository);
+
+  Future<MembershipSubscription> execute({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return repository.freeze(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\get_available_plans_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class GetAvailablePlansUseCase {
+  final MembershipRepository repository;
+
+  const GetAvailablePlansUseCase(this.repository);
+
+  Future<List<MembershipPlan>> execute({
+    required String studentType,
+  }) {
+    return repository.getAvailablePlans(studentType: studentType);
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\get_plan_features_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class GetPlanFeaturesUseCase {
+  final MembershipRepository repository;
+
+  const GetPlanFeaturesUseCase(this.repository);
+
+  Future<List<PlanFeature>> execute({
+    required String planId,
+  }) {
+    return repository.getPlanFeatures(planId: planId);
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\get_subscription_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class GetSubscriptionUseCase {
+  final MembershipRepository repository;
+
+  const GetSubscriptionUseCase(this.repository);
+
+  Future<MembershipSubscription?> execute({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return repository.getSubscription(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\gift_membership_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class GiftMembershipUseCase {
+  final MembershipRepository repository;
+
+  const GiftMembershipUseCase(this.repository);
+
+  Future<MembershipSubscription> execute({
+    required String studentId,
+    required String subjectId,
+    required String planId,
+    required String giftedBy,
+  }) {
+    return repository.gift(
+      studentId: studentId,
+      subjectId: subjectId,
+      planId: planId,
+      giftedBy: giftedBy,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\renew_membership_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class RenewMembershipUseCase {
+  final MembershipRepository repository;
+
+  const RenewMembershipUseCase(this.repository);
+
+  Future<MembershipSubscription> execute({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return repository.renew(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\domain\use_cases\resume_membership_use_case.dart
+============================================================
+import '../entities/membership_entities.dart';
+import '../repositories/membership_repository.dart';
+
+class ResumeMembershipUseCase {
+  final MembershipRepository repository;
+
+  const ResumeMembershipUseCase(this.repository);
+
+  Future<MembershipSubscription> execute({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return repository.resume(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+}
+
+
+============================================================
+FILE: C:\dr_tarek_platform\lib\features\membership\presentation\providers\membership_providers.dart
+============================================================
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../domain/repositories/membership_repository.dart';
+
+final membershipRepositoryProvider = Provider<MembershipRepository>((ref) {
+  throw UnimplementedError(
+    'membershipRepositoryProvider must be overridden in the application DI layer.',
+  );
+});
+
+final availablePlansProvider =
+    FutureProvider.family<List<MembershipPlan>, String>((ref, studentType) {
+  return ref
+      .watch(membershipRepositoryProvider)
+      .getAvailablePlans(studentType: studentType);
+});
+
+final activeSubscriptionProvider = FutureProvider.family<
+    MembershipSubscription?,
+    ({String studentId, String subjectId})>((ref, params) {
+  return ref.watch(membershipRepositoryProvider).getSubscription(
+        studentId: params.studentId,
+        subjectId: params.subjectId,
+      );
+});
+
+final planFeaturesProvider =
+    FutureProvider.family<List<PlanFeature>, String>((ref, planId) {
+  return ref.watch(membershipRepositoryProvider).getPlanFeatures(
+        planId: planId,
+      );
+});
+
+final featureAccessProvider = FutureProvider.family<
+    bool,
+    ({String planId, String featureKey})>((ref, params) async {
+  final features = await ref
+      .watch(membershipRepositoryProvider)
+      .getPlanFeatures(planId: params.planId);
+
+  final feature = features.cast<PlanFeature?>().firstWhere(
+        (item) => item?.featureKey == params.featureKey,
+        orElse: () => null,
+      );
+
+  return feature?.enabled == true;
+});
+
+

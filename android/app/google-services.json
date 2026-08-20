@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "606744934510",
+    "project_id": "dr-tarek-platform",
+    "storage_bucket": "dr-tarek-platform.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:606744934510:android:3d55cc03076b0adcc54e7f",
+        "android_client_info": {
+          "package_name": "com.example.flutter_analyzer_test"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBdHz2ZF9QLsR6dJw56RX0x0MV2pzavXhc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
