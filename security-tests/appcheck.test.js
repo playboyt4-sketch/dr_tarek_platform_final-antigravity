@@ -14,7 +14,15 @@ async function testAppCheck() {
     body: JSON.stringify({ data: { phone_number: "0100", password: "123" } })
   });
   
-  const result1 = await response1.json();
+  const text1 = await response1.text();
+  let result1;
+  try {
+    result1 = JSON.parse(text1);
+  } catch (e) {
+    console.error("Failed to parse JSON. Raw response:", text1);
+    process.exit(1);
+  }
+
   if (response1.status !== 401 || result1.error?.status !== 'UNAUTHENTICATED') {
     console.error("Failed: Expected 401 UNAUTHENTICATED due to missing App Check token, got:", response1.status, result1);
     process.exit(1);
