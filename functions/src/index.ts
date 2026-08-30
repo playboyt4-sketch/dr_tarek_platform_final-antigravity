@@ -1382,15 +1382,7 @@ export const onStudentApproved = onDocumentUpdated("users/{userId}", async (even
   });
 });
 
-export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{progressId}", async (event) => {
-  const before = event.data?.before.data();
-  const after = event.data?.after.data();
-  if (!before || !after || before.is_completed === after.is_completed) return;
-
-  const studentId = getString(after.student_id);
-  const lectureId = getString(after.lecture_id);
-  if (!studentId || !lectureId) throw new Error(`Invalid lecture_progress data: ${event.params.progressId}`);
-
+export async function calculateAndSetSubjectProgress(db: any, studentId: string, lectureId: string) {
   const lectureSnap = await db.collection("lectures").doc(lectureId).get();
   if (!lectureSnap.exists) throw new Error(`Lecture not found: ${lectureId}`);
   const sectionId = getString(lectureSnap.data()?.section_id);
@@ -1402,13 +1394,13 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
   if (!subjectId) throw new Error(`Subject section ${sectionId} has no valid subject_id.`);
 
   const sectionsSnap = await db.collection("subject_sections").where("subject_id", "==", subjectId).get();
-  const sectionIds = sectionsSnap.docs.map((doc) => doc.id);
+  const sectionIds = sectionsSnap.docs.map((doc: any) => doc.id);
   if (sectionIds.length === 0) throw new Error(`No sections found for subject: ${subjectId}`);
 
   const lectureIds: string[] = [];
   for (const currentSectionId of sectionIds) {
     const lecturesSnap = await db.collection("lectures").where("section_id", "==", currentSectionId).get();
-    lectureIds.push(...lecturesSnap.docs.map((doc) => doc.id));
+    lectureIds.push(...lecturesSnap.docs.map((doc: any) => doc.id));
   }
 
   if (lectureIds.length === 0) {
@@ -1418,8 +1410,8 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
       total_lectures: 0,
       completed_lectures: 0,
       completion_percentage: 0,
-      last_recalculated_at: FieldValue.serverTimestamp(),
-    }, {merge: true});
+      updated_at: FieldValue.serverTimestamp(),
+    });
     return;
   }
 
@@ -1430,11 +1422,11 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
       .where("student_id", "==", studentId)
       .where("lecture_id", "in", batchIds)
       .get();
+    
     const completed = new Set(
       progressSnap.docs
-        .filter((doc) => doc.data().is_completed === true)
-        .map((doc) => getString(doc.data().lecture_id))
-        .filter((id): id is string => id !== null),
+        .filter((doc: any) => doc.data().is_completed === true)
+        .map((doc: any) => getString(doc.data().lecture_id))
     );
     completedLectures += completed.size;
   }
@@ -1447,8 +1439,8 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
     total_lectures: lectureIds.length,
     completed_lectures: completedLectures,
     completion_percentage: completionPercentage,
-    last_recalculated_at: FieldValue.serverTimestamp(),
-  }, {merge: true});
+    updated_at: FieldValue.serverTimestamp(),
+  });
 
   await writeAnalyticsEvent(studentId, "Complete Video", lectureId, {
     subject_id: subjectId,
@@ -1456,6 +1448,18 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
     completed_lectures: completedLectures,
     completion_percentage: completionPercentage,
   });
+}
+
+export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{progressId}", async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after || before.is_completed === after.is_completed) return;
+
+  const studentId = getString(after.student_id);
+  const lectureId = getString(after.lecture_id);
+  if (!studentId || !lectureId) throw new Error(`Invalid lecture_progress data: ${event.params.progressId}`);
+
+  await calculateAndSetSubjectProgress(db, studentId, lectureId);
 });
 
 export const enforceDisplayHandleUniqueness = onCall(SECURE_CALL_OPTS, async (request) => {
