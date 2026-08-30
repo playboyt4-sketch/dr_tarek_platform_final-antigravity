@@ -57,10 +57,9 @@ Future<void> main() async {
         providerWeb: ReCaptchaEnterpriseProvider(reCaptchaSiteKey),
         providerAndroid:
             kDebugMode ? AndroidDebugProvider() : AndroidPlayIntegrityProvider(),
-        // iOS is explicitly blocked pending provider decision/documentation
-        // providerApple: kDebugMode
-        //    ? AppleDebugProvider()
-        //    : AppleAppAttestWithDeviceCheckFallbackProvider(),
+        providerApple: kDebugMode
+            ? AppleDebugProvider()
+            : AppleAppAttestWithDeviceCheckFallbackProvider(),
       );
 
       // --- Crash reporting (Crashlytics) ---

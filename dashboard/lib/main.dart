@@ -20,13 +20,10 @@ Future<void> main() async {
   );
 
   // --- App Check (Dashboard Client Attestation) ---
-  // Uses placeholder Recaptcha Site Key for Web since it's missing from repo.
   await FirebaseAppCheck.instance.activate(
-    // TODO: Replace with actual reCAPTCHA Enterprise site key when available in environment
-    providerWeb: ReCaptchaEnterpriseProvider('BLOCKED_MISSING_KEY'),
+    providerWeb: ReCaptchaEnterpriseProvider('6Lfet54tAAAAAIB-E-hNCgGrwabjommvkpbdziuZ'),
     providerAndroid: kDebugMode ? AndroidDebugProvider() : AndroidPlayIntegrityProvider(),
-    // iOS is explicitly blocked pending provider decision/documentation
-    // providerApple: kDebugMode ? AppleDebugProvider() : AppleAppAttestWithDeviceCheckFallbackProvider(),
+    providerApple: kDebugMode ? AppleDebugProvider() : AppleAppAttestWithDeviceCheckFallbackProvider(),
   );
 
   runApp(const ProviderScope(child: DashboardApp()));
