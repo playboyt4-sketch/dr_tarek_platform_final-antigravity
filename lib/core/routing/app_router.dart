@@ -20,7 +20,25 @@ class AppRouter extends ConsumerWidget {
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted) return;
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        
+        void performPop() {
+          if (!context.mounted) return;
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+
+        final route = ModalRoute.of(context);
+        if (route?.animation != null && !route!.animation!.isCompleted) {
+          late final AnimationStatusListener listener;
+          listener = (status) {
+            if (status == AnimationStatus.completed) {
+              route.animation!.removeStatusListener(listener);
+              performPop();
+            }
+          };
+          route.animation!.addStatusListener(listener);
+        } else {
+          performPop();
+        }
       });
     });
 

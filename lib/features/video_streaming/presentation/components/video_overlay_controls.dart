@@ -16,6 +16,13 @@ class VideoOverlayControls extends StatelessWidget {
   final VoidCallback onNextTap;
   final VoidCallback onToggleControls;
 
+  /// Saves a bookmark at the current position (null disables the button).
+  final VoidCallback? onBookmarkTap;
+
+  /// FINAL_DECISIONS §11: opens the membership/plans flow when the Public
+  /// Free preview wall is shown.
+  final VoidCallback? onUpgradeTap;
+
   const VideoOverlayControls({
     required this.controller,
     required this.onBack,
@@ -24,6 +31,8 @@ class VideoOverlayControls extends StatelessWidget {
     required this.onQualityTap,
     required this.onNextTap,
     required this.onToggleControls,
+    this.onBookmarkTap,
+    this.onUpgradeTap,
     super.key,
   });
 
@@ -81,6 +90,7 @@ class VideoOverlayControls extends StatelessWidget {
               onPdfTap: onPdfTap,
               onQualityTap: onQualityTap,
               onNextTap: onNextTap,
+              onBookmarkTap: onBookmarkTap,
             ),
           ),
         ],
@@ -114,6 +124,11 @@ class VideoOverlayControls extends StatelessWidget {
           ),
         if (controller.showResumePrompt && controller.resumeRecord != null)
           VideoResumePrompt(controller: controller),
+        if (controller.showUpgradePrompt)
+          VideoUpgradePrompt(
+            controller: controller,
+            onUpgrade: onUpgradeTap ?? () {},
+          ),
       ],
     );
   }

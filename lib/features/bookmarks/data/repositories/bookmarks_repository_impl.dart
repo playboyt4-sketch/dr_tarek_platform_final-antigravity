@@ -1,6 +1,7 @@
 import '../../domain/entities/bookmark.dart';
 import '../../domain/repositories/bookmarks_repository.dart';
 import '../datasources/bookmarks_remote_data_source.dart';
+import '../../../../core/errors/failure.dart';
 
 class BookmarksRepositoryImpl implements BookmarksRepository {
   final BookmarksRemoteDataSource remoteDataSource;
@@ -15,7 +16,7 @@ class BookmarksRepositoryImpl implements BookmarksRepository {
     return remoteDataSource.getBookmarksForLecture(
       studentId: studentId,
       lectureId: lectureId,
-    );
+    ).asFailureAware();
   }
 
   @override
@@ -26,7 +27,7 @@ class BookmarksRepositoryImpl implements BookmarksRepository {
     return remoteDataSource.getBookmarksForSubject(
       studentId: studentId,
       subjectId: subjectId,
-    );
+    ).asFailureAware();
   }
 
   @override
@@ -45,14 +46,19 @@ class BookmarksRepositoryImpl implements BookmarksRepository {
       title: title,
       videoTimestampSeconds: videoTimestampSeconds,
       pdfPageNumber: pdfPageNumber,
-    );
+    ).asFailureAware();
   }
 
   @override
   Future<void> deleteBookmark({
     required String bookmarkId,
   }) {
-    return remoteDataSource.deleteBookmark(bookmarkId: bookmarkId);
+    return remoteDataSource.deleteBookmark(bookmarkId: bookmarkId).asFailureAware();
+  }
+
+  @override
+  Stream<List<Bookmark>> watchBookmarksForStudent({required String studentId}) {
+    return remoteDataSource.watchBookmarksForStudent(studentId: studentId);
   }
 
   @override

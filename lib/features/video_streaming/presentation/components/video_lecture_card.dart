@@ -6,10 +6,16 @@ class VideoLectureCard extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
+  /// FINAL_DECISIONS §12 nicety: another lecture currently owns the
+  /// student's rolling 24-hour window — purely informational badge; the
+  /// hard enforcement stays server-side.
+  final bool lockedByWindow;
+
   const VideoLectureCard({
     required this.lecture,
     required this.isActive,
     required this.onTap,
+    this.lockedByWindow = false,
     super.key,
   });
 
@@ -37,7 +43,7 @@ class VideoLectureCard extends StatelessWidget {
               Image.network(
                 lecture.thumbnailUrl!,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+                errorBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
               )
             else
               const ColoredBox(color: Colors.black),
@@ -94,6 +100,29 @@ class VideoLectureCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (lockedByWindow)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.lock_clock, color: Colors.white70, size: 12),
+                      SizedBox(width: 4),
+                      Text(
+                        '٢٤ ساعة',
+                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),

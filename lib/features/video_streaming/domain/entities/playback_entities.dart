@@ -117,6 +117,8 @@ class PlaybackProgressRecord {
   final double progressPercent;
   final bool completed;
   final DateTime updatedAt;
+  final int? pdfLastPage;
+  final int? pdfTotalPages;
 
   const PlaybackProgressRecord({
     required this.userId,
@@ -130,6 +132,8 @@ class PlaybackProgressRecord {
     required this.progressPercent,
     required this.completed,
     required this.updatedAt,
+    this.pdfLastPage,
+    this.pdfTotalPages,
   });
 
   PlaybackProgressRecord copyWith({
@@ -142,6 +146,8 @@ class PlaybackProgressRecord {
     String? thumbnailUrl,
     String? subjectId,
     String? sectionId,
+    int? pdfLastPage,
+    int? pdfTotalPages,
   }) {
     return PlaybackProgressRecord(
       userId: userId,
@@ -155,6 +161,8 @@ class PlaybackProgressRecord {
       progressPercent: progressPercent ?? this.progressPercent,
       completed: completed ?? this.completed,
       updatedAt: updatedAt ?? this.updatedAt,
+      pdfLastPage: pdfLastPage ?? this.pdfLastPage,
+      pdfTotalPages: pdfTotalPages ?? this.pdfTotalPages,
     );
   }
 
@@ -170,6 +178,8 @@ class PlaybackProgressRecord {
     'progressPercent': progressPercent,
     'completed': completed,
     'updatedAt': updatedAt.toIso8601String(),
+    if (pdfLastPage != null) 'pdfLastPage': pdfLastPage,
+    if (pdfTotalPages != null) 'pdfTotalPages': pdfTotalPages,
   };
 
   factory PlaybackProgressRecord.fromJson(Map<String, dynamic> json) {
@@ -189,6 +199,8 @@ class PlaybackProgressRecord {
       updatedAt:
           DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
+      pdfLastPage: json['pdfLastPage'] as int?,
+      pdfTotalPages: json['pdfTotalPages'] as int?,
     );
   }
 
@@ -208,8 +220,31 @@ class VideoResource {
   final String title;
   final String resourceType;
   final String? bunnyVideoId;
+
+  /// Renderable preview image for this resource. Since the storage-delivery
+  /// completion, getLectureResources returns this as a SERVER-RESOLVED,
+  /// short-lived signed URL (`thumbnailUrl`) for both providers — raw
+  /// storage paths are never renderable because storage.rules deny all
+  /// direct reads of lecture_resources/. Falls back to the legacy raw
+  /// `thumbnail` value so older payloads still parse.
   final String? thumbnailUrl;
+
+  /// Dual-provider key (FINAL_DECISIONS §15): which backend stores this
+  /// resource's bytes ("bunny" | "firebase"). The Data layer routes signed
+  /// URL requests by it; Presentation never branches on it.
+  final String storageProvider;
+
+  /// Provider that stores the THUMBNAIL bytes ("bunny" | "firebase").
+  /// Metadata only: thumbnails arrive already resolved server-side, so the
+  /// client deliberately does NOT dispatch on this.
+  final String? thumbnailProvider;
   final Duration? duration;
+
+  /// FINAL_DECISIONS §11: non-null ONLY when the server armed the Public
+  /// Free per-lecture gate for THIS student+lecture; the value is the exact
+  /// number of seconds allowed. Zero = wall immediately.
+  final bool isPublicFreePreview;
+  final int? publicFreePreviewSeconds;
 
   const VideoResource({
     required this.id,
@@ -217,11 +252,68 @@ class VideoResource {
     required this.resourceType,
     this.bunnyVideoId,
     this.thumbnailUrl,
+    this.storageProvider = 'firebase',
+    this.thumbnailProvider,
     this.duration,
+    this.isPublicFreePreview = false,
+    this.publicFreePreviewSeconds,
   });
 
   bool get isVideo =>
       resourceType == 'video' && bunnyVideoId?.isNotEmpty == true;
+
+  bool get isDocument =>
+      resourceType == 'pdf' || resourceType == 'attachment';
+
+  /// Pure mapping of one `getLectureResources` payload entry into an
+  /// entity. Kept side-effect-free so the Data layer stays thin and the
+  /// shape contract is unit-testable without Firebase mocks. Prefers the
+  /// server-resolved [thumbnailUrl]; falls back to the legacy raw
+  /// `thumbnail` string for payloads from older deployments.
+  factory VideoResource.fromCallablePayload(Map<String, dynamic> map) {
+    return VideoResource(
+      id: map['id'] as String? ?? '',
+      title: map['title'] as String? ?? 'مورد تعليمي',
+      resourceType: map['resourceType'] as String? ?? 'attachment',
+      bunnyVideoId: map['bunnyVideoId'] as String?,
+      thumbnailUrl:
+          (map['thumbnailUrl'] as String?) ?? map['thumbnail'] as String?,
+      storageProvider: map['storageProvider'] as String? ?? 'firebase',
+      thumbnailProvider: map['thumbnailProvider'] as String?,
+      duration: _durationFromMap(map['duration']),
+      isPublicFreePreview: false,
+      publicFreePreviewSeconds: null,
+    );
+  }
+
+  static Duration? _durationFromMap(Object? value) {
+    if (value is! num || value <= 0) return null;
+    return Duration(seconds: value.round());
+  }
+}
+
+/// Pure policy for the per-lecture Public Free minute cap
+/// (FINAL_DECISIONS §11). Kept side-effect-free so it is unit-testable
+/// without a video engine.
+class PreviewCapPolicy {
+  /// Effective cap for the active resource; null = unlimited.
+  static Duration? capFor(VideoResource? resource) {
+    if (resource == null || !resource.isPublicFreePreview) return null;
+    final seconds = resource.publicFreePreviewSeconds ?? 0;
+    return seconds <= 0 ? Duration.zero : Duration(seconds: seconds);
+  }
+
+  /// Playback must stop once [position] reaches the cap.
+  static bool shouldStop(Duration position, Duration? cap) {
+    if (cap == null) return false;
+    return position >= cap;
+  }
+
+  /// Seeking may never jump past the cap while a preview is active.
+  static Duration clampSeek(Duration target, Duration? cap) {
+    if (cap == null || target <= cap) return target;
+    return cap;
+  }
 }
 
 @immutable

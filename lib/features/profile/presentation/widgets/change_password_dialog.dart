@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/widgets/password_strength_meter.dart';
 
 class ChangePasswordDialog extends StatefulWidget {
@@ -76,11 +77,15 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
       );
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
-        setState(() => _errorMessage = error.message ?? 'فشل تغيير كلمة المرور.');
+        setState(
+          () => _errorMessage = friendlyFunctionErrorMessage(error, 'فشل تغيير كلمة المرور.'),
+        );
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _errorMessage = 'حدث خطأ: $error');
+        setState(
+          () => _errorMessage = friendlyFunctionErrorMessage(error, 'فشل تغيير كلمة المرور. حاول مرة أخرى.'),
+        );
       }
     } finally {
       if (mounted) setState(() => _loading = false);

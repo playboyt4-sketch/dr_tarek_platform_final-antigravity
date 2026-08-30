@@ -11,6 +11,11 @@ final videoSourceResolverProvider = Provider<VideoSourceResolver>((ref) {
   return VideoSourceResolver(functions: FirebaseFunctions.instance);
 });
 
+/// FINAL_DECISIONS §12: callable-backed rolling-window self-read.
+final watchWindowGatewayProvider = Provider<WatchWindowGateway>((ref) {
+  return CallableWatchWindowGateway(functions: FirebaseFunctions.instance);
+});
+
 final videoEntitlementServiceProvider = Provider<VideoEntitlementService>((
   ref,
 ) {

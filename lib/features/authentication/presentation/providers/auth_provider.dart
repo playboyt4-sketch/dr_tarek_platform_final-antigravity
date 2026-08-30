@@ -3,8 +3,10 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../pdf_viewer/presentation/providers/pdf_viewer_providers.dart';
 import '../../data/datasources/custom_token_remote_datasource.dart';
 import '../../data/datasources/registration_remote_datasource.dart';
+import '../../data/datasources/staff_auth_remote_datasource.dart';
 import '../../data/datasources/user_profile_remote_datasource.dart';
 import '../../data/repositories/auth_repository_impl.dart';
 import '../../domain/entities/auth_user.dart';
@@ -28,10 +30,16 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
     firestore: FirebaseFirestore.instance,
   );
 
+  final staffAuthDataSource = StaffAuthRemoteDataSource(
+    functions: FirebaseFunctions.instance,
+    firebaseAuth: FirebaseAuth.instance,
+  );
+
   return AuthRepositoryImpl(
     remoteDataSource: remoteDataSource,
     registrationDataSource: registrationDataSource,
     userProfileDataSource: userProfileDataSource,
+    staffAuthDataSource: staffAuthDataSource,
   );
 });
 
@@ -63,6 +71,10 @@ class AuthController extends AsyncNotifier<AuthUser?> {
 
   @override
   Future<AuthUser?> build() async {
+    // Auth state backs the whole app; keep it alive (Riverpod 3 default is
+    // auto-dispose once listeners drop).
+    ref.keepAlive();
+
     _loginUseCase = ref.read(loginUseCaseProvider);
     _getCurrentUserUseCase = ref.read(getCurrentUserUseCaseProvider);
     _logoutUseCase = ref.read(logoutUseCaseProvider);
@@ -80,6 +92,22 @@ class AuthController extends AsyncNotifier<AuthUser?> {
     state = await AsyncValue.guard(
       () => _loginUseCase.execute(phoneNumber: phoneNumber, password: password),
     );
+  }
+
+  /// Staff (platform owner + admins) sign in with display name + password.
+  Future<void> staffLogin({
+    required String displayName,
+    required String password,
+  }) async {
+    state = const AsyncLoading();
+
+    state = await AsyncValue.guard(() async {
+      final repository = ref.read(authRepositoryProvider);
+      return repository.staffLogin(
+        displayName: displayName,
+        password: password,
+      );
+    });
   }
 
   Future<void> register({
@@ -110,6 +138,15 @@ class AuthController extends AsyncNotifier<AuthUser?> {
     state = const AsyncLoading();
 
     state = await AsyncValue.guard(() async {
+      // Offline DRM policy (FINAL_DECISIONS §2): ending the session wipes
+      // every protected download from the device. Best-effort — sign-out
+      // must never be blocked by local cleanup.
+      try {
+        final drmRepo = await ref.read(drmRepositoryProvider.future);
+        await drmRepo.wipeAllEncryptedFiles();
+      } catch (_) {
+        // Ignore cleanup failures.
+      }
       await _logoutUseCase.execute();
       return null;
     });

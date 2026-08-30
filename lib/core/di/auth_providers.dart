@@ -8,6 +8,10 @@ final firebaseAuthProvider = Provider<FirebaseAuth>((ref) {
 final customClaimsProvider = StreamProvider<Map<String, dynamic>?>((
   ref,
 ) async* {
+  // Riverpod 3 disposes providers once their last listener is removed.
+  // Claims back the whole session gate and must live for the app lifetime.
+  ref.keepAlive();
+
   final auth = ref.watch(firebaseAuthProvider);
 
   await for (final user in auth.authStateChanges()) {

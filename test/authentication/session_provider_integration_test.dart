@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,25 +25,43 @@ void main() {
 
   const approvedClaims = <String, dynamic>{'approved': true, 'role': 'student'};
 
-  ProviderContainer createContainer({
+  Future<ProviderContainer> createContainer({
     required AuthUser? currentUser,
     required Map<String, dynamic> claims,
     required FakeDeviceBindingRepository deviceRepository,
-  }) {
+  }) async {
     final authRepository = FakeAuthRepository(currentUser: currentUser);
+
     final container = ProviderContainer(
       overrides: [
         authRepositoryProvider.overrideWithValue(authRepository),
-        customClaimsProvider.overrideWith((ref) => Stream.value(claims)),
+        customClaimsProvider.overrideWith((ref) {
+          final claimsController = StreamController<Map<String, dynamic>?>(sync: true);
+          claimsController.add(claims);
+          ref.onDispose(() => claimsController.close());
+          return claimsController.stream;
+        }),
         deviceBindingRepositoryProvider.overrideWithValue(deviceRepository),
       ],
     );
-    addTearDown(container.dispose);
+    addTearDown(() {
+      container.dispose();
+    });
+
+    // Ensure the async notifier finishes its initial build
+    await container.read(authProvider.future);
+
+    // Mirror production: AuthGate actively listens to the session provider.
+    // In Riverpod 3 every provider is auto-dispose once its last listener
+    // drops, so bare `container.read(.future)` would let the whole session
+    // graph be disposed mid-bootstrap.
+    container.listen(sessionProvider, (_, _) {});
+
     return container;
   }
 
   test('allowed Device Binding result reaches authenticated session', () async {
-    final container = createContainer(
+    final container = await createContainer(
       currentUser: approvedUser,
       claims: approvedClaims,
       deviceRepository: FakeDeviceBindingRepository(allowed: true),
@@ -58,7 +76,7 @@ void main() {
   test(
     'denied Device Binding result reaches unauthorizedDevice session',
     () async {
-      final container = createContainer(
+      final container = await createContainer(
         currentUser: approvedUser,
         claims: approvedClaims,
         deviceRepository: FakeDeviceBindingRepository(allowed: false),
@@ -71,7 +89,7 @@ void main() {
   );
 
   test('Device Binding error becomes controlled SessionError', () async {
-    final container = createContainer(
+    final container = await createContainer(
       currentUser: approvedUser,
       claims: approvedClaims,
       deviceRepository: FakeDeviceBindingRepository(
@@ -88,14 +106,14 @@ void main() {
   test(
     'authenticated session bootstraps again after provider recreation',
     () async {
-      final firstContainer = createContainer(
+      final firstContainer = await createContainer(
         currentUser: approvedUser,
         claims: approvedClaims,
         deviceRepository: FakeDeviceBindingRepository(allowed: true),
       );
       final firstState = await firstContainer.read(sessionProvider.future);
 
-      final secondContainer = createContainer(
+      final secondContainer = await createContainer(
         currentUser: approvedUser,
         claims: approvedClaims,
         deviceRepository: FakeDeviceBindingRepository(allowed: true),
@@ -108,7 +126,7 @@ void main() {
   );
 
   test('invalid current user resolves to unauthenticated session', () async {
-    final container = createContainer(
+    final container = await createContainer(
       currentUser: null,
       claims: const <String, dynamic>{},
       deviceRepository: FakeDeviceBindingRepository(allowed: true),
@@ -123,18 +141,28 @@ void main() {
     'logout delegates to AuthRepository and invalidates session bootstrap',
     () async {
       final authRepository = FakeAuthRepository(currentUser: approvedUser);
+      final claimsController = StreamController<Map<String, dynamic>?>();
       final container = ProviderContainer(
         overrides: [
           authRepositoryProvider.overrideWithValue(authRepository),
-          customClaimsProvider.overrideWith(
-            (ref) => Stream.value(approvedClaims),
-          ),
+          customClaimsProvider.overrideWith((ref) {
+            final claimsController = StreamController<Map<String, dynamic>?>(sync: true);
+            claimsController.add(approvedClaims);
+            ref.onDispose(() => claimsController.close());
+            return claimsController.stream;
+          }),
           deviceBindingRepositoryProvider.overrideWithValue(
             FakeDeviceBindingRepository(allowed: true),
           ),
         ],
       );
-      addTearDown(container.dispose);
+      addTearDown(() {
+        claimsController.close();
+        container.dispose();
+      });
+
+      // Keep the session graph alive exactly like the live AuthGate does.
+      container.listen(sessionProvider, (_, _) {});
 
       expect(
         await container.read(sessionProvider.future),
@@ -152,29 +180,34 @@ void main() {
   test(
     'new claims are reflected after session bootstrap invalidation',
     () async {
-      final claimsStream = StreamController<Map<String, dynamic>?>();
+      final claimsController = StreamController<Map<String, dynamic>?>(sync: true);
+      claimsController.add(const {'approved': false});
       final authRepository = FakeAuthRepository(currentUser: approvedUser);
       final container = ProviderContainer(
         overrides: [
           authRepositoryProvider.overrideWithValue(authRepository),
-          customClaimsProvider.overrideWith((ref) => claimsStream.stream),
+          customClaimsProvider.overrideWith((ref) {
+            // Keep the external claimsController for the dynamic test, but make it sync: true
+            ref.onDispose(() => claimsController.close());
+            return claimsController.stream;
+          }),
           deviceBindingRepositoryProvider.overrideWithValue(
             FakeDeviceBindingRepository(allowed: true),
           ),
         ],
       );
-      addTearDown(() async {
-        await claimsStream.close();
+      addTearDown(() {
+        claimsController.close();
         container.dispose();
       });
 
-      final initialFuture = container.read(sessionProvider.future);
-      await Future<void>.delayed(Duration.zero);
-      claimsStream.add(const {'approved': false});
-      final initialState = await initialFuture;
+      // Keep the session graph alive exactly like the live AuthGate does.
+      container.listen(sessionProvider, (_, _) {});
+
+      final initialState = await container.read(sessionProvider.future);
       expect(initialState, isA<SessionPendingApproval>());
 
-      claimsStream.add(approvedClaims);
+      claimsController.add(approvedClaims);
       await Future<void>.delayed(Duration.zero);
       container.invalidate(sessionProvider);
       final refreshedState = await container.read(sessionProvider.future);
@@ -229,6 +262,19 @@ class FakeAuthRepository implements AuthRepository {
     required String grade,
     String? customGroupId,
     String? customGroupName,
+    required String password,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<StaffDirectoryEntryEntity>> listStaffDirectory() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AuthUser> staffLogin({
+    required String displayName,
     required String password,
   }) {
     throw UnimplementedError();

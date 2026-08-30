@@ -71,4 +71,12 @@ class BookmarksRemoteDataSource {
         .snapshots()
         .map((snap) => snap.docs.map(BookmarkModel.fromFirestore).toList());
   }
+
+  /// Student-level bookmarks list — powers the hub Bookmarks screen.
+  Stream<List<BookmarkModel>> watchBookmarksForStudent({required String studentId}) {
+    return _bookmarksRef
+        .where('student_id', isEqualTo: studentId)
+        .snapshots()
+        .map((snap) => snap.docs.map(BookmarkModel.fromFirestore).toList());
+  }
 }

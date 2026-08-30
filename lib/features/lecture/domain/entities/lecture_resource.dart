@@ -12,6 +12,10 @@ class LectureResource {
   final String resourceUrl;
   final String? bunnyVideoId;
   final String? thumbnail;
+
+  /// Dual-provider key (FINAL_DECISIONS §15): "bunny" | "firebase".
+  /// Routed by the Data layer only; Presentation never branches on it.
+  final String storageProvider;
   final int? duration;
   final bool visibility;
 
@@ -22,6 +26,7 @@ class LectureResource {
     required this.resourceUrl,
     required this.bunnyVideoId,
     required this.thumbnail,
+    this.storageProvider = 'firebase',
     required this.duration,
     required this.visibility,
   });

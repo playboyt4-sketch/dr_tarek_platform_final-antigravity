@@ -82,4 +82,39 @@ class NotesRemoteDataSource {
         .snapshots()
         .map((snap) => snap.docs.map(NoteModel.fromFirestore).toList());
   }
+
+  /// Student-level notes list (all lectures) — powers the hub Notes screen.
+  Stream<List<NoteModel>> watchNotesForStudent({required String studentId}) {
+    return _notesRef
+        .where('student_id', isEqualTo: studentId)
+        .snapshots()
+        .map((snap) => snap.docs.map(NoteModel.fromFirestore).toList());
+  }
+
+  /// Quick note without lecture/subject context (hub-level capture).
+  /// Preserves the exact document shape historically written by the app.
+  Future<NoteModel> createQuickNote({
+    required String studentId,
+    required String title,
+    required String content,
+  }) async {
+    final docRef = _notesRef.doc();
+    final data = <String, dynamic>{
+      'student_id': studentId,
+      'title': title,
+      'content': content,
+      'created_at': FieldValue.serverTimestamp(),
+    };
+    await docRef.set(data);
+    return NoteModel(
+      id: docRef.id,
+      studentId: studentId,
+      subjectId: '',
+      lectureId: '',
+      title: title,
+      content: content,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+  }
 }

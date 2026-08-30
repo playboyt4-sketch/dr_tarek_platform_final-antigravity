@@ -7,6 +7,7 @@ import 'package:dr_tarek_platform/features/student_dashboard/domain/entities/das
 import 'package:dr_tarek_platform/features/student_dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:dr_tarek_platform/features/student_dashboard/presentation/providers/dashboard_providers.dart';
 import 'package:dr_tarek_platform/features/student_home/presentation/screens/student_home_screen.dart';
+import 'package:dr_tarek_platform/l10n/generated/app_localizations.dart';
 
 class _FakeDashboardRepository implements DashboardRepository {
   List<DashboardSubject> subjects = const [];
@@ -43,7 +44,12 @@ Future<void> _pumpHome(
         ),
         studentPlanKeyProvider.overrideWith((ref, studentId) async => null),
       ],
-      child: MaterialApp(home: StudentHomeScreen(user: _student())),
+      child: MaterialApp(
+        locale: const Locale('ar'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: StudentHomeScreen(user: _student()),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -61,10 +67,29 @@ void main() {
     final navBar = tester.widget<BottomNavigationBar>(
       find.byType(BottomNavigationBar),
     );
+    // Chat was removed from the current phase; the third tab exposes the
+    // feature hub (exams, quizzes, notes, bookmarks, membership, profile).
     expect(navBar.items.length, 3);
-    expect(navBar.items[0].label, 'Home');
-    expect(navBar.items[1].label, 'Chat');
-    expect(navBar.items[2].label, 'Notifications');
+    expect(navBar.items[0].label, 'الرئيسية');
+    expect(navBar.items[1].label, 'الإشعارات');
+    expect(navBar.items[2].label, 'الميزات');
+  });
+
+  testWidgets('third tab opens the feature hub with all feature entries', (
+    tester,
+  ) async {
+    final repository = _FakeDashboardRepository();
+    await _pumpHome(tester, repository);
+
+    await tester.tap(find.text('الميزات'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('الاختبارات القصيرة'), findsOneWidget);
+    expect(find.text('الامتحانات'), findsOneWidget);
+    expect(find.text('ملاحظاتي'), findsOneWidget);
+    expect(find.text('المحفوظات'), findsOneWidget);
+    expect(find.text('الخطط والاشتراكات'), findsOneWidget);
+    expect(find.text('ملفي الشخصي'), findsOneWidget);
   });
 
   testWidgets('renders one pill button per enabled subject with status line', (
@@ -115,6 +140,9 @@ void main() {
           studentPlanKeyProvider.overrideWith((ref, studentId) async => null),
         ],
         child: MaterialApp(
+          locale: const Locale('ar'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
           home: StudentHomeScreen(
             user: const AuthUser(
               id: 'student-2',

@@ -21,7 +21,7 @@ class VideoSurface extends StatelessWidget {
               fit: BoxFit.cover,
               color: Colors.black45,
               colorBlendMode: BlendMode.darken,
-              errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+              errorBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
             );
     }
     return FittedBox(

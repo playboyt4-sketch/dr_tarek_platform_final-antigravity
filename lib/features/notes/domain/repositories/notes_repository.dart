@@ -29,6 +29,10 @@ abstract class NotesRepository {
     required String noteId,
   });
 
+  Stream<List<Note>> watchNotesForStudent({required String studentId});
+
+  Future<Note> createQuickNote({required String studentId, required String title, required String content});
+
   Stream<List<Note>> watchNotesForLecture({
     required String studentId,
     required String lectureId,

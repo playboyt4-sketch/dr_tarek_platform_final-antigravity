@@ -24,3 +24,9 @@ final lectureBookmarksStreamProvider = StreamProvider.family<List<Bookmark>,
     );
   },
 );
+
+final studentBookmarksStreamProvider =
+    StreamProvider.family<List<Bookmark>, String>((ref, studentId) {
+  final repo = ref.watch(bookmarksRepositoryProvider);
+  return repo.watchBookmarksForStudent(studentId: studentId);
+});

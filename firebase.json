@@ -4,7 +4,7 @@
                   },
     "firestore":  {
                       "database":  "(default)",
-                      "location":  "me-central2",
+                      "location":  "us-central1",
                       "rules":  "firestore.rules",
                       "indexes":  "firestore.indexes.json"
                   },
@@ -13,13 +13,14 @@
                           "source":  "functions",
                           "codebase":  "default",
                           "disallowLegacyRuntimeConfig":  true,
+                          "invoker":  "public",
                           "ignore":  [
-                                         "node_modules",
-                                         ".git",
-                                         "firebase-debug.log",
-                                         "firebase-debug.*.log",
-                                         "*.local"
-                                     ],
+                                          "node_modules",
+                                          ".git",
+                                          "firebase-debug.log",
+                                          "firebase-debug.*.log",
+                                          "*.local"
+                                      ],
                           "predeploy":  [
                                             "npm --prefix \"$RESOURCE_DIR\" run lint",
                                             "npm --prefix \"$RESOURCE_DIR\" run build"

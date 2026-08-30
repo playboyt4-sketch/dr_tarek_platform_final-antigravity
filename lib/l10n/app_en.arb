@@ -1,0 +1,47 @@
+{
+  "@@locale": "en",
+  "appName": "Dr. Tarek El Araby Platform",
+
+  "navHome": "Home",
+  "navNotifications": "Notifications",
+
+  "actionLogin": "Login",
+  "actionRetry": "Retry",
+  "actionSignOut": "Sign out",
+  "actionRefresh": "Refresh",
+
+  "loginPhoneHint": "Phone number",
+  "loginPasswordHint": "Password",
+
+  "sessionErrorTitle": "Session error",
+  "roleUnavailableTitle": "Role unavailable",
+  "roleUnavailableMessage": "No approved destination is currently available for the {role} role.",
+  "pendingApprovalTitle": "Account pending approval",
+  "pendingApprovalMessage": "Your account is awaiting approval. You cannot access the platform yet.",
+  "rejectedTitle": "Account rejected",
+  "rejectedMessage": "This account was not approved. Please contact the platform administrator.",
+  "disabledTitle": "Account disabled",
+  "disabledMessage": "This account is disabled and cannot access the platform.",
+  "unauthorizedDeviceTitle": "Unauthorized device",
+  "unauthorizedDeviceMessage": "This device is not authorized for this account. Please use an approved device or contact support.",
+
+  "errorWrongCredentials": "Invalid phone number or password.",
+  "errorNoInternet": "Network unavailable. Check your internet connection and try again.",
+  "errorTimeout": "The connection to the server timed out. Please try again.",
+  "errorServer": "A server error occurred. Please try again later.",
+  "errorPermissionDenied": "You do not have permission to perform this action.",
+  "errorTooManyRequests": "Too many attempts. Please wait a moment and try again.",
+  "errorApprovalPending": "Your account is awaiting admin approval.",
+  "errorAccountDisabled": "This account has been disabled.",
+  "errorPhoneExists": "An account with this phone number already exists.",
+  "errorWrongCurrentPassword": "The current password is incorrect.",
+  "errorWeakPassword": "Password must be at least 8 characters and include upper and lower case letters, digits, and symbols.",
+  "errorValidation": "The entered data is invalid. Please check it and try again.",
+  "errorNotFound": "The requested item was not found.",
+  "errorSubscriptionRequired": "An active subscription for this subject is required to access its content.",
+  "errorSubscriptionExpired": "Your subscription to this subject has expired.",
+  "errorSubscriptionInactive": "Your subscription to this subject is not active.",
+  "errorDisciplinaryDisabled": "Your subscription has been suspended by the administration. Please contact support.",
+  "errorUnauthorizedDevice": "This device is not authorized for this account.",
+  "errorGeneric": "An unexpected error occurred. Please try again."
+}

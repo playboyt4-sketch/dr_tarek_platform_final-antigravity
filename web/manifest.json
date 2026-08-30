@@ -1,11 +1,11 @@
 {
-    "name": "flutter_analyzer_test",
-    "short_name": "flutter_analyzer_test",
+    "name": "Dr. Tarek El Araby Platform",
+    "short_name": "Dr. Tarek El Araby Platform",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Dr. Tarek El Araby Platform",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

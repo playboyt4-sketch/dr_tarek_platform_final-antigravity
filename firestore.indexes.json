@@ -1,51 +1,4 @@
 {
-  // Example (Standard Edition):
-  //
-  // "indexes": [
-  //   {
-  //     "collectionGroup": "widgets",
-  //     "queryScope": "COLLECTION",
-  //     "fields": [
-  //       { "fieldPath": "foo", "arrayConfig": "CONTAINS" },
-  //       { "fieldPath": "bar", "mode": "DESCENDING" }
-  //     ]
-  //   },
-  //
-  //  "fieldOverrides": [
-  //    {
-  //      "collectionGroup": "widgets",
-  //      "fieldPath": "baz",
-  //      "indexes": [
-  //        { "order": "ASCENDING", "queryScope": "COLLECTION" }
-  //      ]
-  //    },
-  //   ]
-  // ]
-  //
-  // Example (Enterprise Edition):
-  //
-  // "indexes": [
-  //   {
-  //     "collectionGroup": "reviews",
-  //     "queryScope": "COLLECTION_GROUP",
-  //     "apiScope": "MONGODB_COMPATIBLE_API",
-  //     "density": "DENSE",
-  //     "multikey": false,
-  //     "fields": [
-  //       { "fieldPath": "baz", "mode": "ASCENDING" }
-  //     ]
-  //   },
-  //   {
-  //     "collectionGroup": "items",
-  //     "queryScope": "COLLECTION_GROUP",
-  //     "apiScope": "MONGODB_COMPATIBLE_API",
-  //     "density": "SPARSE_ANY",
-  //     "multikey": true,
-  //     "fields": [
-  //       { "fieldPath": "baz", "mode": "ASCENDING" }
-  //     ]
-  //   },
-  // ]
   "indexes": [
     {
       "collectionGroup": "lecture_progress",
@@ -71,6 +24,88 @@
         { "fieldPath": "subject_id", "mode": "ASCENDING" },
         { "fieldPath": "is_deleted", "mode": "ASCENDING" },
         { "fieldPath": "enabled", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "plans",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_type", "mode": "ASCENDING" },
+        { "fieldPath": "is_active", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_id", "mode": "ASCENDING" },
+        { "fieldPath": "subject_id", "mode": "ASCENDING" },
+        { "fieldPath": "status", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "student_id", "mode": "ASCENDING" },
+        { "fieldPath": "status", "mode": "ASCENDING" },
+        { "fieldPath": "plan_id", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subjects",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subject_sections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subject_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "is_visible", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subject_sections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subject_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lectures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "status", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lectures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lecture_resources",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lecture_id", "mode": "ASCENDING" },
+        { "fieldPath": "is_deleted", "mode": "ASCENDING" },
+        { "fieldPath": "display_order", "mode": "ASCENDING" }
       ]
     }
   ],

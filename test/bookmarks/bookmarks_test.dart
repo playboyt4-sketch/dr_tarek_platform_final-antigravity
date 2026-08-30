@@ -55,6 +55,9 @@ class InMemoryBookmarksRepository implements BookmarksRepository {
   }
 
   @override
+  Stream<List<Bookmark>> watchBookmarksForStudent({required String studentId}) => throw UnimplementedError();
+
+  @override
   Stream<List<Bookmark>> watchBookmarksForLecture({
     required String studentId,
     required String lectureId,

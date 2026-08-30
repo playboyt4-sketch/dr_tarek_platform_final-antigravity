@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -44,6 +45,10 @@ class PlatformFeaturesScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(AppSpacing.screenPadding),
             children: [
+              // FINAL_DECISIONS §15 / Part E: platform-wide default storage
+              // provider; pre-selects uploads but never restricts choice.
+              const _DefaultStorageProviderCard(),
+              const SizedBox(height: AppSpacing.md),
               const Text(
                 'أي تبديل هنا يُطبَّق فوراً على المنصة كلها من قاعدة البيانات، بدون نشر كود جديد.',
               ),
@@ -85,7 +90,7 @@ class PlatformFeaturesScreen extends StatelessWidget {
               autofocus: true,
               decoration: const InputDecoration(
                 labelText: 'مفتاح الميزة (feature key)',
-                hintText: 'مثال: chat.enabled',
+                hintText: 'مثال: video.hd_playback',
               ),
             ),
             const SizedBox(height: 12),
@@ -129,7 +134,7 @@ class PlatformFeaturesScreen extends StatelessWidget {
     } on FirebaseFunctionsException catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر إضافة الميزة.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر إضافة الميزة.'))),
         );
       }
     }
@@ -145,6 +150,105 @@ class _PlatformFeatureCard extends StatefulWidget {
   State<_PlatformFeatureCard> createState() => _PlatformFeatureCardState();
 }
 
+/// FINAL_DECISIONS §15 / Part E: Teacher-only dropdown for
+/// `system_settings.default_storage_provider`. Drives the pre-selected
+/// option in the upload UI; never restricts per-file choice. Writes go
+/// through the audited setDefaultStorageProvider callable (Rules keep
+/// system_settings client-write-denied).
+class _DefaultStorageProviderCard extends StatefulWidget {
+  const _DefaultStorageProviderCard();
+
+  @override
+  State<_DefaultStorageProviderCard> createState() =>
+      _DefaultStorageProviderCardState();
+}
+
+class _DefaultStorageProviderCardState
+    extends State<_DefaultStorageProviderCard> {
+  String? _current;
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrent();
+  }
+
+  Future<void> _loadCurrent() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('system_settings')
+          .limit(1)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _current =
+            snap.docs.first.data()['default_storage_provider'] as String?;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _current = null;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _change(String provider) async {
+    setState(() => _saving = true);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('setDefaultStorageProvider')
+          .call({'provider': provider});
+      if (!mounted) return;
+      setState(() => _current = provider);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'تم تعيين مزوّد التخزين الافتراضي: ${provider == 'bunny' ? 'Bunny' : 'Firebase'}')));
+    } on FirebaseFunctionsException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر تحديث المزوّد الافتراضي.'))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: ListTile(
+        leading: const Icon(Icons.cloud_outlined),
+        title: const Text('مزوّد التخزين الافتراضي (PDF/مرفقات/صور)'),
+        subtitle: const Text(
+          'يحدد الخيار المُسبق عند رفع الملفات — يمكن اختيار مزوّد مختلف لكل ملف عند الرفع.',
+          style: TextStyle(color: AppColors.muted, fontSize: 12),
+        ),
+        trailing: _loading || _saving
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : DropdownButton<String>(
+                value: _current ?? 'firebase',
+                items: const [
+                  DropdownMenuItem(value: 'firebase', child: Text('Firebase')),
+                  DropdownMenuItem(value: 'bunny', child: Text('Bunny')),
+                ],
+                onChanged: (value) {
+                  if (value != null && value != _current) _change(value);
+                },
+              ),
+      ),
+    );
+  }
+}
+
 class _PlatformFeatureCardState extends State<_PlatformFeatureCard> {
   bool _pending = false;
 
@@ -158,7 +262,7 @@ class _PlatformFeatureCardState extends State<_PlatformFeatureCard> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر تحديث الميزة.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر تحديث الميزة.'))),
         );
       }
     } finally {

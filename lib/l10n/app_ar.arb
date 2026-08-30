@@ -1,0 +1,52 @@
+{
+  "@@locale": "ar",
+  "appName": "منصة د. طارق",
+
+  "navHome": "الرئيسية",
+  "navNotifications": "الإشعارات",
+
+  "actionLogin": "تسجيل الدخول",
+  "actionRetry": "إعادة المحاولة",
+  "actionSignOut": "تسجيل الخروج",
+  "actionRefresh": "تحديث",
+
+  "loginPhoneHint": "رقم الهاتف",
+  "loginPasswordHint": "كلمة المرور",
+
+  "sessionErrorTitle": "خطأ في الجلسة",
+  "roleUnavailableTitle": "الدور غير متاح",
+  "roleUnavailableMessage": "لا توجد وجهة متاحة حالياً لدور {role}.",
+  "@roleUnavailableMessage": {
+    "placeholders": {
+      "role": { "type": "String" }
+    }
+  },
+  "pendingApprovalTitle": "الحساب بانتظار الموافقة",
+  "pendingApprovalMessage": "حسابك بانتظار موافقة الإدارة، لا يمكنك الوصول إلى المنصة بعد.",
+  "rejectedTitle": "تم رفض الحساب",
+  "rejectedMessage": "لم تتم الموافقة على هذا الحساب. يرجى التواصل مع إدارة المنصة.",
+  "disabledTitle": "الحساب معطل",
+  "disabledMessage": "هذا الحساب معطل ولا يمكنه الوصول إلى المنصة.",
+  "unauthorizedDeviceTitle": "جهاز غير مصرح به",
+  "unauthorizedDeviceMessage": "هذا الجهاز غير مصرح به لهذا الحساب. استخدم جهازاً معتمداً أو تواصل مع الدعم.",
+
+  "errorWrongCredentials": "رقم الهاتف أو كلمة المرور غير صحيحة.",
+  "errorNoInternet": "تعذر الاتصال بالشبكة، تحقق من اتصالك بالإنترنت ثم حاول مرة أخرى.",
+  "errorTimeout": "انتهت مهلة الاتصال بالخادم، حاول مرة أخرى.",
+  "errorServer": "حدث خطأ في الخادم، حاول مرة أخرى لاحقاً.",
+  "errorPermissionDenied": "ليس لديك صلاحية لتنفيذ هذا الإجراء.",
+  "errorTooManyRequests": "محاولات كثيرة جداً، انتظر قليلاً ثم حاول مرة أخرى.",
+  "errorApprovalPending": "حسابك بانتظار موافقة الإدارة.",
+  "errorAccountDisabled": "تم تعطيل هذا الحساب.",
+  "errorPhoneExists": "يوجد حساب مسجل بهذا الرقم بالفعل.",
+  "errorWrongCurrentPassword": "كلمة المرور الحالية غير صحيحة.",
+  "errorWeakPassword": "كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتشمل حروفاً كبيرة وصغيرة وأرقاماً ورموزاً.",
+  "errorValidation": "البيانات المدخلة غير صحيحة، تحقق منها وحاول مرة أخرى.",
+  "errorNotFound": "العنصر المطلوب غير موجود.",
+  "errorSubscriptionRequired": "يلزم اشتراك ساري في هذه المادة للوصول إلى المحتوى.",
+  "errorSubscriptionExpired": "انتهت صلاحية اشتراكك في هذه المادة.",
+  "errorSubscriptionInactive": "اشتراكك في هذه المادة غير مفعّل حالياً.",
+  "errorDisciplinaryDisabled": "تم إيقاف اشتراكك إدارياً، تواصل مع الإدارة.",
+  "errorUnauthorizedDevice": "هذا الجهاز غير مصرح به لهذا الحساب.",
+  "errorGeneric": "حدث خطأ غير متوقع، حاول مرة أخرى."
+}

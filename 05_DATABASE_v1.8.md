@@ -2,11 +2,22 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.8
+Version: 1.9
 Status: Proposed — Pending Teacher Database Change Approval
 
 ## Version History
 
+- **1.9** (2026-08-25, proposed): Ratified addendum FINAL_DECISIONS §11–15.
+  Added `lectures.public_free_enabled` + `lectures.public_free_preview_minutes`
+  (§11 per-lecture Public Free access control). Added
+  `lecture_resources.storage_provider` ("bunny" | "firebase") for
+  pdf/attachment resources and `lecture_resources.thumbnail_storage_provider`
+  for uploaded thumbnails (§15 dual storage providers; video stays implicitly
+  Bunny with no provider field). Added
+  `system_settings.default_storage_provider` (§15/E, default "firebase").
+  Documented image attachment types (jpg/jpeg/png) as an approved attachment
+  option separate from thumbnails, the section-deletion block when active
+  lectures exist, and the scheduled auto-publish behavior on `lectures.status`.
 - **1.8** (2026-08-15, proposed): Feature 14 Membership + Independent Subject Access + updated approval/access rules. Version 1.7 remains preserved as the approved baseline.
 - **1.7** (2026-08-10): Formally added `devices.fcm_token` to the `devices` collection schema to support the approved Firebase Cloud Messaging token-storage decision.
 - **1.6** (2026-08-04): Added `grade` field to `users` (Section on `users` collection) to support the approved Figma registration flow — student self-selects their Grade (الفرقة) at signup. This is a new, distinct field from `subjects.current_term` / `system_settings.current_term` ("Academic Year/Term"), which remains admin-only scheduling metadata and is unaffected by this change (Section 10 and 23 rules on hiding Academic Year/Term from students still apply). Added corresponding per-grade color tokens reference to 11 Assets.
@@ -236,6 +247,8 @@ Bonus Lectures
 
 Custom sections behave identically to system sections — same content model, same visibility rules, same membership gating.
 
+Deletion rule (NEW in v1.9, ratified Open-Question answer): deleting a section is BLOCKED while the section contains any non-archived lecture (`is_deleted == false`) — no orphaning allowed. The repository returns a specific catchable Failure and the admin UI shows: «لا يمكن حذف القسم لوجود محاضرات نشطة بداخله. يرجى أرشفة المحاضرات أولاً.» Archive or move the lectures first, then delete.
+
 Visibility rule: if a subject has no Revision content configured, the Revision section is hidden entirely (not shown empty) — same for any section with zero published content, unless the Admin explicitly publishes an empty-state section.
 
 ---
@@ -449,6 +462,10 @@ Contains
 - Display Order
 - Publish Date
 - Status
+- Public Free Enabled (NEW in v1.9, boolean, default `false`) — FINAL_DECISIONS §11: when `true`, this individual lecture is available to Public Free students even without a subject subscription (Public Free has NO whole-subject access).
+- Public Free Preview Minutes (NEW in v1.9, number | null) — per-lecture playback cap in minutes for Public Free students; independent per lecture. When null, the plan-level `video.preview_duration` default applies; when both are unset, the lecture is listed but playback is capped at zero (upgrade prompt immediately).
+
+Scheduled auto-publish (FINAL_DECISIONS addendum Part D): a scheduled Cloud Function flips `status: 'draft' → 'published'` when `publish_date <= now`. Manual publish remains available at any time regardless of `publish_date`.
 
 ---
 
@@ -476,6 +493,10 @@ Contains
 - Thumbnail
 - Duration
 - Visibility
+- Storage Provider (NEW in v1.9, string `"bunny" | "firebase"`, pdf/attachment only) — FINAL_DECISIONS §15 dual-provider support: recorded at upload time from the admin's per-file selector, defaulting to `system_settings.default_storage_provider`. Student delivery callables read it and dispatch to the correct backend automatically.
+- Thumbnail Storage Provider (NEW in v1.9, string `"bunny" | "firebase"`, optional) — provider used for the uploaded thumbnail image bytes of a video resource. Kept separate so pure video resources stay implicitly Bunny with no provider field (§15).
+
+Attachment file types (approved): zip/doc/docx/xls/xlsx/ppt/pptx/txt PLUS image types jpg/jpeg/png as an additional attachment option — distinct from the video thumbnail upload path.
 
 ---
 
@@ -971,6 +992,7 @@ Contains
 - Default Plan
 - Latest Version
 - Minimum Version
+- Default Storage Provider (NEW in v1.9, string `"bunny" | "firebase"`, default `"firebase"`) — FINAL_DECISIONS §11–15 addendum / Part E: platform default that pre-selects the provider in the admin upload UI; the Admin/Teacher can still override per file at upload time. Editable only by the Teacher via the audited `setDefaultStorageProvider` callable (Rules keep this collection read/write-denied for clients; writes are callable-only).
 
 ---
 

@@ -77,6 +77,10 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
             'duration_seconds': record.duration.inMilliseconds / 1000,
             'progress_percent': record.progressPercent * 100,
             'completed': record.completed,
+            'is_completed': record.completed,
+            if (record.completed) 'completed_at': FieldValue.serverTimestamp(),
+            if (record.pdfLastPage != null) 'pdf_last_page': record.pdfLastPage,
+            if (record.pdfTotalPages != null) 'pdf_total_pages': record.pdfTotalPages,
             'updated_at': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
     } catch (_) {
@@ -185,8 +189,11 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
       progressPercent: ProgressMath.percent(position, duration),
       completed:
           data['completed'] == true ||
+          data['is_completed'] == true ||
           ProgressMath.isCompleted(position, duration),
       updatedAt: _date(data['updated_at']),
+      pdfLastPage: data['pdf_last_page'] as int?,
+      pdfTotalPages: data['pdf_total_pages'] as int?,
     );
   }
 

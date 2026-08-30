@@ -20,3 +20,8 @@ final lectureTimelineQuizzesProvider =
   final repo = ref.watch(timelineQuizzesRepositoryProvider);
   return repo.getQuizzesForLecture(lectureId: lectureId);
 });
+
+final publishedQuizzesStreamProvider =
+    StreamProvider.autoDispose<List<TimelineQuiz>>((ref) {
+  return ref.watch(timelineQuizzesRepositoryProvider).watchPublishedQuizzes();
+});

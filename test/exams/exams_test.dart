@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dr_tarek_platform/features/exams/data/models/exam_model.dart';
+import 'package:dr_tarek_platform/features/exams/domain/entities/assessment_submit_result.dart';
 import 'package:dr_tarek_platform/features/exams/domain/entities/exam.dart';
 import 'package:dr_tarek_platform/features/exams/domain/repositories/exams_repository.dart';
 
@@ -8,6 +9,27 @@ class InMemoryExamsRepository implements ExamsRepository {
   final List<ExamAttempt> _attempts = [];
 
   void addExam(Exam exam) => _exams.add(exam);
+
+  @override
+  Stream<List<Exam>> watchPublishedExams() => throw UnimplementedError();
+
+  @override
+  Future<String> startExamAttempt({required String examId, required String studentId}) => throw UnimplementedError();
+
+  @override
+  Future<AssessmentSubmitResult> submitExamAnswers({required String attemptId, required Map<String, String> answers}) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> evaluateAnswer({
+    required String attemptId,
+    required String questionId,
+    required String answer,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<Map<String, dynamic>>> getAssessmentQuestions({
+    required String attemptId,
+  }) => throw UnimplementedError();
 
   @override
   Future<Exam?> getExamForLecture({required String lectureId}) async {
@@ -27,42 +49,6 @@ class InMemoryExamsRepository implements ExamsRepository {
     return _attempts
         .where((a) => a.examId == examId && a.studentId == studentId)
         .lastOrNull;
-  }
-
-  @override
-  Future<ExamAttempt> submitExamAttempt({
-    required String examId,
-    required String studentId,
-    required String lectureId,
-    required Map<String, int> selectedAnswers,
-    required List<ExamQuestion> questions,
-    required int passingScore,
-    required DateTime startedAt,
-  }) async {
-    int totalScore = 0;
-    int totalPossible = 0;
-
-    for (final q in questions) {
-      totalPossible += q.points;
-      if (selectedAnswers[q.id] == q.correctOptionIndex) {
-        totalScore += q.points;
-      }
-    }
-
-    final attempt = ExamAttempt(
-      id: 'exam_att_${_attempts.length + 1}',
-      examId: examId,
-      studentId: studentId,
-      lectureId: lectureId,
-      selectedAnswers: selectedAnswers,
-      score: totalScore,
-      totalPossibleScore: totalPossible,
-      passed: totalScore >= passingScore,
-      startedAt: startedAt,
-      submittedAt: DateTime.now(),
-    );
-    _attempts.add(attempt);
-    return attempt;
   }
 }
 
@@ -103,51 +89,23 @@ void main() {
       expect(exam.totalScore, 15);
     });
 
-    test('Exam submission computes score and passing threshold accurately',
-        () async {
-      final repo = InMemoryExamsRepository();
-      const questions = [
-        ExamQuestion(
-          id: 'eq1',
-          questionText: 'Q1',
-          options: ['A', 'B'],
-          correctOptionIndex: 0,
-          points: 5,
-        ),
-        ExamQuestion(
-          id: 'eq2',
-          questionText: 'Q2',
-          options: ['A', 'B'],
-          correctOptionIndex: 1,
-          points: 5,
-        ),
-      ];
+    test('ExamModel defaults missing duration and passing score safely', () {
+      final exam = ExamModel.fromMap('exam_2', const {
+        'title': 'Quick Exam',
+        'status': 'published',
+        'questions': [
+          {
+            'id': 'eq1',
+            'question_text': 'Q',
+            'options': ['A', 'B'],
+          },
+        ],
+      });
 
-      final attemptPass = await repo.submitExamAttempt(
-        examId: 'exam_1',
-        studentId: 'student_1',
-        lectureId: 'lec_101',
-        selectedAnswers: {'eq1': 0, 'eq2': 1},
-        questions: questions,
-        passingScore: 5,
-        startedAt: DateTime.now(),
-      );
-
-      expect(attemptPass.score, 10);
-      expect(attemptPass.passed, isTrue);
-
-      final attemptFail = await repo.submitExamAttempt(
-        examId: 'exam_1',
-        studentId: 'student_2',
-        lectureId: 'lec_101',
-        selectedAnswers: {'eq1': 1, 'eq2': 0},
-        questions: questions,
-        passingScore: 5,
-        startedAt: DateTime.now(),
-      );
-
-      expect(attemptFail.score, 0);
-      expect(attemptFail.passed, isFalse);
+      expect(exam.durationMinutes, 30);
+      // passing_score falls back to half of the computed total.
+      expect(exam.passingScore, 0);
+      expect(exam.totalScore, 1);
     });
   });
 }

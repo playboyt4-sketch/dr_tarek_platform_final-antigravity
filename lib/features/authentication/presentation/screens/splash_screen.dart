@@ -1,74 +1,78 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+
+import '../../../../core/responsive/responsive.dart';
+import '../../../../core/routing/app_router.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
-
-  static const Color backgroundColor = Color(0xFFFFFFFF);
-  static const Color logoColor = Colors.black;
-
-  static const double designWidth = 393;
-  static const double logoTop = 366;
-  static const double logoFontSize = 170;
-  static const Duration logoFadeDuration = Duration(milliseconds: 300);
-  static const String logoText = 'Tarek el araby';
-  static const String logoFontFamily = 'Gardenia Summer';
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _logoController;
+class _SplashScreenState extends State<SplashScreen> {
+  double _opacity = 0.0;
+  Timer? _fadeTimer;
+  Timer? _navigateTimer;
 
   @override
   void initState() {
     super.initState();
-    _logoController = AnimationController(
-      vsync: this,
-      duration: SplashScreen.logoFadeDuration,
-      lowerBound: 0,
-      upperBound: 1,
-    )..forward();
+    // 1. Initial delay: 300ms
+    _fadeTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _opacity = 1.0);
+    });
+
+    // 2. Total Pre-navigation delay: 6100ms
+    // (300ms delay + 800ms fade-in + 5000ms visible hold = 6100ms)
+    _navigateTimer = Timer(const Duration(milliseconds: 6100), () {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 800),
+            pageBuilder: (context, animation, secondaryAnimation) => const AppRouter(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+                FadeTransition(opacity: animation, child: child),
+          ),
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
-    _logoController.dispose();
+    _fadeTimer?.cancel();
+    _navigateTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final scale = screenWidth / SplashScreen.designWidth;
-
     return Scaffold(
-      backgroundColor: SplashScreen.backgroundColor,
-      body: Stack(
-        children: [
-          Positioned(
-            top: SplashScreen.logoTop * scale,
-            left: 0,
-            right: 0,
-            child: FadeTransition(
-              opacity: _logoController,
-              child: Hero(
-                tag: 'splash-logo',
-                child: Text(
-                  SplashScreen.logoText,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: SplashScreen.logoFontFamily,
-                    fontSize: SplashScreen.logoFontSize * scale,
-                    color: SplashScreen.logoColor,
-                    height: 1.0,
-                  ),
+      backgroundColor: const Color(0xFFFFFCF7),
+      body: Center(
+        child: Hero(
+          tag: 'brand_logo_signature',
+          child: Material(
+            color: Colors.transparent,
+            child: AnimatedOpacity(
+              opacity: _opacity,
+              duration: const Duration(milliseconds: 800),
+              curve: Curves.easeOut,
+              child: Text(
+                'Tarek el araby',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Gardenia Summer',
+                  fontSize: context.rs(128),
+                  color: const Color(0xFF000000),
+                  height: 1.0,
                 ),
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -41,6 +41,18 @@ class VideoLecturePanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
+          // FINAL_DECISIONS §12 nicety: remaining window time when the
+          // currently-open episode owns the student's 24-hour video window.
+          if (controller.watchWindowExpiresAt != null &&
+              controller.watchWindowActiveLectureId == controller.lectureId &&
+              controller.watchWindowExpiresAt!.isAfter(DateTime.now()))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                _windowCountdown(controller.watchWindowExpiresAt!),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
@@ -51,6 +63,9 @@ class VideoLecturePanel extends StatelessWidget {
                 return VideoLectureCard(
                   lecture: lecture,
                   isActive: isActive,
+                  lockedByWindow:
+                      controller.watchWindowActiveLectureId != null &&
+                          controller.watchWindowActiveLectureId != lecture.id,
                   onTap: () {
                     if (!isActive) {
                       controller.switchEpisode(lecture);
@@ -64,6 +79,17 @@ class VideoLecturePanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _windowCountdown(DateTime expiresAt) {
+    final remaining = expiresAt.difference(DateTime.now());
+    if (remaining <= Duration.zero) return '';
+    final hours = remaining.inHours;
+    final minutes = remaining.inMinutes.remainder(60);
+    if (hours > 0) {
+      return 'لسه فاضلك $hours ساعة و$minutes دقيقة من فيديوك الحالي';
+    }
+    return 'لسه فاضلك $minutes دقيقة من فيديوك الحالي';
   }
 
   Widget _buildHeader() {

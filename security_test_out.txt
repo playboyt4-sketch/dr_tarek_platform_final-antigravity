@@ -1,0 +1,23 @@
+Testing legitimate quiz attempt start
+Testing legitimate exam attempt start
+Testing tampering on quiz attempt create
+Testing tampering on quiz attempt update (score)
+Testing tampering on quiz attempt update (answers)
+Testing immutable quiz attempt after submission
+Testing update on quiz attempt fails 3
+Test 1: Student marks their own notification as read
+Test 2: Student A can NEVER touch student Bs notification
+Test 3: Read-receipt updates may not smuggle other fields
+Test 4: un-read a doc
+Test 5: hijacked body
+Test 6: hijacked user_id
+Test 7: hijacked delivery_status
+Test 8: hijacked sender_id
+Test 9: hijacked sent_at
+Test 10: anonymous user
+Checking lec-admin-1 get for student
+Passed lec-admin-1 get for student
+Checking lec-student-vis get for subscribedStudent
+Checking lec-student-vis get for unsubscribedStudent
+Passed lec-student-vis get
+Firestore and Storage rules tests passed.

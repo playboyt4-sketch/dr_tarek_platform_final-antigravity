@@ -1,7 +1,9 @@
-// ignore_for_file: library_private_types_in_public_api
+
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/responsive/responsive.dart';
+import '../../../../core/widgets/adaptive_layout.dart';
 import 'login_screen.dart';
 import 'new_student_welcome_screen.dart';
 import 'teacher_admin_selection_screen.dart';
@@ -9,436 +11,290 @@ import 'teacher_admin_selection_screen.dart';
 class UserTypeSelectionScreen extends StatelessWidget {
   const UserTypeSelectionScreen({super.key});
 
-  // ===============================================================
-  // DESIGN REFERENCE
-  // Figma reference canvas: 393 × 852
-  // These values are design geometry, NOT screen scaling factors.
-  // ===============================================================
-
-  static const double designWidth = 393;
-  static const double designHeight = 852;
-
   static const Color backgroundColor = Color(0xFFFFFCF7);
-
-  // ===============================================================
-  // SCREEN GEOMETRY
-  // ===============================================================
-
-  static const _ScreenGeometry geometry = _ScreenGeometry(
-    title: _ElementGeometry(x: 0, y: 62, width: 393, height: 36),
-    subtitle: _ElementGeometry(x: 0, y: 107, width: 393, height: 16),
-    newStudentCard: _ElementGeometry(x: 24, y: 145, width: 345, height: 260),
-    currentStudentCard: _ElementGeometry(
-      x: 24,
-      y: 418,
-      width: 345,
-      height: 260,
-    ),
-    platformLogo: _ElementGeometry(x: 0, y: 678, width: 393, height: 100),
-    academicYear: _ElementGeometry(x: 221, y: 787, width: 100, height: 16),
-    teacherAdminIcon: _ElementGeometry(x: 180, y: 803, width: 34, height: 34),
-  );
-
-  // ===============================================================
-  // CARD GEOMETRY
-  // ===============================================================
-
-  static const _CardGeometry newStudentCard = _CardGeometry(
-    card: _ElementGeometry(x: 24, y: 145, width: 345, height: 260),
-    image: _ElementGeometry(x: 0, y: 0, width: 369, height: 260),
-    title: _ElementGeometry(x: 22, y: 40, width: 128, height: 48),
-  );
-
-  static const _CardGeometry currentStudentCard = _CardGeometry(
-    card: _ElementGeometry(x: 24, y: 418, width: 345, height: 260),
-    image: _ElementGeometry(x: 0, y: 0, width: 369, height: 278),
-    title: _ElementGeometry(x: 22, y: 36, width: 128, height: 48),
-  );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final screenWidth = constraints.maxWidth;
-
-            // =======================================================
-            // ADAPTIVE CONTENT WIDTH
-            //
-            // 393 is the reference width.
-            //
-            // On larger screens:
-            //   content remains 393 wide and is centered.
-            //
-            // On smaller screens:
-            //   content uses the available width.
-            //
-            // There is NO proportional scaling.
-            // =======================================================
-
-            final contentWidth = screenWidth < designWidth
-                ? screenWidth
-                : designWidth;
-
-            final contentLeft = (screenWidth - contentWidth) / 2;
-
-            // =======================================================
-            // VERTICAL CONTENT
-            //
-            // The design geometry remains intact.
-            // If the viewport is shorter than the design,
-            // SingleChildScrollView allows natural scrolling.
-            // =======================================================
-
-            return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
-              child: SizedBox(
-                width: screenWidth,
-                height: designHeight,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // =================================================
-                    // BACKGROUND
-                    // =================================================
-                    const Positioned.fill(
-                      child: ColoredBox(color: backgroundColor),
-                    ),
-
-                    // =================================================
-                    // TITLE
-                    // =================================================
-                    Positioned(
-                      left: contentLeft,
-                      top: geometry.title.y,
-                      child: SizedBox(
-                        width: contentWidth,
-                        height: geometry.title.height,
-                        child: const Text(
-                          'I am a',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 36,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black,
-                            height: 1.0,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // =================================================
-                    // SUBTITLE
-                    // =================================================
-                    Positioned(
-                      left: contentLeft,
-                      top: geometry.subtitle.y,
-                      child: SizedBox(
-                        width: contentWidth,
-                        height: geometry.subtitle.height,
-                        child: const Text(
-                          'Select one that applies to you',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 16,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black,
-                            height: 1.0,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // =================================================
-                    // NEW STUDENT CARD
-                    // =================================================
-                    Positioned(
-                      left:
-                          contentLeft +
-                          _centeredOffset(
-                            geometry.newStudentCard,
-                            contentWidth,
-                          ),
-                      top: geometry.newStudentCard.y,
-                      child: _UserTypeCard(
-                        cardGeometry: newStudentCard,
-                        cardColor: const Color(0xFFFBCB3D),
-                        imagePath: 'assets/images/new_student.png',
-                        title: 'New Student',
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const NewStudentWelcomeScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // =================================================
-                    // CURRENT STUDENT CARD
-                    // =================================================
-                    Positioned(
-                      left:
-                          contentLeft +
-                          _centeredOffset(
-                            geometry.currentStudentCard,
-                            contentWidth,
-                          ),
-                      top: geometry.currentStudentCard.y,
-                      child: _UserTypeCard(
-                        cardGeometry: currentStudentCard,
-                        cardColor: const Color(0xFFE43639),
-                        imagePath: 'assets/images/current_student.png',
-                        title: 'Current Student',
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const LoginScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // =================================================
-                    // PLATFORM LOGO
-                    // =================================================
-                    Positioned(
-                      left: contentLeft,
-                      top: geometry.platformLogo.y,
-                      child: SizedBox(
-                        width: contentWidth,
-                        height: geometry.platformLogo.height,
-                        child: const Hero(
-                          tag: 'splash-logo',
-                          child: Material(
-                            color: Colors.transparent,
-                            child: Text(
-                              'Tarek el araby',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontFamily: 'Gardenia Summer',
-                                fontSize: 128,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black,
-                                height: 1.0,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // =================================================
-                    // ACADEMIC YEAR
-                    // =================================================
-                    Positioned(
-                      left: contentLeft + geometry.academicYear.x,
-                      top: geometry.academicYear.y,
-                      child: const SizedBox(
-                        width: 100,
-                        height: 16,
-                        child: Text(
-                          '2026-2027',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black,
-                            height: 1.0,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // =================================================
-                    // TEACHER / ADMIN ICON
-                    // =================================================
-                    Positioned(
-                      left: contentLeft + geometry.teacherAdminIcon.x,
-                      top: geometry.teacherAdminIcon.y,
-                      child: SizedBox(
-                        width: 34,
-                        height: 34,
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    const TeacherAdminSelectionScreen(),
-                              ),
-                            );
-                          },
-                          icon: const Icon(
-                            Icons.person_outline,
-                            color: Colors.black,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+        child: AdaptiveLayout(
+          maxWidth: 800.0,
+          mobileBuilder: (context) => _buildScrollableContent(context, false),
+          tabletBuilder: (context) => _buildScrollableContent(context, true),
         ),
       ),
     );
   }
 
-  // ===============================================================
-  // CENTER ELEMENT INSIDE THE DESIGN WIDTH
-  // ===============================================================
+  Widget _buildScrollableContent(BuildContext context, bool isTablet) {
+    final rsFont = context.rsFont;
+    final paddingH = context.rs(24);
+    
+    // Calculate a max width for the cards so they don't look comically large on tablet
+    final double maxCardWidth = isTablet ? 380.0 : double.infinity;
 
-  static double _centeredOffset(_ElementGeometry element, double contentWidth) {
-    return (contentWidth - element.width) / 2;
+    return SingleChildScrollView(
+      physics: const ClampingScrollPhysics(),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: 24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const SizedBox(height: 24),
+            // Title
+            Text(
+              'I am a',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: rsFont(36),
+                fontWeight: FontWeight.w700, // Inter Bold
+                color: const Color(0xFF111827),
+                height: 1.2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Subtitle
+            Text(
+              'Select one that applies to you',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: rsFont(16),
+                fontWeight: FontWeight.w400, // Inter Regular
+                color: const Color(0xFF6B7280),
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 32),
+            
+            // Cards Layout
+            if (isTablet)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: maxCardWidth),
+                      child: _buildNewStudentCard(context),
+                    ),
+                  ),
+                  SizedBox(width: paddingH),
+                  Expanded(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: maxCardWidth),
+                      child: _buildCurrentStudentCard(context),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Column(
+                children: [
+                  _buildNewStudentCard(context),
+                  const SizedBox(height: 32),
+                  _buildCurrentStudentCard(context),
+                ],
+              ),
+            
+            const SizedBox(height: 32),
+            // Platform Logo Hero
+            Hero(
+              tag: 'brand_logo_signature',
+              child: Material(
+                color: Colors.transparent,
+                child: Text(
+                  'Tarek el araby',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Gardenia Summer',
+                    fontSize: rsFont(128),
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Teacher/Admin & Academic Year
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                InkWell(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const TeacherAdminSelectionScreen()),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(rsFont(20)),
+                  child: Container(
+                    width: rsFont(40),
+                    height: rsFont(40),
+                    decoration: const BoxDecoration(shape: BoxShape.circle),
+                    clipBehavior: Clip.antiAlias,
+                    child: Image.asset(
+                      'assets/images/teacher & admin icone.png',
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Icon(
+                        Icons.person_outline,
+                        color: Colors.black,
+                        size: rsFont(24),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: context.rs(8)),
+                Text(
+                  '2026-2027',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: rsFont(10), // Inter Bold, 10px, black
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNewStudentCard(BuildContext context) {
+    return _UserTypeCard(
+      cardColor: const Color(0xFFFBCB3D),
+      imagePath: 'assets/images/new_student.png',
+      title: 'طالب جديد',
+      // Illustration Figma relative coords: X=54-24=30, Y=38, W=321, H=241
+      imageLeft: 30.0,
+      imageTop: 38.0,
+      imageWidth: 321.0,
+      imageHeight: 241.0,
+      onTap: () {
+        Navigator.of(context).push(
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 300),
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                const NewStudentWelcomeScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(1.0, 0.0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOut,
+                )),
+                child: child,
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCurrentStudentCard(BuildContext context) {
+    return _UserTypeCard(
+      cardColor: const Color(0xFFE43639),
+      imagePath: 'assets/images/current_student.png',
+      title: 'طالب حالي',
+      // Illustration Figma relative coords: X=43-24=19, Y=15, W=311, H=260
+      imageLeft: 19.0,
+      imageTop: 15.0,
+      imageWidth: 311.0,
+      imageHeight: 260.0,
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      },
+    );
   }
 }
 
-// ===================================================================
-// SCREEN GEOMETRY
-// ===================================================================
-
-class _ScreenGeometry {
-  final _ElementGeometry title;
-  final _ElementGeometry subtitle;
-  final _ElementGeometry newStudentCard;
-  final _ElementGeometry currentStudentCard;
-  final _ElementGeometry platformLogo;
-  final _ElementGeometry academicYear;
-  final _ElementGeometry teacherAdminIcon;
-
-  const _ScreenGeometry({
-    required this.title,
-    required this.subtitle,
-    required this.newStudentCard,
-    required this.currentStudentCard,
-    required this.platformLogo,
-    required this.academicYear,
-    required this.teacherAdminIcon,
-  });
-}
-
-// ===================================================================
-// ELEMENT GEOMETRY
-// ===================================================================
-
-class _ElementGeometry {
-  final double x;
-  final double y;
-  final double width;
-  final double height;
-
-  const _ElementGeometry({
-    required this.x,
-    required this.y,
-    required this.width,
-    required this.height,
-  });
-}
-
-// ===================================================================
-// CARD GEOMETRY
-// ===================================================================
-
-class _CardGeometry {
-  final _ElementGeometry card;
-  final _ElementGeometry image;
-  final _ElementGeometry title;
-
-  const _CardGeometry({
-    required this.card,
-    required this.image,
-    required this.title,
-  });
-}
-
-// ===================================================================
-// USER TYPE CARD
-// ===================================================================
-
 class _UserTypeCard extends StatelessWidget {
-  final _CardGeometry cardGeometry;
-
   final Color cardColor;
   final String imagePath;
   final String title;
+  final double imageLeft;
+  final double imageTop;
+  final double imageWidth;
+  final double imageHeight;
   final VoidCallback onTap;
 
   const _UserTypeCard({
-    required this.cardGeometry,
     required this.cardColor,
     required this.imagePath,
     required this.title,
+    required this.imageLeft,
+    required this.imageTop,
+    required this.imageWidth,
+    required this.imageHeight,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final card = cardGeometry.card;
-    final image = cardGeometry.image;
-    final titleGeometry = cardGeometry.title;
-
-    return SizedBox(
-      width: card.width,
-      height: card.height,
-      child: Material(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(28),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              // =====================================================
-              // IMAGE
-              // =====================================================
-              Positioned(
-                left: image.x,
-                top: image.y,
-                child: SizedBox(
-                  width: image.width,
-                  height: image.height,
-                  child: Image.asset(imagePath, fit: BoxFit.fill),
+    // Rigid composition matching Figma 393x260 card aspect
+    return AdaptiveAspectContainer(
+      designWidth: 345,
+      designHeight: 260,
+      builder: (context, constraints, scale) {
+        return Stack(
+          clipBehavior: Clip.none, // DO NOT CLIP the bleeding illustration
+          children: [
+            // Card Background
+            Positioned.fill(
+              child: Material(
+                color: cardColor,
+                borderRadius: BorderRadius.circular(28 * scale),
+                clipBehavior: Clip.antiAlias, // Clip background only
+                child: InkWell(
+                  onTap: onTap,
+                  child: const SizedBox.expand(),
                 ),
               ),
-
-              // =====================================================
-              // TITLE
-              // =====================================================
-              Positioned(
-                left: titleGeometry.x,
-                top: titleGeometry.y,
-                child: SizedBox(
-                  width: titleGeometry.width,
-                  height: titleGeometry.height,
-                  child: Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFFFFFCF7),
-                      height: 1.0,
-                    ),
+            ),
+            // Arabic label inside card bounds
+            Positioned(
+              left: 24 * scale,
+              top: 24 * scale,
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 24 * scale,
+                  fontWeight: FontWeight.w700, // Inter Bold
+                  color: const Color(0xFFFFFCF7),
+                  height: 1.0,
+                ),
+              ),
+            ),
+            // Bleeding illustration
+            Positioned(
+              left: imageLeft * scale,
+              top: imageTop * scale,
+              width: imageWidth * scale,
+              height: imageHeight * scale,
+              child: IgnorePointer(
+                child: Image.asset(
+                  imagePath,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Icon(
+                    Icons.school_outlined,
+                    size: 80 * scale,
+                    color: Colors.white70,
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

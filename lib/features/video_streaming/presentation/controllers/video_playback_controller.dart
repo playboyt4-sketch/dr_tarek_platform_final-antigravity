@@ -17,6 +17,10 @@ class VideoPlaybackController extends ChangeNotifier {
   final VideoEntitlementGateway entitlementService;
   final PlaybackRepository playbackRepository;
 
+  /// FINAL_DECISIONS §12: self-read of the caller's rolling 24-hour window
+  /// (null in tests / when unavailable — all consumers degrade gracefully).
+  final WatchWindowGateway? watchWindowGateway;
+
   List<LectureSummary> episodes;
   String lectureId;
   String sectionId;
@@ -25,10 +29,27 @@ class VideoPlaybackController extends ChangeNotifier {
   Duration? skipIntroStart;
   Duration? skipIntroEnd;
 
+  /// §12 window snapshot from the last [refreshWatchWindowState] poll.
+  String? watchWindowActiveLectureId;
+  DateTime? watchWindowExpiresAt;
+
+  /// §12: set when generateBunnySignedUrl refused a DIFFERENT video while
+  /// the rolling window is active. Drives the same VideoUpgradePrompt wall
+  /// used by the §11 preview cap — surfaced BEFORE playback ever starts.
+  DateTime? dailyWindowExpiresAt;
+
+  bool get dailyWindowBlocked =>
+      showUpgradePrompt && dailyWindowExpiresAt != null;
+
   VideoPlayerController? _engine;
   VideoResource? _resource;
   VideoEntitlement? _entitlement;
   PlaybackProgressRecord? _resumeRecord;
+
+  /// Active Public Free per-lecture cap (FINAL_DECISIONS §11); null =
+  /// unlimited playback. Derived from the server-armed resource metadata —
+  /// the client NEVER recomputes entitlement, it only enforces.
+  Duration? _previewCap;
   PlayerPlaybackStatus playbackStatus = PlayerPlaybackStatus.initial;
   VideoQuality selectedQuality = VideoQuality.auto;
   String? errorMessage;
@@ -37,6 +58,11 @@ class VideoPlaybackController extends ChangeNotifier {
   bool fullscreen = false;
   bool showResumePrompt = false;
   bool showNextEpisodePrompt = false;
+
+  /// FINAL_DECISIONS §11: set when playback hits the per-lecture Public
+  /// Free minute cap; the overlay shows the upgrade prompt and play() is
+  /// refused until a different (unlocked) episode is opened.
+  bool showUpgradePrompt = false;
   bool _disposed = false;
   bool _initializing = false;
   int _operationId = 0;
@@ -57,6 +83,7 @@ class VideoPlaybackController extends ChangeNotifier {
     required this.playbackRepository,
     required this.episodes,
     required LectureSummary episode,
+    this.watchWindowGateway,
   }) : lectureId = episode.id,
        sectionId = episode.sectionId ?? '',
        episodeTitle = episode.title,
@@ -153,6 +180,10 @@ class VideoPlaybackController extends ChangeNotifier {
     required bool autoplay,
   }) async {
     _resource = null;
+    // Fresh attempt: clear any previous §12 wall state (§11 state is
+    // recomputed below exactly as before — the two gates are independent).
+    dailyWindowExpiresAt = null;
+    showUpgradePrompt = false;
     final resources = await sourceResolver.loadResources(lectureId);
     if (_disposed || operation != _operationId) return;
     final videoResources = resources.where((item) => item.isVideo).toList();
@@ -162,6 +193,27 @@ class VideoPlaybackController extends ChangeNotifier {
       );
     }
     _resource = videoResources.first;
+    // Storage-delivery Fix 2: the callable now returns a SERVER-RESOLVED,
+    // short-lived thumbnail URL (Firebase signed URL or Bunny token URL).
+    // Adopt it for the active episode so episode cards and progress
+    // records render a real image even when the lectures-collection
+    // thumbnail is unset. Presentation never branches on the provider.
+    final resolvedThumbnail = _resource!.thumbnailUrl;
+    if (resolvedThumbnail != null && resolvedThumbnail.isNotEmpty) {
+      episodeThumbnailUrl = resolvedThumbnail;
+      final index = episodes.indexWhere((item) => item.id == lectureId);
+      if (index >= 0 && episodes[index].thumbnailUrl != resolvedThumbnail) {
+        final updated = [...episodes];
+        updated[index] = updated[index].copyWith(thumbnailUrl: resolvedThumbnail);
+        episodes = List<LectureSummary>.unmodifiable(updated);
+      }
+    }
+    // Per-lecture Public Free cap (FINAL_DECISIONS §11). The server already
+    // reconciled the lecture minutes against the plan's
+    // video.preview_duration default; here we only read the verdict.
+    _previewCap = PreviewCapPolicy.capFor(_resource);
+    showUpgradePrompt =
+        _previewCap != null && _previewCap == Duration.zero;
 
     if (restoreProgress) {
       _resumeRecord = await playbackRepository.read(lectureId);
@@ -171,11 +223,45 @@ class VideoPlaybackController extends ChangeNotifier {
           ResumeAction.continueWatching;
     }
 
-    await _loadEngine(
-      operation: operation,
-      positionToRestore: restoreProgress ? _resumeRecord?.position : null,
-      autoplay: autoplay,
-    );
+    try {
+      await _loadEngine(
+        operation: operation,
+        positionToRestore: restoreProgress ? _resumeRecord?.position : null,
+        autoplay: autoplay,
+      );
+    } on CenterFreeWindowBlockedException catch (blocked) {
+      // FINAL_DECISIONS §12: a DIFFERENT video was requested while the
+      // rolling window is active. Surface the SAME upgrade wall used by §11
+      // — before playback starts, never mid-playback.
+      if (_disposed || operation != _operationId) return;
+      final expiresMs = blocked.windowExpiresAtMs;
+      dailyWindowExpiresAt =
+          expiresMs == null ? null : DateTime.fromMillisecondsSinceEpoch(expiresMs);
+      errorMessage = null;
+      showUpgradePrompt = true;
+      playbackStatus = PlayerPlaybackStatus.paused;
+      unawaited(refreshWatchWindowState());
+      _notify();
+      return;
+    }
+    unawaited(refreshWatchWindowState());
+  }
+
+  /// Best-effort §12 window snapshot for UI niceties (countdown text,
+  /// locked badges on other episode cards). Never throws; non-Center-Free
+  /// callers simply get an active:false verdict from the callable.
+  Future<void> refreshWatchWindowState() async {
+    final gateway = watchWindowGateway;
+    if (_disposed || gateway == null) return;
+    try {
+      final snapshot = await gateway.load();
+      if (_disposed) return;
+      watchWindowActiveLectureId = snapshot.activeLectureId;
+      watchWindowExpiresAt = snapshot.expiresAt;
+      _notify();
+    } catch (_) {
+      // Nicety only — must never disturb playback.
+    }
   }
 
   Future<void> _loadEngine({
@@ -187,6 +273,9 @@ class VideoPlaybackController extends ChangeNotifier {
     if (resource == null) {
       throw const VideoSourceException('مصدر الفيديو غير متاح.');
     }
+    _prefetchedSources.removeWhere((_, source) =>
+        source.expiresAt.difference(DateTime.now()) <
+        const Duration(seconds: 30));
     final cacheKey = _sourceCacheKey(lectureId, selectedQuality);
     final cachedSource = _prefetchedSources.remove(cacheKey);
     final source =
@@ -289,6 +378,16 @@ class VideoPlaybackController extends ChangeNotifier {
     } else {
       playbackStatus = PlayerPlaybackStatus.paused;
     }
+
+    // FINAL_DECISIONS §11 enforcement: stop playback the moment the
+    // per-lecture allowed minutes are consumed and surface the upgrade
+    // prompt. Position-based (not wall-clock) so buffering/pauses are fair.
+    if (_previewCap != null &&
+        PreviewCapPolicy.shouldStop(value.position, _previewCap)) {
+      unawaited(_enforcePreviewCap());
+      return;
+    }
+
     final now = DateTime.now();
     if (now.difference(
           _lastProgressSave ?? DateTime.fromMillisecondsSinceEpoch(0),
@@ -334,12 +433,29 @@ class VideoPlaybackController extends ChangeNotifier {
     await changeQuality(lower.first);
   }
 
+  /// Stops playback at the Public Free cap and shows the upgrade prompt.
+  Future<void> _enforcePreviewCap() async {
+    final engine = _engine;
+    if (engine != null && engine.value.isPlaying) {
+      await engine.pause();
+    }
+    showUpgradePrompt = true;
+    if (_previewCap == Duration.zero) {
+      // Nothing allowed at all — treat like a locked lecture.
+      playbackStatus = PlayerPlaybackStatus.paused;
+    } else {
+      playbackStatus = PlayerPlaybackStatus.paused;
+    }
+    unawaited(_persistProgress(forceCloud: true));
+    _notify();
+  }
+
   Future<void> play() async {
     final engine = _engine;
     if (_disposed ||
         engine == null ||
         !engine.value.isInitialized ||
-        engine.value.isPlaying) {
+        showUpgradePrompt) {
       return;
     }
     showResumePrompt = false;
@@ -395,8 +511,10 @@ class VideoPlaybackController extends ChangeNotifier {
     if (_disposed || engine == null || !engine.value.isInitialized) return;
     playbackStatus = PlayerPlaybackStatus.seeking;
     _notify();
+    // Preview caps also fence seeking — no skipping past the wall (§11).
+    final fenced = PreviewCapPolicy.clampSeek(target, _previewCap);
     await engine.seekTo(
-      ProgressMath.clampPosition(target, engine.value.duration),
+      ProgressMath.clampPosition(fenced, engine.value.duration),
     );
     await _persistProgress(forceCloud: true);
     if (!_disposed) {
@@ -414,6 +532,7 @@ class VideoPlaybackController extends ChangeNotifier {
     if (_disposed || quality == selectedQuality || !isAllowed) {
       return false;
     }
+    _prefetchedSources.removeWhere((key, _) => key.startsWith('$lectureId:'));
     final wasPlaying = isPlaying;
     final restorePosition = position;
     selectedQuality = quality;
@@ -457,6 +576,7 @@ class VideoPlaybackController extends ChangeNotifier {
     String? newSectionId,
   }) async {
     if (_disposed || episode.id == lectureId) return;
+    _prefetchedSources.clear();
     final operation = ++_operationId;
     final shouldPlay = isPlaying;
     await _persistProgress(forceCloud: true);
@@ -473,6 +593,8 @@ class VideoPlaybackController extends ChangeNotifier {
     _resumeRecord = null;
     showResumePrompt = false;
     showNextEpisodePrompt = false;
+    showUpgradePrompt = false;
+    _previewCap = null; // recomputed by _prepareSource
     errorMessage = null;
     playbackStatus = PlayerPlaybackStatus.loading;
     _notify();
@@ -530,6 +652,7 @@ class VideoPlaybackController extends ChangeNotifier {
     final operation = ++_operationId;
     playbackStatus = PlayerPlaybackStatus.loading;
     errorMessage = null;
+    showUpgradePrompt = false; // recomputed by _prepareSource
     _notify();
     try {
       _entitlement ??= await entitlementService.resolve(

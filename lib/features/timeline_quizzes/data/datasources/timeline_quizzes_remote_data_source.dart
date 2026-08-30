@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../domain/entities/timeline_quiz.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import '../../domain/entities/assessment_submit_result.dart';
 import '../models/timeline_quiz_model.dart';
 
 class TimelineQuizzesRemoteDataSource {
@@ -40,38 +41,78 @@ class TimelineQuizzesRemoteDataSource {
     return QuizAttemptModel.fromFirestore(snap.docs.first);
   }
 
-  Future<QuizAttemptModel> submitAttempt({
-    required String quizId,
+  /// Published quizzes list — powers the hub Quizzes screen.
+  Stream<List<TimelineQuizModel>> watchPublishedQuizzes() {
+    return _quizzesRef
+        .where('status', isEqualTo: 'published')
+        .snapshots()
+        .map((snap) => snap.docs.map(TimelineQuizModel.fromFirestore).toList());
+  }
+
+  /// Starts an attempt document (rules-whitelisted fields only).
+  Future<String> startAttempt({
+    required String assessmentId,
     required String studentId,
-    required String lectureId,
-    required Map<String, int> selectedAnswers,
-    required List<QuizQuestion> questions,
-    required bool skipped,
   }) async {
-    int score = 0;
-    if (!skipped) {
-      for (final q in questions) {
-        if (selectedAnswers[q.id] == q.correctOptionIndex) {
-          score++;
-        }
-      }
-    }
+    final docRef = await _attemptsRef.add({
+      'student_id': studentId,
+      'assessment_id': assessmentId,
+      'status': 'started',
+      'started_at': FieldValue.serverTimestamp(),
+    });
+    return docRef.id;
+  }
 
-    final docRef = _attemptsRef.doc();
-    final model = QuizAttemptModel(
-      id: docRef.id,
-      quizId: quizId,
-      studentId: studentId,
-      lectureId: lectureId,
-      selectedAnswers: selectedAnswers,
-      score: score,
-      totalQuestions: questions.length,
-      skipped: skipped,
-      submittedAt: DateTime.now(),
-      createdAt: DateTime.now(),
+  /// Submits answers through the server-side grader (submitAssessmentAttempt).
+  Future<AssessmentSubmitResult> submitAnswers({
+    required String attemptId,
+    required Map<String, String> answers,
+  }) async {
+    final callable = FirebaseFunctions.instance
+        .httpsCallable('submitAssessmentAttempt');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'quiz',
+      'answers': answers,
+    });
+    final data = response.data as Map<dynamic, dynamic>? ?? {};
+    return AssessmentSubmitResult(
+      submitted: data['submitted'] == true,
+      score: (data['score'] as num?)?.toInt(),
+      totalMarks: (data['totalMarks'] as num?)?.toInt() ?? 0,
+      percentage: (data['percentage'] as num?)?.toDouble(),
+      needsManualGrading: data['needsManualGrading'] == true,
     );
+  }
 
-    await docRef.set(model.toMap());
-    return model;
+  /// Evaluates a single answer statelessly on the server for immediate feedback.
+  Future<Map<String, dynamic>> evaluateAnswer({
+    required String attemptId,
+    required String questionId,
+    required String answer,
+  }) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('evaluateQuestionAnswer');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'quiz',
+      'questionId': questionId,
+      'answer': answer,
+    });
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  /// Securely fetches questions for an attempt without correct answers or explanations.
+  Future<List<Map<String, dynamic>>> getAssessmentQuestions({
+    required String attemptId,
+  }) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('getAssessmentQuestions');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'quiz',
+    });
+    final data = response.data as Map<dynamic, dynamic>? ?? {};
+    final questions = data['questions'] as List<dynamic>? ?? [];
+    return questions.map((q) => Map<String, dynamic>.from(q as Map)).toList();
   }
 }
+

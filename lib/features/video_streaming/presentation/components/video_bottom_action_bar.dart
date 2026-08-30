@@ -7,6 +7,7 @@ class VideoBottomActionBar extends StatelessWidget {
   final VoidCallback onPdfTap;
   final VoidCallback onQualityTap;
   final VoidCallback onNextTap;
+  final VoidCallback? onBookmarkTap;
 
   const VideoBottomActionBar({
     required this.controller,
@@ -14,6 +15,7 @@ class VideoBottomActionBar extends StatelessWidget {
     required this.onPdfTap,
     required this.onQualityTap,
     required this.onNextTap,
+    this.onBookmarkTap,
     super.key,
   });
 
@@ -117,8 +119,10 @@ class VideoBottomActionBar extends StatelessWidget {
           ),
           const SizedBox(width: 35),
           _buildToolBtn(
-            icon: Icons.picture_as_pdf_outlined,
-            label: 'PDF',
+            // Documents entry opens both the lecture PDF and attachments
+            // (storage-delivery Fix 1); label generalized accordingly.
+            icon: Icons.folder_open_outlined,
+            label: 'الملفات',
             onTap: onPdfTap,
           ),
           const SizedBox(width: 35),
@@ -126,6 +130,13 @@ class VideoBottomActionBar extends StatelessWidget {
             icon: Icons.settings_outlined,
             label: 'الجودة',
             onTap: onQualityTap,
+          ),
+          const SizedBox(width: 35),
+          _buildToolBtn(
+            icon: Icons.bookmark_border_rounded,
+            label: 'حفظ',
+            onTap: onBookmarkTap,
+            opacity: onBookmarkTap == null ? 0.3 : 0.85,
           ),
           const SizedBox(width: 35),
           _buildToolBtn(

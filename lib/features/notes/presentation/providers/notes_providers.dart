@@ -23,3 +23,9 @@ final lectureNotesStreamProvider =
     );
   },
 );
+
+final studentNotesStreamProvider =
+    StreamProvider.family<List<Note>, String>((ref, studentId) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchNotesForStudent(studentId: studentId);
+});

@@ -1,0 +1,26 @@
+name: iOS validation (manual)
+
+# iOS builds require macOS runners. Signing secrets are NOT stored in this
+# repository, so this workflow validates a NO-CODESIGN release build only.
+# Run manually from the Actions tab; real store signing stays local/owner-side.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ios-no-codesign:
+    name: iOS build (no codesign)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Generates the CocoaPods infrastructure if missing, then compiles
+      # without signing (no distribution certificate in CI).
+      - name: flutter build ios --no-codesign
+        run: |
+          flutter precache --ios
+          flutter build ios --release --no-codesign

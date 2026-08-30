@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -11,6 +12,7 @@ import '../../../authentication/presentation/providers/auth_provider.dart';
 import 'admin_notifications_composer_screen.dart';
 import 'admins_management_screen.dart';
 import 'custom_groups_screen.dart';
+import '../../../content_authoring/presentation/screens/admin_subject_picker_screen.dart';
 import 'plan_quality_matrix_screen.dart';
 import 'platform_features_screen.dart';
 import 'students_management_screen.dart';
@@ -52,23 +54,8 @@ class AdminHomeScreen extends ConsumerWidget {
           Text('إجراءات سريعة', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 10),
           AppButton(
-            label: 'مراجعة طلبات الطلاب',
-            icon: Icons.fact_check_outlined,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => _AdminCollectionScreen(
-                  title: 'طلبات الطلاب',
-                  collection: 'registration_requests',
-                  emptyMessage: 'لا توجد طلبات مراجعة حالياً.',
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          AppButton(
             label: 'اعتماد الطلاب وتحديد المواد',
             icon: Icons.how_to_reg_outlined,
-            variant: AppButtonVariant.outlined,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const _PendingStudentsScreen()),
             ),
@@ -89,6 +76,16 @@ class AdminHomeScreen extends ConsumerWidget {
             variant: AppButtonVariant.outlined,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SubjectsManagementScreen()),
+            ),
+          ),
+          const SizedBox(height: 10),
+          AppButton(
+            label: 'إدارة الأقسام والمحاضرات',
+            icon: Icons.collections_bookmark_outlined,
+            variant: AppButtonVariant.outlined,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const AdminSubjectPickerScreen()),
             ),
           ),
           const SizedBox(height: 10),
@@ -181,15 +178,27 @@ class AdminHomeScreen extends ConsumerWidget {
 class _AdminStatsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final stats = <({String title, String collection, IconData icon})>[
-      (title: 'الطلاب', collection: 'users', icon: Icons.people_outline),
-      (title: 'المواد', collection: 'subjects', icon: Icons.menu_book_outlined),
+    // `registration_requests` is NOT a real collection (05 Database has no
+    // such schema; registration lives on users.approval_status == 'pending').
+    // The pending tile therefore counts pending new_student users, which the
+    // users rule permits staff to list.
+    Query<Map<String, dynamic>> pendingRegistrationsQuery() =>
+        FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'new_student')
+            .where('approval_status', isEqualTo: 'pending');
+
+    final stats =
+        <({String title, String collection, IconData icon, Query<Map<String, dynamic>> Function()? query})>[
+      (title: 'الطلاب', collection: 'users', icon: Icons.people_outline, query: null),
+      (title: 'المواد', collection: 'subjects', icon: Icons.menu_book_outlined, query: null),
       (
         title: 'طلبات التسجيل',
-        collection: 'registration_requests',
+        collection: 'users',
         icon: Icons.pending_actions_outlined,
+        query: pendingRegistrationsQuery,
       ),
-      (title: 'الإشعارات', collection: 'notifications', icon: Icons.notifications_none_outlined),
+      (title: 'الإشعارات', collection: 'notifications', icon: Icons.notifications_none_outlined, query: null),
     ];
     return GridView.builder(
       shrinkWrap: true,
@@ -205,8 +214,8 @@ class _AdminStatsGrid extends StatelessWidget {
         final stat = stats[index];
         return Card(
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection(stat.collection)
+            stream: (stat.query?.call() ??
+                    FirebaseFirestore.instance.collection(stat.collection))
                 .limit(100)
                 .snapshots(),
             builder: (_, snapshot) => Padding(
@@ -520,7 +529,7 @@ class _StudentApprovalDialogState extends State<_StudentApprovalDialog> {
       if (!mounted) return;
       setState(() {
         submitting = false;
-        errorMessage = error.message ?? 'تعذر اعتماد الطالب.';
+        errorMessage = friendlyFunctionErrorMessage(error, 'تعذر اعتماد الطالب.');
       });
     } catch (error) {
       if (!mounted) return;

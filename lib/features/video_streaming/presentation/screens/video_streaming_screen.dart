@@ -5,12 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
+import '../../../authentication/presentation/providers/auth_provider.dart';
+import '../../../bookmarks/presentation/providers/bookmarks_providers.dart';
 import '../../data/repositories/playback_repository.dart';
 import '../controllers/video_playback_controller.dart';
 import '../providers/video_streaming_providers.dart';
+import '../components/video_documents_sheet.dart';
 import '../components/video_player_layout.dart';
 import '../components/video_lecture_panel.dart';
 import '../components/video_quality_sheet.dart';
+import '../../../lecture/presentation/screens/pdf_viewer_screen.dart';
+import '../../../membership/presentation/screens/membership_plans_screen.dart';
 
 class VideoStreamingScreen extends ConsumerStatefulWidget {
   final String subjectId;
@@ -75,6 +80,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
             playbackRepositoryFor(userId: userId, preferences: preferences),
         episodes: widget.episodes,
         episode: widget.initialEpisode,
+        watchWindowGateway: ref.watch(watchWindowGatewayProvider),
       );
       controller.addListener(_onControllerChanged);
       _controller = controller;
@@ -137,12 +143,86 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
             controller: _controller!,
             onBack: () => Navigator.of(context).maybePop(),
             onLecturesTap: _showEpisodesPanel,
-            onPdfTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('سيتم توفير ملفات PDF قريباً.')),
-              );
+            onUpgradeTap: () {
+              final navigator = Navigator.of(context);
+              final user = ref.read(authProvider).value;
+              if (user == null) return;
+              unawaited(navigator.push(MaterialPageRoute(
+                builder: (_) => MembershipPlansScreen(user: user),
+              )));
+            },
+            onPdfTap: () async {
+              if (_controller == null) return;
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+
+                final resources = await _controller!.sourceResolver.loadResources(_controller!.lectureId);
+
+                if (mounted) {
+                  navigator.pop();
+                }
+
+                // Storage-delivery Fix 1: attachments join PDFs as openable
+                // documents. Provider dispatch stays in the Data layer —
+                // the sheet only forwards the opaque storageProvider string.
+                final documents = LectureDocuments.fromResources(resources);
+                if (documents.isEmpty) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      const SnackBar(content: Text('لا توجد ملفات متاحة لهذه المحاضرة.')),
+                    );
+                  }
+                  return;
+                }
+
+                // Legacy UX preserved: a lecture with exactly one document
+                // and it is the PDF -> open it directly (no sheet).
+                if (documents.length == 1 && documents.single.isPdf) {
+                  final pdf = documents.single;
+                  if (mounted) {
+                    unawaited(navigator.push(
+                      MaterialPageRoute(
+                        builder: (_) => PdfViewerScreen(
+                          resourceId: pdf.resourceId,
+                          title: pdf.title,
+                          subjectId: _controller!.subjectId,
+                          lectureId: _controller!.lectureId,
+                          storageProvider: pdf.storageProvider,
+                          videoController: _controller,
+                        ),
+                      ),
+                    ));
+                  }
+                  return;
+                }
+
+                if (!mounted) return;
+                await showLectureDocumentsSheet(
+                  this.context,
+                  documents: documents,
+                  subjectId: _controller!.subjectId,
+                  lectureId: _controller!.lectureId,
+                  videoController: _controller,
+                );
+              } catch (_) {
+                if (mounted) {
+                  navigator.pop();
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('تعذر تحميل موارد المحاضرة.')),
+                  );
+                }
+              }
             },
             onQualityTap: _showQualitySheet,
+            onBookmarkTap: _saveBookmark,
             onNextTap: () {
               if (_controller!.hasNextEpisode) {
                 _controller!.nextEpisode();
@@ -156,6 +236,42 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         ),
       ),
     );
+  }
+
+  /// Persists a bookmark for the current lecture at the current position.
+  Future<void> _saveBookmark() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final userId = widget.studentId ?? FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final position = controller.position;
+    try {
+      await ref.read(bookmarksRepositoryProvider).createBookmark(
+            studentId: userId,
+            subjectId: controller.subjectId,
+            lectureId: controller.lectureId,
+            title: controller.episodeTitle,
+            videoTimestampSeconds: position.inSeconds,
+          );
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'تم الحفظ عند الموضع ${_formatBookmarkTime(position)}.',
+          ),
+        ),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('تعذر حفظ الإشارة المرجعية.')),
+      );
+    }
+  }
+
+  static String _formatBookmarkTime(Duration duration) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(duration.inMinutes.remainder(60))}:${two(duration.inSeconds.remainder(60))}';
   }
 
   Future<void> _showQualitySheet() async {

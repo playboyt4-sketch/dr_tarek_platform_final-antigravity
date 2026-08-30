@@ -3,8 +3,10 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
+import '../../domain/admin_grades.dart';
 
 /// Subjects management screen: create, edit (name/visibility/order) and
 /// soft-delete subjects through Cloud Functions. Changes apply to the
@@ -72,45 +74,73 @@ class SubjectsManagementScreen extends StatelessWidget {
     final orderController = TextEditingController(
       text: (existing?.data()['display_order'] as num?)?.toString() ?? '0',
     );
+    // FINAL_DECISIONS §13 enabler: every subject carries its own grade tag
+    // (canonical grade_one..grade_four) so prior-term grant UIs can list
+    // "subjects from grades 1..N-1". Null = untagged legacy subject.
+    String? selectedGrade =
+        existing == null ? null : existing.data()['grade'] as String?;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(existing == null ? 'إضافة مادة جديدة' : 'تعديل المادة'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'اسم المادة'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descriptionController,
-                  decoration: const InputDecoration(labelText: 'الوصف (اختياري)'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: orderController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'ترتيب العرض'),
-                ),
-              ],
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(existing == null ? 'إضافة مادة جديدة' : 'تعديل المادة'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'اسم المادة'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: descriptionController,
+                    decoration: const InputDecoration(labelText: 'الوصف (اختياري)'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: orderController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'ترتيب العرض'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedGrade,
+                    decoration: const InputDecoration(
+                      labelText: 'الفرقة (تُستخدم لمنح مواد فرق سابقة)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('بدون فرقة'),
+                      ),
+                      for (final key in kCanonicalGradeKeys)
+                        DropdownMenuItem<String>(
+                          value: key,
+                          child: Text(gradeLabel(key)),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => selectedGrade = value),
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(existing == null ? 'إنشاء' : 'حفظ'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(existing == null ? 'إنشاء' : 'حفظ'),
-            ),
-          ],
         );
       },
     );
@@ -131,6 +161,7 @@ class SubjectsManagementScreen extends StatelessWidget {
           'name': name,
           'description': description,
           'displayOrder': order,
+          'grade': ?selectedGrade,
         });
       } else {
         await functions.httpsCallable('updateSubject').call({
@@ -138,6 +169,8 @@ class SubjectsManagementScreen extends StatelessWidget {
           'name': name,
           'description': description,
           'displayOrder': order,
+          // Explicit key so the callable can also CLEAR the tag (null).
+          'grade': selectedGrade,
         });
       }
       if (context.mounted) {
@@ -150,7 +183,7 @@ class SubjectsManagementScreen extends StatelessWidget {
     } on FirebaseFunctionsException catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'فشلت العملية.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'فشلت العملية.'))),
         );
       }
     }
@@ -194,7 +227,7 @@ class SubjectsManagementScreen extends StatelessWidget {
     } on FirebaseFunctionsException catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر حذف المادة.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر حذف المادة.'))),
         );
       }
     }
@@ -223,7 +256,7 @@ class _SubjectCardState extends State<_SubjectCard> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر تحديث الظهور.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر تحديث الظهور.'))),
         );
       }
     } finally {
@@ -237,6 +270,7 @@ class _SubjectCardState extends State<_SubjectCard> {
     final name = (data['title'] ?? data['name'] ?? widget.subject.id).toString();
     final visible = data['is_visible'] == true;
     final order = (data['display_order'] as num?)?.toInt() ?? 0;
+    final grade = data['grade'] as String?;
 
     return Card(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -261,7 +295,8 @@ class _SubjectCardState extends State<_SubjectCard> {
                         ),
                       ),
                       Text(
-                        'ترتيب العرض: $order',
+                        'ترتيب العرض: $order'
+                        '${grade == null ? '' : ' • ${gradeLabel(grade)}'}',
                         style: const TextStyle(
                           color: AppColors.muted,
                           fontSize: 12,

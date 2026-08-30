@@ -43,3 +43,21 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets & signing credentials (defense in depth; also ignored in android/)
+*.jks
+*.keystore
+key.properties
+
+# Environment files & Firebase service accounts — never commit
+.env
+.env.*
+*.env
+serviceAccountKey*.json
+*-firebase-adminsdk-*.json
+firebase-adminsdk*.json
+*service-account*.json
+.aider*
+
+# opencode local config (contains Figma token)
+opencode.json

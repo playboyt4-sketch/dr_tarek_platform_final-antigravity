@@ -78,6 +78,12 @@ class InMemoryNotesRepository implements NotesRepository {
   }
 
   @override
+  Stream<List<Note>> watchNotesForStudent({required String studentId}) => throw UnimplementedError();
+
+  @override
+  Future<Note> createQuickNote({required String studentId, required String title, required String content}) => throw UnimplementedError();
+
+  @override
   Stream<List<Note>> watchNotesForLecture({
     required String studentId,
     required String lectureId,

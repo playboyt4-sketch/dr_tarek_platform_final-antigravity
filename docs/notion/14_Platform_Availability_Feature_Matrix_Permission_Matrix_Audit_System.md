@@ -115,6 +115,17 @@ This document is the single source of truth for access control across the platfo
 | `pdf.share` | Share PDF | ❌ | ❌ | ❌ | ❌ |
 | `pdf.watermark` | Dynamic watermark | ✅ | ✅ | ✅ | ✅ |
 
+### Attachments
+
+> ✅ **CONFIRMED BY TEACHER** (supersedes the earlier placeholder mirror of
+> pdf.* rows). Per the ratified permission rule, attachments gate on their
+> own independent keys — nothing shared with or inherited from `pdf.*`.
+
+| Feature Key | Description | Default Public Free | Default Center Free | Default Center Pro | Default Center Max |
+|-------------|-------------|---------------------|---------------------|--------------------|--------------------|
+| `attachment.access` | Open attachments | ❌ | ✅ Full | ✅ Full | ✅ Full |
+| `attachment.download` | Download attachments | ❌ | ❌ | ✅ | ✅ |
+
 ### Learning & Assessment
 
 | Feature Key | Description | Default Public Free | Default Center Free | Default Center Pro | Default Center Max |

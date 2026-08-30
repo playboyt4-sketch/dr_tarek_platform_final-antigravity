@@ -38,6 +38,14 @@ service firebase.storage {
         && request.resource.size < 50 * 1024 * 1024;
     }
 
+    // Attachment types per 11 Assets §4.2 (ZIP, DOC, etc.) — same 50MB
+    // ceiling as PDFs (limit already codified here; not invented client-side).
+    function validAttachment() {
+      return request.resource != null
+        && request.resource.contentType.matches('application/(zip|x-zip-compressed|octet-stream)|application/(msword|vnd\\.openxmlformats-officedocument\\.(wordprocessingml|spreadsheetml|presentationml)\\..*)|text/plain')
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
     match /profile_photos/{userId}/{fileName} {
       allow read: if isSelf(userId) || isStaff();
       allow write: if (isSelf(userId) || isStaff()) && validImage();
@@ -54,7 +62,7 @@ service firebase.storage {
     // signed URL from a Cloud Function after membership validation.
     match /lecture_resources/{lectureId}/{resourceId}/{fileName} {
       allow read: if false;
-      allow write: if isStaff() && (validDocument() || validImage());
+      allow write: if isStaff() && (validDocument() || validAttachment() || validImage());
       allow delete: if isStaff();
     }
 

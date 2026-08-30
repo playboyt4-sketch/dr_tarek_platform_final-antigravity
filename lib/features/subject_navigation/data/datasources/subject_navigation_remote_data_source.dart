@@ -7,14 +7,22 @@ class SubjectNavigationRemoteDataSource {
 
   const SubjectNavigationRemoteDataSource({required this.firestore});
 
-  Future<List<LearningSection>> getSections(String subjectId) async {
-    final snapshot = await firestore
+  Future<List<LearningSection>> getSections(
+    String subjectId, {
+    int? limit,
+    DocumentSnapshot? startAfter,
+  }) async {
+    var query = firestore
         .collection('subject_sections')
         .where('subject_id', isEqualTo: subjectId)
         .where('is_deleted', isEqualTo: false)
         .where('is_visible', isEqualTo: true)
-        .orderBy('display_order')
-        .get();
+        .orderBy('display_order');
+
+    if (startAfter != null) query = query.startAfterDocument(startAfter);
+    if (limit != null) query = query.limit(limit);
+
+    final snapshot = await query.get();
 
     return snapshot.docs.map((doc) {
       final data = doc.data();
@@ -29,14 +37,22 @@ class SubjectNavigationRemoteDataSource {
     }).toList();
   }
 
-  Future<List<LectureSummary>> getLectures(String sectionId) async {
-    final snapshot = await firestore
+  Future<List<LectureSummary>> getLectures(
+    String sectionId, {
+    int? limit,
+    DocumentSnapshot? startAfter,
+  }) async {
+    var query = firestore
         .collection('lectures')
         .where('section_id', isEqualTo: sectionId)
         .where('is_deleted', isEqualTo: false)
         .where('status', isEqualTo: 'published')
-        .orderBy('display_order')
-        .get();
+        .orderBy('display_order');
+
+    if (startAfter != null) query = query.startAfterDocument(startAfter);
+    if (limit != null) query = query.limit(limit);
+
+    final snapshot = await query.get();
 
     return snapshot.docs.map((doc) {
       final data = doc.data();

@@ -1,6 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:perfect_volume_control/perfect_volume_control.dart';
 import 'package:screen_brightness/screen_brightness.dart';
+import 'package:volume_controller/volume_controller.dart';
 
 class VideoSideSliders extends StatefulWidget {
   const VideoSideSliders({super.key});
@@ -14,6 +16,7 @@ class _VideoSideSlidersState extends State<VideoSideSliders> {
   double _brightness = 0.5;
   bool _isVolumeSupported = true;
   bool _isBrightnessSupported = true;
+  StreamSubscription<double>? _volumeSub;
 
   @override
   void initState() {
@@ -22,20 +25,28 @@ class _VideoSideSlidersState extends State<VideoSideSliders> {
     _initBrightness();
   }
 
+  @override
+  void dispose() {
+    _volumeSub?.cancel();
+    VolumeController.instance.removeListener();
+    super.dispose();
+  }
+
   Future<void> _initVolume() async {
     try {
-      _volume = await PerfectVolumeControl.getVolume();
-      PerfectVolumeControl.stream.listen((volume) {
+      final volume = await VolumeController.instance.getVolume();
+      if (!mounted) return;
+      setState(() => _volume = volume);
+      _volumeSub = VolumeController.instance.addListener((volume) {
         if (mounted) {
-          setState(() {
-            _volume = volume;
-          });
+          setState(() => _volume = volume);
         }
       });
-    } catch (e) {
-      _isVolumeSupported = false;
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isVolumeSupported = false);
+      }
     }
-    if (mounted) setState(() {});
   }
 
   Future<void> _initBrightness() async {
@@ -58,7 +69,7 @@ class _VideoSideSlidersState extends State<VideoSideSliders> {
     if (!_isVolumeSupported) return;
     final clamped = value.clamp(0.0, 1.0);
     setState(() => _volume = clamped);
-    await PerfectVolumeControl.setVolume(clamped);
+    await VolumeController.instance.setVolume(clamped);
   }
 
   Future<void> _setBrightness(double value) async {

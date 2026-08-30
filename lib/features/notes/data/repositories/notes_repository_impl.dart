@@ -1,6 +1,7 @@
 import '../../domain/entities/note.dart';
 import '../../domain/repositories/notes_repository.dart';
 import '../datasources/notes_remote_data_source.dart';
+import '../../../../core/errors/failure.dart';
 
 class NotesRepositoryImpl implements NotesRepository {
   final NotesRemoteDataSource remoteDataSource;
@@ -15,7 +16,7 @@ class NotesRepositoryImpl implements NotesRepository {
     return remoteDataSource.getNotesForLecture(
       studentId: studentId,
       lectureId: lectureId,
-    );
+    ).asFailureAware();
   }
 
   @override
@@ -26,7 +27,7 @@ class NotesRepositoryImpl implements NotesRepository {
     return remoteDataSource.getNotesForSubject(
       studentId: studentId,
       subjectId: subjectId,
-    );
+    ).asFailureAware();
   }
 
   @override
@@ -45,7 +46,7 @@ class NotesRepositoryImpl implements NotesRepository {
       content: content,
       videoTimestampSeconds: videoTimestampSeconds,
       pdfPageNumber: pdfPageNumber,
-    );
+    ).asFailureAware();
   }
 
   @override
@@ -56,14 +57,24 @@ class NotesRepositoryImpl implements NotesRepository {
     return remoteDataSource.updateNote(
       noteId: noteId,
       content: content,
-    );
+    ).asFailureAware();
   }
 
   @override
   Future<void> deleteNote({
     required String noteId,
   }) {
-    return remoteDataSource.deleteNote(noteId: noteId);
+    return remoteDataSource.deleteNote(noteId: noteId).asFailureAware();
+  }
+
+  @override
+  Stream<List<Note>> watchNotesForStudent({required String studentId}) {
+    return remoteDataSource.watchNotesForStudent(studentId: studentId);
+  }
+
+  @override
+  Future<Note> createQuickNote({required String studentId, required String title, required String content}) {
+    return remoteDataSource.createQuickNote(studentId: studentId, title: title, content: content).asFailureAware();
   }
 
   @override

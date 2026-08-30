@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class PlanQualityMatrixScreen extends StatelessWidget {
@@ -80,7 +81,7 @@ class _PlanQualityCardState extends State<_PlanQualityCard> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر حفظ الجودة.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر حفظ الجودة.'))),
         );
       }
     } finally {

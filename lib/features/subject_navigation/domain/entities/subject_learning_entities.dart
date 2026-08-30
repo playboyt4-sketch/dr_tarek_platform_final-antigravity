@@ -42,4 +42,23 @@ class LectureSummary {
     this.skipIntroStart,
     this.skipIntroEnd,
   });
+
+  /// Immutable update used by the playback controller to adopt the
+  /// server-resolved resource thumbnail for the active episode.
+  LectureSummary copyWith({String? thumbnailUrl}) {
+    return LectureSummary(
+      id: id,
+      title: title,
+      description: description,
+      status: status,
+      displayOrder: displayOrder,
+      isLocked: isLocked,
+      subjectId: subjectId,
+      sectionId: sectionId,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      duration: duration,
+      skipIntroStart: skipIntroStart,
+      skipIntroEnd: skipIntroEnd,
+    );
+  }
 }

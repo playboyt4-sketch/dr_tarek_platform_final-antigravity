@@ -13,6 +13,12 @@ class VideoPlayerLayout extends StatelessWidget {
   final VoidCallback onNextTap;
   final VoidCallback onToggleControls;
 
+  /// FINAL_DECISIONS §11: opens the upgrade flow from the preview wall.
+  final VoidCallback? onUpgradeTap;
+
+  /// Saves a bookmark at the current playback position (null hides the action).
+  final VoidCallback? onBookmarkTap;
+
   const VideoPlayerLayout({
     required this.controller,
     required this.onBack,
@@ -21,6 +27,8 @@ class VideoPlayerLayout extends StatelessWidget {
     required this.onQualityTap,
     required this.onNextTap,
     required this.onToggleControls,
+    this.onUpgradeTap,
+    this.onBookmarkTap,
     super.key,
   });
 
@@ -96,8 +104,9 @@ class VideoPlayerLayout extends StatelessWidget {
                     onQualityTap: onQualityTap,
                     onNextTap: onNextTap,
                     onToggleControls: onToggleControls,
-                  ),
-                ],
+                    onUpgradeTap: onUpgradeTap,
+                    onBookmarkTap: onBookmarkTap,
+                  ),                ],
               ),
             ),
           ),

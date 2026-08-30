@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dr_tarek_platform/features/timeline_quizzes/data/models/timeline_quiz_model.dart';
+import 'package:dr_tarek_platform/features/timeline_quizzes/domain/entities/assessment_submit_result.dart';
 import 'package:dr_tarek_platform/features/timeline_quizzes/domain/entities/timeline_quiz.dart';
 import 'package:dr_tarek_platform/features/timeline_quizzes/domain/repositories/timeline_quizzes_repository.dart';
 
 class InMemoryTimelineQuizzesRepository implements TimelineQuizzesRepository {
   final List<TimelineQuiz> _quizzes = [];
-  final List<QuizAttempt> _attempts = [];
 
   void addQuiz(TimelineQuiz quiz) => _quizzes.add(quiz);
 
@@ -14,48 +14,34 @@ class InMemoryTimelineQuizzesRepository implements TimelineQuizzesRepository {
     required String quizId,
     required String studentId,
   }) async {
-    return _attempts
-        .where((a) => a.quizId == quizId && a.studentId == studentId)
-        .lastOrNull;
+    // Attempts are server-managed; the in-memory fake keeps none.
+    return null;
   }
+
+  @override
+  Stream<List<TimelineQuiz>> watchPublishedQuizzes() => throw UnimplementedError();
+
+  @override
+  Future<String> startQuizAttempt({required String quizId, required String studentId}) => throw UnimplementedError();
+
+  @override
+  Future<AssessmentSubmitResult> submitQuizAnswers({required String attemptId, required Map<String, String> answers}) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> evaluateAnswer({
+    required String attemptId,
+    required String questionId,
+    required String answer,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<Map<String, dynamic>>> getAssessmentQuestions({
+    required String attemptId,
+  }) => throw UnimplementedError();
 
   @override
   Future<List<TimelineQuiz>> getQuizzesForLecture({required String lectureId}) async {
     return _quizzes.where((q) => q.lectureId == lectureId).toList();
-  }
-
-  @override
-  Future<QuizAttempt> submitAttempt({
-    required String quizId,
-    required String studentId,
-    required String lectureId,
-    required Map<String, int> selectedAnswers,
-    required List<QuizQuestion> questions,
-    required bool skipped,
-  }) async {
-    int score = 0;
-    if (!skipped) {
-      for (final q in questions) {
-        if (selectedAnswers[q.id] == q.correctOptionIndex) {
-          score++;
-        }
-      }
-    }
-
-    final attempt = QuizAttempt(
-      id: 'att_${_attempts.length + 1}',
-      quizId: quizId,
-      studentId: studentId,
-      lectureId: lectureId,
-      selectedAnswers: selectedAnswers,
-      score: score,
-      totalQuestions: questions.length,
-      skipped: skipped,
-      submittedAt: DateTime.now(),
-      createdAt: DateTime.now(),
-    );
-    _attempts.add(attempt);
-    return attempt;
   }
 }
 
@@ -87,41 +73,25 @@ void main() {
       expect(quiz.questions.first.correctOptionIndex, 1);
     });
 
-    test('Quiz optional skip allows student to continue without blocking',
+    test('getQuizzesForLecture returns only matching published quizzes',
         () async {
-      final repo = InMemoryTimelineQuizzesRepository();
-      const questions = [
-        QuizQuestion(
-          id: 'q1',
-          questionText: 'Question 1',
-          options: ['A', 'B'],
-          correctOptionIndex: 0,
-        ),
-      ];
+      final repo = InMemoryTimelineQuizzesRepository()
+        ..addQuiz(TimelineQuizModel.fromMap('quiz_1', const {
+          'lecture_id': 'lec_101',
+          'title': 'Checkpoint A',
+          'trigger_timestamp_seconds': 10,
+          'questions': [],
+        }))
+        ..addQuiz(TimelineQuizModel.fromMap('quiz_2', const {
+          'lecture_id': 'lec_202',
+          'title': 'Checkpoint B',
+          'trigger_timestamp_seconds': 20,
+          'questions': [],
+        }));
 
-      final skippedAttempt = await repo.submitAttempt(
-        quizId: 'quiz_1',
-        studentId: 'student_1',
-        lectureId: 'lec_101',
-        selectedAnswers: {},
-        questions: questions,
-        skipped: true,
-      );
-
-      expect(skippedAttempt.skipped, isTrue);
-      expect(skippedAttempt.score, 0);
-
-      final answeredAttempt = await repo.submitAttempt(
-        quizId: 'quiz_1',
-        studentId: 'student_1',
-        lectureId: 'lec_101',
-        selectedAnswers: {'q1': 0},
-        questions: questions,
-        skipped: false,
-      );
-
-      expect(answeredAttempt.skipped, isFalse);
-      expect(answeredAttempt.score, 1);
+      final result = await repo.getQuizzesForLecture(lectureId: 'lec_101');
+      expect(result.length, 1);
+      expect(result.single.id, 'quiz_1');
     });
   });
 }

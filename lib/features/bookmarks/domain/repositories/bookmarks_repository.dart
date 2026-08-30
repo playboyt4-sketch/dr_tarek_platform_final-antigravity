@@ -24,6 +24,8 @@ abstract class BookmarksRepository {
     required String bookmarkId,
   });
 
+  Stream<List<Bookmark>> watchBookmarksForStudent({required String studentId});
+
   Stream<List<Bookmark>> watchBookmarksForLecture({
     required String studentId,
     required String lectureId,

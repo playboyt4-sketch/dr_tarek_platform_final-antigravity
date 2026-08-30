@@ -1,3 +1,4 @@
+import { SECURE_CALL_OPTS } from "./core/utils/security_helpers";
 import {onCall, HttpsError, CallableRequest} from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
@@ -648,7 +649,7 @@ async function resolveSubscriptionPeriodBinding(): Promise<{
   };
 }
 
-export const registerNewStudent = onCall(async (request) => {
+export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   const fullName = getString(request.data?.fullName);
   const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
   const grade = getString(request.data?.grade);
@@ -747,7 +748,7 @@ export const registerNewStudent = onCall(async (request) => {
 
 const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_\-+=[\]/\\`~]).{8,}$/;
 
-export const changePassword = onCall(async (request) => {
+export const changePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const currentPassword = getString(request.data?.currentPassword);
   const newPassword = getString(request.data?.newPassword);
@@ -806,7 +807,7 @@ export const changePassword = onCall(async (request) => {
   return {success: true};
 });
 
-export const createCustomGroup = onCall(async (request) => {
+export const createCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const name = getString(request.data?.name);
   const description = getString(request.data?.description);
@@ -840,7 +841,7 @@ export const createCustomGroup = onCall(async (request) => {
   return {groupId: groupRef.id, name};
 });
 
-export const updateCustomGroup = onCall(async (request) => {
+export const updateCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const groupId = getString(request.data?.groupId);
   const name = getString(request.data?.name);
@@ -878,7 +879,16 @@ export const updateCustomGroup = onCall(async (request) => {
   return {groupId, success: true};
 });
 
-export const verifyPhonePassword = onCall(async (request) => {
+export function calculateLockMinutes(failures: number): number {
+  if (failures < 3) return 0;
+  if (failures < 5) return 5;
+  if (failures < 10) return 10;
+  if (failures < 20) return 20;
+  if (failures < 40) return 40;
+  return 60;
+}
+
+export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
   const password = getString(request.data?.password);
 
@@ -910,10 +920,35 @@ export const verifyPhonePassword = onCall(async (request) => {
 
   const secretSnap = await db.collection("user_secrets").doc(userDoc.id).get();
   const secretData = secretSnap.exists ? dataOf(secretSnap.data()) : {};
+
+  if (secretData.locked_until && secretData.locked_until.toDate() > new Date()) {
+    throw new HttpsError("resource-exhausted", "Account locked due to too many failed attempts. Try again later.");
+  }
+
   const passwordHash = getString(secretData.password_hash) ?? getString(user.password_hash);
   if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
+    const failedAttempts = (typeof secretData.failed_login_attempts === "number" ? secretData.failed_login_attempts : 0) + 1;
+    const lockMinutes = calculateLockMinutes(failedAttempts);
+    const updateData: any = {
+      failed_login_attempts: failedAttempts,
+      updated_at: FieldValue.serverTimestamp(),
+    };
+    if (lockMinutes > 0) {
+      updateData.locked_until = Timestamp.fromDate(new Date(Date.now() + lockMinutes * 60000));
+    }
+    await db.collection("user_secrets").doc(userDoc.id).set(updateData, {merge: true});
+
     await writeAnalyticsEvent(userDoc.id, "Failed Login", userDoc.id, {reason: "invalid_credentials"}, request);
     throw new HttpsError("unauthenticated", "Invalid phone number or password.");
+  }
+
+  // Clear failures on success
+  if (secretData.failed_login_attempts > 0 || secretData.locked_until != null) {
+    await db.collection("user_secrets").doc(userDoc.id).set({
+      failed_login_attempts: FieldValue.delete(),
+      locked_until: FieldValue.delete(),
+      updated_at: FieldValue.serverTimestamp(),
+    }, {merge: true});
   }
 
   // Migrate legacy hashes out of users/{userId} after a successful login.
@@ -976,7 +1011,7 @@ export const verifyPhonePassword = onCall(async (request) => {
   return {token, userId: userDoc.id};
 });
 
-export const onLoginAttempt = onCall(async (request) => {
+export const onLoginAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = getString(request.data?.userId);
   const deviceId = getString(request.data?.deviceId);
   const deviceName = getString(request.data?.deviceName);
@@ -998,88 +1033,78 @@ export const onLoginAttempt = onCall(async (request) => {
   const maxDevices = claimMaxDevices ?? 0;
   if (maxDevices < 1) throw new HttpsError("failed-precondition", "max_devices claim is missing or invalid.");
 
-  const existingSnap = await db.collection("devices")
-    .where("user_id", "==", userId)
-    .where("device_id", "==", deviceId)
-    .limit(1)
-    .get();
-
-  if (!existingSnap.empty) {
-    const existing = existingSnap.docs[0];
-    await existing.ref.update({
-      device_name: deviceName,
-      platform,
-      os_version: osVersion,
-      app_version: appVersion,
-      last_login: FieldValue.serverTimestamp(),
-      active_device: true,
-      updated_at: FieldValue.serverTimestamp(),
-      updated_by: "system",
-    });
-    await userRef.update({current_device_id: existing.id, updated_at: FieldValue.serverTimestamp(), updated_by: "system"});
-    await writeAnalyticsEvent(userId, "Login Device Bound", existing.id, {status: "existing_device"}, request);
-    return {allowed: true, status: "existing_device", maxDevices};
-  }
-
-  const activeSnap = await db.collection("devices")
-    .where("user_id", "==", userId)
-    .where("active_device", "==", true)
-    .get();
-
-  if (activeSnap.size >= maxDevices) {
-    await writeAnalyticsEvent(userId, "Unauthorized Device Attempt", deviceId, {
-      max_devices: maxDevices,
-      active_devices: activeSnap.size,
-      platform,
-      device_name: deviceName,
-    }, request);
-
-    await createNotification(
-      userId,
-      "system",
-      "Ù…Ø­Ø§ÙˆÙ„Ø© Ø¯Ø®ÙˆÙ„ Ù…Ù† Ø¬Ù‡Ø§Ø² Ø¬Ø¯ÙŠØ¯",
-      "ØªÙ… Ø±ÙØ¶ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯Ø®ÙˆÙ„ Ù…Ù† Ø¬Ù‡Ø§Ø² ØºÙŠØ± Ù…ØµØ±Ø­ Ø¨Ù‡.",
-      {priority: "critical", deep_link: "/security/devices"},
+  type BindingOutcome = { kind: "existing" | "created"; deviceDocId: string };
+  const outcome = await db.runTransaction(async (tx): Promise<BindingOutcome> => {
+    const devicesRef = db.collection("devices");
+    const existingSnap = await tx.get(
+      devicesRef.where("user_id", "==", userId).where("device_id", "==", deviceId).limit(1),
     );
-
-    await db.collection("device_security_alerts").add({
-      user_id: userId,
-      device_id: deviceId,
-      status: "pending_review",
-      created_at: FieldValue.serverTimestamp(),
-      created_by: "system",
+    if (!existingSnap.empty) {
+      const existing = existingSnap.docs[0];
+      const activeSnap = await tx.get(
+        devicesRef.where("user_id", "==", userId).where("active_device", "==", true),
+      );
+      const otherActiveDevices = activeSnap.docs.filter(d => d.id !== existing.id);
+      if (otherActiveDevices.length >= maxDevices) {
+        const devicesToDeactivate = otherActiveDevices.sort((a, b) => {
+            const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
+            const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
+            return timeA - timeB;
+        });
+        const excessCount = otherActiveDevices.length - maxDevices + 1;
+        for (let i = 0; i < excessCount && i < devicesToDeactivate.length; i++) {
+            tx.update(devicesToDeactivate[i].ref, {
+                active_device: false,
+                updated_at: FieldValue.serverTimestamp(),
+                updated_by: "system",
+            });
+        }
+      }
+      tx.update(existing.ref, {
+        device_name: deviceName, platform, os_version: osVersion, app_version: appVersion,
+        last_login: FieldValue.serverTimestamp(), active_device: true,
+        updated_at: FieldValue.serverTimestamp(), updated_by: "system",
+      });
+      tx.update(userRef, {current_device_id: existing.id, updated_at: FieldValue.serverTimestamp(), updated_by: "system"});
+      return {kind: "existing", deviceDocId: existing.id};
+    }
+    const activeSnap = await tx.get(
+      devicesRef.where("user_id", "==", userId).where("active_device", "==", true),
+    );
+    const otherActiveDevices = activeSnap.docs;
+    if (otherActiveDevices.length >= maxDevices) {
+      const devicesToDeactivate = otherActiveDevices.sort((a, b) => {
+          const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
+          const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
+          return timeA - timeB;
+      });
+      const excessCount = otherActiveDevices.length - maxDevices + 1;
+      for (let i = 0; i < excessCount && i < devicesToDeactivate.length; i++) {
+          tx.update(devicesToDeactivate[i].ref, {
+              active_device: false, updated_at: FieldValue.serverTimestamp(), updated_by: "system",
+          });
+      }
+    }
+    const newDevice = devicesRef.doc();
+    tx.set(newDevice, {
+      user_id: userId, device_id: deviceId, device_name: deviceName, platform, os_version: osVersion,
+      app_version: appVersion, last_login: FieldValue.serverTimestamp(), active_device: true, fcm_token: null,
+      created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(),
+      created_by: "system", updated_by: "system", is_deleted: false, deleted_at: null, deleted_by: null,
     });
-
-    return {allowed: false, status: "device_limit_reached", maxDevices};
-  }
-
-  const newDevice = db.collection("devices").doc();
-  await newDevice.set({
-    user_id: userId,
-    device_id: deviceId,
-    device_name: deviceName,
-    platform,
-    os_version: osVersion,
-    app_version: appVersion,
-    last_login: FieldValue.serverTimestamp(),
-    active_device: true,
-    fcm_token: null,
-    created_at: FieldValue.serverTimestamp(),
-    updated_at: FieldValue.serverTimestamp(),
-    created_by: "system",
-    updated_by: "system",
-    is_deleted: false,
-    deleted_at: null,
-    deleted_by: null,
+    tx.update(userRef, {current_device_id: newDevice.id, updated_at: FieldValue.serverTimestamp(), updated_by: "system"});
+    return {kind: "created", deviceDocId: newDevice.id};
   });
 
-  await userRef.update({current_device_id: newDevice.id, updated_at: FieldValue.serverTimestamp(), updated_by: "system"});
-  await writeAnalyticsEvent(userId, "Login Device Bound", newDevice.id, {status: "new_device", platform}, request);
-
-  return {allowed: true, status: "new_device", maxDevices, deviceDocumentId: newDevice.id};
+  return {
+    allowed: true, 
+    status: outcome.kind === "existing" ? "existing_device" : "new_device", 
+    maxDevices, 
+    deviceDocumentId: outcome.deviceDocId
+  };
 });
 
-export const approveStudent = onCall(async (request) => {
+export const approveStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const studentType = getString(request.data?.studentType);
@@ -1194,7 +1219,7 @@ export const approveStudent = onCall(async (request) => {
   };
 });
 
-export const convertStudentType = onCall(async (request) => {
+export const convertStudentType = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const targetStudentType = getString(request.data?.targetStudentType);
@@ -1433,7 +1458,7 @@ export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{p
   });
 });
 
-export const enforceDisplayHandleUniqueness = onCall(async (request) => {
+export const enforceDisplayHandleUniqueness = onCall(SECURE_CALL_OPTS, async (request) => {
   const requesterId = requireAuthenticated(request);
   const displayHandleRaw = request.data?.displayHandle;
   const userId = getString(request.data?.userId) ?? requesterId;
@@ -1787,7 +1812,7 @@ export const processNotificationQueue = onSchedule("every 1 minutes", async () =
   }
 });
 
-export const setPlanQualityFeature = onCall(async (request) => {
+export const setPlanQualityFeature = onCall(SECURE_CALL_OPTS, async (request) => {
   const actorId = requireAdminOrTeacher(request);
   const planId = getString(request.data?.planId);
   const quality = getString(request.data?.quality)?.toLowerCase();
@@ -1834,7 +1859,7 @@ export const setPlanQualityFeature = onCall(async (request) => {
   return {ok: true, planId, quality, enabled};
 });
 
-export const generateBunnySignedUrl = onCall(async (request) => {
+export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const videoId = getString(request.data?.videoId);
   const requestedQuality = getString(request.data?.quality);
@@ -1939,7 +1964,7 @@ export const generateBunnySignedUrl = onCall(async (request) => {
   return {url: url.toString(), expiresAt: expires, quality: selectedQuality};
 });
 
-export const revalidateOfflineAccess = onCall(async (request) => {
+export const revalidateOfflineAccess = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const subjectIds = Array.isArray(request.data?.subjectIds) ? request.data.subjectIds.filter((id: unknown): id is string => typeof id === "string" && id.length > 0) : [];
   const results: Array<{subjectId: string; allowed: boolean; wipeRequired: boolean; reason?: string}> = [];
@@ -1993,21 +2018,23 @@ export const revalidateOfflineAccess = onCall(async (request) => {
 });
 
 /**
- * Shared helper: resolves PDF resource → subject → subscription → plan,
+/**
+ * Shared helper: resolves document resource → subject → subscription → plan,
  * verifies subject access and subscription, and returns context needed
  * by both the viewing and download endpoints.
  * @param {string} userId The student user ID.
  * @param {string} resourceId The lecture resource document ID.
- * @return {Promise<any>} The resolved PDF access data.
+ * @return {Promise<any>} The resolved document access data.
  */
-async function resolvePdfAccess(userId: string, resourceId: string) {
+async function resolveDocumentAccess(userId: string, resourceId: string) {
   const resourceSnap = await db.collection("lecture_resources").doc(resourceId).get();
-  if (!resourceSnap.exists) throw new HttpsError("not-found", "PDF resource not found.");
+  if (!resourceSnap.exists) throw new HttpsError("not-found", "Document resource not found.");
   const resource = dataOf(resourceSnap.data());
-  if (resource.resource_type !== "pdf") throw new HttpsError("invalid-argument", "Resource is not a PDF.");
+  const type = getString(resource.resource_type) ?? "attachment";
+  if (!isDocumentResourceType(type)) throw new HttpsError("invalid-argument", "Resource is not a document.");
 
   const lectureId = getString(resource.lecture_id);
-  if (!lectureId) throw new HttpsError("failed-precondition", "PDF resource is not linked to a lecture.");
+  if (!lectureId) throw new HttpsError("failed-precondition", "Document resource is not linked to a lecture.");
   const lectureSnap = await db.collection("lectures").doc(lectureId).get();
   if (!lectureSnap.exists) throw new HttpsError("not-found", "Lecture not found.");
   const sectionId = getString(lectureSnap.data()?.section_id);
@@ -2030,24 +2057,25 @@ async function resolvePdfAccess(userId: string, resourceId: string) {
   if (!planId) throw new HttpsError("failed-precondition", "Subscription plan is missing.");
 
   const storagePath = getString(resource.storage_path) ?? getString(resource.resource_url);
-  if (!storagePath) throw new HttpsError("failed-precondition", "PDF storage path is missing.");
+  if (!storagePath) throw new HttpsError("failed-precondition", "Document storage path is missing.");
 
-  return {planId, subjectId, lectureId, storagePath, resourceTitle: getString(resource.title)};
+  return {planId, subjectId, lectureId, storagePath, resourceTitle: getString(resource.title), resourceType: type};
 }
 
 /**
- * Generate a short-lived signed URL for **viewing** a PDF in-app.
- * Requires only `pdf.access` plan feature.
+ * Generate a short-lived signed URL for **viewing** a document in-app.
+ * Requires corresponding plan feature.
  */
-export const generateProtectedPdfUrl = onCall(async (request) => {
+export const generateProtectedPdfUrl = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const resourceId = getString(request.data?.resourceId);
   if (!resourceId) throw new HttpsError("invalid-argument", "resourceId is required.");
 
-  const ctx = await resolvePdfAccess(userId, resourceId);
+  const ctx = await resolveDocumentAccess(userId, resourceId);
+  const keys = documentFeatureKeys(ctx.resourceType);
 
-  const access = await getPlanFeature(ctx.planId, "pdf.access");
-  if (access?.enabled !== true) throw new HttpsError("permission-denied", "PDF access is not enabled for your plan.");
+  const access = await getPlanFeature(ctx.planId, keys.view);
+  if (access?.enabled !== true) throw new HttpsError("permission-denied", "Document access is not enabled for your plan.");
 
   const bucket = storage.bucket();
   const file = bucket.file(ctx.storagePath);
@@ -2057,38 +2085,39 @@ export const generateProtectedPdfUrl = onCall(async (request) => {
     responseDisposition: "inline",
   });
 
-  await writeAnalyticsEvent(userId, "View PDF", resourceId, {subject_id: ctx.subjectId, lecture_id: ctx.lectureId});
+  await writeAnalyticsEvent(userId, "View Document", resourceId, {subject_id: ctx.subjectId, lecture_id: ctx.lectureId, type: ctx.resourceType});
   return {url: signedUrl, expiresAt: Date.now() + 5 * 60 * 1000, canDownload: false};
 });
 
 /**
- * Generate a short-lived signed URL for **downloading** a PDF.
- * Requires `pdf.download` plan feature (stricter than viewing).
+ * Generate a short-lived signed URL for **downloading** a document.
+ * Requires corresponding plan feature (stricter than viewing).
  */
-export const generatePdfDownloadUrl = onCall(async (request) => {
+export const generatePdfDownloadUrl = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const resourceId = getString(request.data?.resourceId);
   if (!resourceId) throw new HttpsError("invalid-argument", "resourceId is required.");
 
-  const ctx = await resolvePdfAccess(userId, resourceId);
+  const ctx = await resolveDocumentAccess(userId, resourceId);
+  const keys = documentFeatureKeys(ctx.resourceType);
 
-  const download = await getPlanFeature(ctx.planId, "pdf.download");
-  if (download?.enabled !== true) throw new HttpsError("permission-denied", "PDF download is not enabled for your plan.");
+  const download = await getPlanFeature(ctx.planId, keys.download);
+  if (download?.enabled !== true) throw new HttpsError("permission-denied", "Document download is not enabled for your plan.");
 
   const bucket = storage.bucket();
   const file = bucket.file(ctx.storagePath);
-  const fileName = ctx.resourceTitle ? `${ctx.resourceTitle}.pdf` : "document.pdf";
+  const fileName = ctx.resourceTitle ? `${ctx.resourceTitle}.${ctx.resourceType === "pdf" ? "pdf" : "ext"}` : "document";
   const [signedUrl] = await file.getSignedUrl({
     action: "read",
     expires: Date.now() + 5 * 60 * 1000,
     responseDisposition: `attachment; filename="${fileName}"`,
   });
 
-  await writeAnalyticsEvent(userId, "Download PDF", resourceId, {subject_id: ctx.subjectId, lecture_id: ctx.lectureId});
+  await writeAnalyticsEvent(userId, "Download Document", resourceId, {subject_id: ctx.subjectId, lecture_id: ctx.lectureId, type: ctx.resourceType});
   return {url: signedUrl, expiresAt: Date.now() + 5 * 60 * 1000};
 });
 
-export const getLectureResources = onCall(async (request) => {
+export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const lectureId = getString(request.data?.lectureId);
   if (!lectureId) throw new HttpsError("invalid-argument", "lectureId is required.");
@@ -2132,7 +2161,7 @@ export const getLectureResources = onCall(async (request) => {
   };
 });
 
-export const onDeviceChangeRequest = onCall(async (request) => {
+export const onDeviceChangeRequest = onCall(SECURE_CALL_OPTS, async (request) => {
   const approverId = requireAdminOrTeacher(request);
   const requestId = getString(request.data?.requestId);
   const approve = request.data?.approve === true;
@@ -2191,7 +2220,7 @@ export const onPasswordResetRequest = onDocumentCreated("password_reset_requests
   await writeAnalyticsEvent(studentId, "Password Reset Requested", requestId, {phone_number: data.phone_number ?? null});
 });
 
-export const onPasswordResetApproved = onCall(async (request) => {
+export const onPasswordResetApproved = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requirePasswordResetManager(request);
   const requestId = getString(request.data?.requestId);
   const newPassword = getString(request.data?.newPassword);
@@ -2253,7 +2282,7 @@ export const onPasswordResetApproved = onCall(async (request) => {
   return {resolved: true};
 });
 
-export const onSecurityEvent = onCall(async (request) => {
+export const onSecurityEvent = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const eventType = getString(request.data?.eventType);
   const severity = getString(request.data?.severity) ?? "medium";
@@ -2283,7 +2312,7 @@ export const onSecurityEvent = onCall(async (request) => {
   return {logged: true, securityEventId: securityRef.id};
 });
 
-export const setSubjectAccess = onCall(async (request) => {
+export const setSubjectAccess = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId);
@@ -2369,7 +2398,14 @@ export const setSubjectAccess = onCall(async (request) => {
   return result;
 });
 
-export const activateFreePlan = onCall(async (request) => {
+async function getActiveEntitlements(planId: string): Promise<string[]> {
+  const planFeatures = await getPlanFeatures(planId);
+  return planFeatures
+    .filter((f) => f.enabled === true || f.feature_value === true)
+    .map((f) => f.feature_key);
+}
+
+export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId);
@@ -2442,10 +2478,17 @@ export const activateFreePlan = onCall(async (request) => {
   });
 
   await writeAnalyticsEvent(studentId, "Free Plan Activated", subscriptionRef.id, {subject_id: subjectId, plan_id: planSnap.docs[0].id, activated_by: authorization.actorId});
+
+  const entitlements = await getActiveEntitlements(planSnap.docs[0].id);
+  await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
+    entitlements,
+    subscription_expires_at: binding.endDate,
+  });
+
   return {subscriptionId: subscriptionRef.id, alreadyActive: false};
 });
 
-export const onPaymentLogged = onCall(async (request) => {
+export const onPaymentLogged = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requirePaymentManager(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId);
@@ -2496,7 +2539,7 @@ export const onPaymentLogged = onCall(async (request) => {
   return {logged: true, paymentId: paymentRef.id};
 });
 
-export const onDeviceTokenRefresh = onCall(async (request) => {
+export const onDeviceTokenRefresh = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const deviceId = getString(request.data?.deviceId);
   const fcmToken = getString(request.data?.fcmToken);
@@ -2562,13 +2605,20 @@ async function changeMembershipPlan(
     updated_by: authorization.actorId,
   });
   await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: authorization.actorId});
+
+  const entitlements = await getActiveEntitlements(newPlanId);
+  await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
+    entitlements,
+    subscription_expires_at: membership.data.end_date ?? null,
+  });
+
   return {subscriptionId: membership.ref.id};
 }
 
-export const upgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Upgraded"));
-export const downgrade = onCall(async (request) => changeMembershipPlan(request, "Membership Downgraded"));
+export const upgrade = onCall(SECURE_CALL_OPTS, async (request) => changeMembershipPlan(request, "Membership Upgraded"));
+export const downgrade = onCall(SECURE_CALL_OPTS, async (request) => changeMembershipPlan(request, "Membership Downgraded"));
 
-export const renew = onCall(async (request) => {
+export const renew = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId);
@@ -2587,7 +2637,7 @@ export const renew = onCall(async (request) => {
   return {subscriptionId: membership.ref.id};
 });
 
-export const setSubscriptionDisciplinaryStatus = onCall(async (request) => {
+export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const subscriptionId = getString(request.data?.subscriptionId);
   const disabled = request.data?.disabled;
@@ -2673,7 +2723,7 @@ function serializeAcademicPeriod(doc: DocumentData) {
   };
 }
 
-export const initializeAcademicPeriods = onCall(async (request) => {
+export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
 
   const batch = db.batch();
@@ -2742,7 +2792,7 @@ export const initializeAcademicPeriods = onCall(async (request) => {
 });
 
 
-export const getAcademicPeriods = onCall(async (request) => {
+export const getAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request) => {
   requireTeacher(request);
 
   const snapshot = await db
@@ -2760,7 +2810,7 @@ export const getAcademicPeriods = onCall(async (request) => {
   return {periods};
 });
 
-export const createExceptionalAcademicPeriod = onCall(async (request) => {
+export const createExceptionalAcademicPeriod = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
 
   const label = getString(request.data?.label) ?? getString(request.data?.name);
@@ -2809,7 +2859,7 @@ export const createExceptionalAcademicPeriod = onCall(async (request) => {
   };
 });
 
-export const setAcademicPeriodStatus = onCall(async (request) => {
+export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
 
   const periodId = getString(request.data?.periodId);
@@ -2905,7 +2955,8 @@ export const setAcademicPeriodStatus = onCall(async (request) => {
       .where("status", "==", "active")
       .get();
 
-    const batch = db.batch();
+    let batch = db.batch();
+    let operations = 0;
 
     for (const subscription of subscriptions.docs) {
       batch.update(subscription.ref, {
@@ -2914,9 +2965,24 @@ export const setAcademicPeriodStatus = onCall(async (request) => {
         updated_at: FieldValue.serverTimestamp(),
         updated_by: teacherId,
       });
+      operations++;
+      
+      const subData = subscription.data();
+      const assignmentId = `${subData.student_id}_${subData.subject_id}`;
+      batch.update(db.collection("subject_access_assignments").doc(assignmentId), {
+        entitlements: [],
+        subscription_expires_at: endedAt,
+      });
+      operations++;
+
+      if (operations >= 450) {
+        await batch.commit();
+        batch = db.batch();
+        operations = 0;
+      }
     }
 
-    if (!subscriptions.empty) {
+    if (operations > 0) {
       await batch.commit();
     }
   }
@@ -2964,7 +3030,7 @@ async function requireContentManager(request: CallableRequest<unknown>): Promise
   return {actorId, actorRole: "admin", permissionBasis: "delegated:admin_content"};
 }
 
-export const createSubject = onCall(async (request) => {
+export const createSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireContentManager(request);
   const name = getString(request.data?.name) ?? getString(request.data?.title);
   const description = getString(request.data?.description);
@@ -3007,7 +3073,7 @@ export const createSubject = onCall(async (request) => {
   return {success: true, subjectId: ref.id};
 });
 
-export const updateSubject = onCall(async (request) => {
+export const updateSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireContentManager(request);
   const subjectId = getString(request.data?.subjectId);
   const name = getString(request.data?.name) ?? getString(request.data?.title);
@@ -3058,7 +3124,7 @@ export const updateSubject = onCall(async (request) => {
   return {success: true, subjectId};
 });
 
-export const deleteSubject = onCall(async (request) => {
+export const deleteSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireContentManager(request);
   const subjectId = getString(request.data?.subjectId);
 
@@ -3124,7 +3190,7 @@ function sanitizeAdminPermissions(value: unknown): Record<string, boolean> {
   return permissions;
 }
 
-export const addAdmin = onCall(async (request) => {
+export const addAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
@@ -3174,7 +3240,7 @@ export const addAdmin = onCall(async (request) => {
   return {success: true, userId};
 });
 
-export const removeAdmin = onCall(async (request) => {
+export const removeAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
@@ -3219,7 +3285,7 @@ export const removeAdmin = onCall(async (request) => {
   return {success: true, userId};
 });
 
-export const setAdminPermissions = onCall(async (request) => {
+export const setAdminPermissions = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
@@ -3265,7 +3331,7 @@ export const setAdminPermissions = onCall(async (request) => {
  * Teacher (Platform Owner) ONLY.
  * ============================================================ */
 
-export const setPlatformFeature = onCall(async (request) => {
+export const setPlatformFeature = onCall(SECURE_CALL_OPTS, async (request) => {
   const teacherId = requireTeacher(request);
   const featureKey = getString(request.data?.featureKey);
   const enabled = request.data?.enabled;
@@ -3307,3 +3373,110 @@ export const setPlatformFeature = onCall(async (request) => {
 
   return {success: true, featureKey, enabled};
 });
+
+export const propagatePlanFeatureChange = onDocumentUpdated("plan_features/{featureId}", async (event) => {
+  console.log("propagatePlanFeatureChange triggered for:", event.params.featureId);
+  const after = event.data?.after?.data();
+  if (!after) {
+    console.log("No after data.");
+    return;
+  }
+  
+  const planId = getString(after.plan_id);
+  if (!planId) {
+    console.log("No plan_id found.");
+    return;
+  }
+
+  console.log("Fetching active entitlements for plan:", planId);
+  const entitlements = await getActiveEntitlements(planId);
+  console.log("Active entitlements:", entitlements);
+  
+  let lastDoc = null;
+  while (true) {
+    let query = db.collection("subscriptions")
+      .where("plan_id", "==", planId)
+      .where("status", "==", "active")
+      .limit(500);
+      
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+    
+    const snap = await query.get();
+    if (snap.empty) break;
+    
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const assignmentId = `${data.student_id}_${data.subject_id}`;
+      batch.update(db.collection("subject_access_assignments").doc(assignmentId), {
+        entitlements,
+      });
+      lastDoc = doc;
+    }
+    
+    await batch.commit();
+  }
+});
+
+// Phase 2 Objective Exam Grader
+export function gradeObjectiveAnswers(
+  studentAnswers: Array<{questionId: string; marks: number}>,
+  questionBank: Map<string, {questionType: string; correctAnswer: string}>,
+  submittedAnswers: Record<string, string>
+) {
+  let score = 0;
+  let totalMarks = 0;
+  let hasEssay = false;
+  let missingQuestions = 0;
+
+  for (const answer of studentAnswers) {
+    const qId = answer.questionId;
+    const marks = Number.isNaN(answer.marks) ? 1 : answer.marks;
+    const qDef = questionBank.get(qId);
+    
+    if (!qDef) {
+      missingQuestions++;
+      continue;
+    }
+
+    if (qDef.questionType === "essay") {
+      hasEssay = true;
+      totalMarks += marks;
+      continue;
+    }
+    
+    totalMarks += marks;
+    
+    const submitted = submittedAnswers[qId];
+    if (submitted && submitted.trim().toLowerCase() === qDef.correctAnswer.trim().toLowerCase()) {
+      score += marks;
+    }
+  }
+
+  const result: any = { score, totalMarks, hasEssay };
+  if (missingQuestions > 0) {
+    result.missingQuestions = missingQuestions;
+  }
+  return result;
+}
+
+// Phase 2 Storage Delivery Security
+export function isDocumentResourceType(type: any): boolean {
+  return type === "pdf" || type === "attachment";
+}
+
+export function documentFeatureKeys(type: string) {
+  return {
+    view: `${type}.access`,
+    download: `${type}.download`
+  };
+}
+
+export function isDirectThumbnailUrl(url: any): boolean {
+  if (typeof url !== "string") return false;
+  const lower = url.toLowerCase();
+  return lower.startsWith("http://") || lower.startsWith("https://");
+}
+

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
+
 class AuthPasswordField extends StatefulWidget {
   final TextEditingController controller;
 
@@ -14,11 +16,15 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    final l10n = AppLocalizations.of(context);
+    return TextFormField(
       controller: widget.controller,
       obscureText: _obscure,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
+      validator: (value) =>
+          (value == null || value.isEmpty) ? l10n.errorValidation : null,
       decoration: InputDecoration(
-        labelText: 'Password',
+        labelText: l10n.loginPasswordHint,
         border: const OutlineInputBorder(),
         suffixIcon: IconButton(
           onPressed: () {

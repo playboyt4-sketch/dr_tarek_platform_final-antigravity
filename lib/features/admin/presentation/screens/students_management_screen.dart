@@ -3,7 +3,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/admin_grades.dart';
 import '../widgets/payment_receipt_dialog.dart';
 
 /// Students management screen.
@@ -150,7 +152,11 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'فشلت العملية.')),
+          SnackBar(
+            content: Text(
+              friendlyFunctionErrorMessage(error, 'فشلت العملية.'),
+            ),
+          ),
         );
       }
     } finally {
@@ -235,6 +241,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
 
   void _showLogPaymentDialog() {
     final amountController = TextEditingController();
+    final notesController = TextEditingController();
     String? selectedSubjectId;
 
     showDialog(
@@ -276,6 +283,14 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesController,
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظات (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
             ],
           ),
           actions: [
@@ -293,14 +308,21 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                   return;
                 }
                 Navigator.of(ctx).pop();
+                // Contract of onPaymentLogged: studentId, subjectId,
+                // amount, receiptNumber (+ optional notes). The receipt
+                // number is generated here for the manual external payment.
+                final receiptNumber =
+                    'R-${DateTime.now().millisecondsSinceEpoch}';
                 await _call(
                   'log_payment',
                   'onPaymentLogged',
                   {
                     'studentId': widget.studentId,
                     'subjectId': selectedSubjectId,
-                    'amountPaid': amount,
-                    'paymentMethod': 'manual_off_platform',
+                    'amount': amount,
+                    'receiptNumber': receiptNumber,
+                    if (notesController.text.trim().isNotEmpty)
+                      'notes': notesController.text.trim(),
                   },
                   'تم تسجيل الدفعة وتوليد الفاتورة بنجاح.',
                 );
@@ -397,14 +419,22 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
               if (approval == 'pending') ...[
                 _StudentApprovalCard(
                   studentId: widget.studentId,
+                  studentGrade: grade,
                   busy: _busy.contains('approve'),
-                  onApprove: (type, subjects, selectedGroup) => _call(
+                  onApprove: (type, subjects, priorSubjects, selectedGroup) =>
+                      _call(
                     'approve',
                     'approveStudent',
                     {
                       'studentId': widget.studentId,
                       'studentType': type,
-                      'assignedSubjects': subjects,
+                      // Contract of approveStudent: subjectAccess is a list
+                      // of {subjectId, enabled} — includes the §13
+                      // prior-grade picks merged with the primary selection.
+                      'subjectAccess': buildSubjectAccessPayload(
+                        primarySubjectIds: subjects,
+                        priorGradeSubjectIds: priorSubjects,
+                      ),
                       ...?selectedGroup == null ? null : {'groupId': selectedGroup},
                     },
                     'تم اعتماد الطالب بنجاح.',
@@ -459,6 +489,24 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
 
+              // 5b. FINAL_DECISIONS §13: prior-grade subject grants.
+              // Rendered ONLY when the student's grade has prior grades —
+              // grade_one students never see this section at all (not even
+              // disabled).
+              if (priorGradeKeysFor(grade).isNotEmpty) ...[
+                Text('منح وصول لمواد فرق سابقة',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: AppSpacing.sm),
+                _PriorGradeSubjectsCard(
+                  studentId: widget.studentId,
+                  studentGrade: grade,
+                  priorGrades: priorGradeKeysFor(grade),
+                  busy: _busy,
+                  onCall: _call,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+              ],
+
               // 6. Payment Logs and Receipts
               Text('سجل المدفوعات والفواتير', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.sm),
@@ -477,11 +525,21 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
 
 class _StudentApprovalCard extends StatefulWidget {
   final String studentId;
+
+  /// Canonical student grade from the users doc — drives the §13
+  /// prior-grade grant section (absent entirely for grade_one/unknown).
+  final String studentGrade;
   final bool busy;
-  final Function(String type, List<String> subjects, String? group) onApprove;
+  final Function(
+    String type,
+    List<String> subjects,
+    List<String> priorGradeSubjects,
+    String? group,
+  ) onApprove;
 
   const _StudentApprovalCard({
     required this.studentId,
+    required this.studentGrade,
     required this.busy,
     required this.onApprove,
   });
@@ -493,10 +551,21 @@ class _StudentApprovalCard extends StatefulWidget {
 class _StudentApprovalCardState extends State<_StudentApprovalCard> {
   String _selectedType = 'center_student';
   final Set<String> _selectedSubjectIds = {};
+  final Set<String> _selectedPriorSubjectIds = {};
   String? _selectedGroup;
 
   @override
+  void initState() {
+    super.initState();
+    // §13 applies to center students only; default the type accordingly so
+    // the prior-grade section is immediately meaningful where applicable.
+    _selectedType = 'center_student';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // FINAL_DECISIONS §13: only grades ABOVE grade_one have prior grades.
+    final priorGrades = priorGradeKeysFor(widget.studentGrade);
     return Card(
       color: AppColors.warning.withValues(alpha: 0.05),
       shape: RoundedRectangleBorder(
@@ -529,7 +598,16 @@ class _StudentApprovalCardState extends State<_StudentApprovalCard> {
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: FirebaseFirestore.instance.collection('subjects').where('is_deleted', isEqualTo: false).snapshots(),
               builder: (context, snapshot) {
-                final subjects = snapshot.data?.docs ?? [];
+                final allSubjects = snapshot.data?.docs ?? [];
+                // Primary selection stays ALL subjects; the §13 section
+                // lists ONLY subjects tagged with a prior grade of THIS
+                // student. Untagged legacy subjects stay primary-only.
+                final priorSubjects = priorGrades.isEmpty
+                    ? <QueryDocumentSnapshot<Map<String, dynamic>>>[]
+                    : allSubjects
+                        .where((s) => priorGrades
+                            .contains(normalizeAdminGradeKey(s.data()['grade'])))
+                        .toList();
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -537,7 +615,7 @@ class _StudentApprovalCardState extends State<_StudentApprovalCard> {
                     Wrap(
                       spacing: 8,
                       children: [
-                        for (final s in subjects)
+                        for (final s in allSubjects)
                           FilterChip(
                             label: Text((s.data()['title'] ?? s.data()['name'] ?? s.id).toString()),
                             selected: _selectedSubjectIds.contains(s.id),
@@ -553,6 +631,44 @@ class _StudentApprovalCardState extends State<_StudentApprovalCard> {
                           ),
                       ],
                     ),
+                    // FINAL_DECISIONS §13 entry point (a): optional
+                    // prior-grade grants at approval time. Absent entirely
+                    // for grade_one / unknown-grade students, and hidden
+                    // when nothing is tagged yet.
+                    if (_selectedType == 'center_student' &&
+                        priorSubjects.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        'منح وصول لمواد فرق سابقة (اختياري — الفرقة ${gradeLabel(widget.studentGrade)}):',
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final s in priorSubjects)
+                            FilterChip(
+                              avatar: const Icon(Icons.history_edu,
+                                  size: 16, color: AppColors.primary),
+                              label: Text(
+                                '${(s.data()['title'] ?? s.id)} '
+                                '(${gradeLabel(normalizeAdminGradeKey(s.data()['grade'])!)})',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              selected: _selectedPriorSubjectIds.contains(s.id),
+                              onSelected: (selected) {
+                                setState(() {
+                                  if (selected) {
+                                    _selectedPriorSubjectIds.add(s.id);
+                                  } else {
+                                    _selectedPriorSubjectIds.remove(s.id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 );
               },
@@ -561,7 +677,14 @@ class _StudentApprovalCardState extends State<_StudentApprovalCard> {
             widget.busy
                 ? const Center(child: CircularProgressIndicator())
                 : FilledButton.icon(
-                    onPressed: () => widget.onApprove(_selectedType, _selectedSubjectIds.toList(), _selectedGroup),
+                    onPressed: () => widget.onApprove(
+                      _selectedType,
+                      _selectedSubjectIds.toList(),
+                      _selectedType == 'center_student'
+                          ? _selectedPriorSubjectIds.toList()
+                          : const <String>[],
+                      _selectedGroup,
+                    ),
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text('اعتماد التسجيل وتفعيل المواد'),
                   ),
@@ -736,6 +859,179 @@ class _StudentSubjectsCard extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// FINAL_DECISIONS §13 entry point (b): grant/revoke prior-grade subject
+/// access from the student's profile at ANY time. Every mutation goes
+/// through the existing audited `setSubjectAccess` callable — no new write
+/// path, no Rules bypass (requireStudentAccessManager +
+/// assertAdminGradeAccessForStudent still apply server-side).
+class _PriorGradeSubjectsCard extends StatelessWidget {
+  final String studentId;
+
+  /// Canonical student grade; only grades with priors reach this widget.
+  final String studentGrade;
+  final List<String> priorGrades;
+  final Set<String> busy;
+  final Future<void> Function(
+    String key,
+    String functionName,
+    Map<String, dynamic> payload,
+    String successMessage,
+  ) onCall;
+
+  const _PriorGradeSubjectsCard({
+    required this.studentId,
+    required this.studentGrade,
+    required this.priorGrades,
+    required this.busy,
+    required this.onCall,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final subjectsStream = FirebaseFirestore.instance
+        .collection('subjects')
+        .where('is_deleted', isEqualTo: false)
+        .snapshots();
+    final assignmentsStream = FirebaseFirestore.instance
+        .collection('subject_access_assignments')
+        .where('student_id', isEqualTo: studentId)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: subjectsStream,
+      builder: (context, subjectsSnap) {
+        if (!subjectsSnap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final priorSubjects = subjectsSnap.data!.docs
+            .where((s) =>
+                priorGrades.contains(normalizeAdminGradeKey(s.data()['grade'])))
+            .toList()
+          ..sort((a, b) {
+            final rankA =
+                adminGradeRank(a.data()['grade'] as String?) ?? 0;
+            final rankB =
+                adminGradeRank(b.data()['grade'] as String?) ?? 0;
+            final byRank = rankA.compareTo(rankB);
+            if (byRank != 0) return byRank;
+            return a.id.compareTo(b.id);
+          });
+        if (priorSubjects.isEmpty) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Text(
+                'لا توجد مواد معلَّمة بفرق سابقة (فرقة ${priorGrades.map(gradeLabel).join('، ')}) بعد. علِّم الفرقة من شاشة إدارة المواد أولاً.',
+                style: const TextStyle(color: AppColors.muted),
+              ),
+            ),
+          );
+        }
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: assignmentsStream,
+          builder: (context, assignmentsSnap) {
+            // Current assignment state per prior-grade subject: enabled
+            // when an assignment exists AND is enabled AND not deleted.
+            final enabledBySubject = <String, bool>{};
+            for (final doc in assignmentsSnap.data?.docs ?? const []) {
+              final data = doc.data();
+              final subjectId = data['subject_id'] as String?;
+              if (subjectId == null) continue;
+              enabledBySubject[subjectId] =
+                  data['is_deleted'] != true && data['enabled'] == true;
+            }
+            return Column(
+              children: [
+                for (final subject in priorSubjects)
+                  _PriorGradeSubjectTile(
+                    studentId: studentId,
+                    subjectId: subject.id,
+                    subjectName: (subject.data()['title'] ??
+                            subject.data()['name'] ??
+                            subject.id)
+                        .toString(),
+                    subjectGrade:
+                        normalizeAdminGradeKey(subject.data()['grade'])!,
+                    enabled: enabledBySubject[subject.id] ?? false,
+                    busy: busy,
+                    onCall: onCall,
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _PriorGradeSubjectTile extends StatelessWidget {
+  final String studentId;
+  final String subjectId;
+  final String subjectName;
+  final String subjectGrade;
+  final bool enabled;
+  final Set<String> busy;
+  final Future<void> Function(
+    String key,
+    String functionName,
+    Map<String, dynamic> payload,
+    String successMessage,
+  ) onCall;
+
+  const _PriorGradeSubjectTile({
+    required this.studentId,
+    required this.subjectId,
+    required this.subjectName,
+    required this.subjectGrade,
+    required this.enabled,
+    required this.busy,
+    required this.onCall,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        dense: true,
+        title: Text(
+          '$subjectName (${gradeLabel(subjectGrade)})',
+          style: const TextStyle(fontSize: 14),
+        ),
+        subtitle: Text(
+          enabled ? 'الوصول مُفعّل' : 'غير مُفعّل',
+          style: TextStyle(
+            fontSize: 12,
+            color: enabled ? AppColors.success : AppColors.muted,
+          ),
+        ),
+        trailing: busy.contains('prior_access_$subjectId')
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : CupertinoSwitch(
+                value: enabled,
+                activeTrackColor: AppColors.success,
+                onChanged: (value) => onCall(
+                  'prior_access_$subjectId',
+                  'setSubjectAccess',
+                  {
+                    'studentId': studentId,
+                    'subjectId': subjectId,
+                    'enabled': value,
+                  },
+                  value
+                      ? 'تم منح وصول المادة (فرقة سابقة).'
+                      : 'تم سحب وصول المادة (فرقة سابقة).',
+                ),
+              ),
+      ),
     );
   }
 }
@@ -978,7 +1274,8 @@ class _StudentPaymentHistoryCard extends StatelessWidget {
             for (final doc in docs) ...[
               Builder(builder: (ctx) {
                 final p = doc.data();
-                final amount = (p['amount_paid'] as num?) ?? 0;
+                // onPaymentLogged persists the amount under `amount`.
+                final amount = (p['amount'] as num?) ?? (p['amount_paid'] as num?) ?? 0;
                 final subjectId = (p['subject_id'] as String?) ?? '';
                 final timestamp = (p['created_at'] as Timestamp?)?.toDate();
                 final dateStr = timestamp != null

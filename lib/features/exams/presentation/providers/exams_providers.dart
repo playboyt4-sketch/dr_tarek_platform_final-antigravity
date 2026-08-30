@@ -18,3 +18,7 @@ final lectureExamProvider =
   final repo = ref.watch(examsRepositoryProvider);
   return repo.getExamForLecture(lectureId: lectureId);
 });
+
+final publishedExamsStreamProvider = StreamProvider.autoDispose<List<Exam>>(
+  (ref) => ref.watch(examsRepositoryProvider).watchPublishedExams(),
+);

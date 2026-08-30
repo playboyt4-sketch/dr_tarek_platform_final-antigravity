@@ -37,6 +37,27 @@ class ProtectedOfflineStorageImpl implements ProtectedOfflineStorage {
 
   static const String _keyPrefix = 'drm_key_';
   static const String _expiryPrefix = 'drm_expiry_';
+  static const String _indexKey = 'drm_resource_index';
+
+  Future<List<String>> _getIndex() async {
+    return _prefs.getStringList(_indexKey) ?? <String>[];
+  }
+
+  Future<void> _addToIndex(String resourceId) async {
+    final index = await _getIndex();
+    if (!index.contains(resourceId)) {
+      index.add(resourceId);
+      await _prefs.setStringList(_indexKey, index);
+    }
+  }
+
+  Future<void> _removeFromIndex(String resourceId) async {
+    final index = await _getIndex();
+    if (index.contains(resourceId)) {
+      index.remove(resourceId);
+      await _prefs.setStringList(_indexKey, index);
+    }
+  }
 
   @override
   Future<void> saveEncryptedContentKey({
@@ -48,17 +69,18 @@ class ProtectedOfflineStorageImpl implements ProtectedOfflineStorage {
       key: '$_keyPrefix$resourceId',
       value: keyData,
     );
-    await _prefs.setString(
-      '$_expiryPrefix$resourceId',
-      expiresAt.toIso8601String(),
+    await _secureStorage.write(
+      key: '$_expiryPrefix$resourceId',
+      value: expiresAt.toIso8601String(),
     );
+    await _addToIndex(resourceId);
   }
 
   @override
   Future<String?> getValidContentKey({
     required String resourceId,
   }) async {
-    final expiryStr = _prefs.getString('$_expiryPrefix$resourceId');
+    final expiryStr = await _secureStorage.read(key: '$_expiryPrefix$resourceId');
     if (expiryStr == null) return null;
 
     final expiry = DateTime.tryParse(expiryStr);
@@ -76,22 +98,25 @@ class ProtectedOfflineStorageImpl implements ProtectedOfflineStorage {
     required String resourceId,
   }) async {
     await _secureStorage.delete(key: '$_keyPrefix$resourceId');
-    await _prefs.remove('$_expiryPrefix$resourceId');
+    await _secureStorage.delete(key: '$_expiryPrefix$resourceId');
+    await _removeFromIndex(resourceId);
   }
 
   @override
   Future<void> purgeAllExpiredOfflineResources() async {
-    final keys = _prefs.getKeys().where((k) => k.startsWith(_expiryPrefix));
+    final keys = await _getIndex();
     final now = DateTime.now();
 
-    for (final expiryKey in keys) {
-      final resourceId = expiryKey.replaceFirst(_expiryPrefix, '');
-      final expiryStr = _prefs.getString(expiryKey);
+    for (final resourceId in keys.toList()) {
+      final expiryStr = await _secureStorage.read(key: '$_expiryPrefix$resourceId');
       if (expiryStr != null) {
         final expiry = DateTime.tryParse(expiryStr);
         if (expiry == null || now.isAfter(expiry)) {
           await purgeOfflineResource(resourceId: resourceId);
         }
+      } else {
+        // Missing expiry, purge it
+        await purgeOfflineResource(resourceId: resourceId);
       }
     }
   }

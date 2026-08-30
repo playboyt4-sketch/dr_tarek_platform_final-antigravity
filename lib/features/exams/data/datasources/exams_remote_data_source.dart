@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../domain/entities/exam.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import '../../domain/entities/assessment_submit_result.dart';
 import '../models/exam_model.dart';
 
 class ExamsRemoteDataSource {
@@ -49,42 +50,79 @@ class ExamsRemoteDataSource {
     return ExamAttemptModel.fromFirestore(snap.docs.first);
   }
 
-  Future<ExamAttemptModel> submitExamAttempt({
-    required String examId,
+  /// Published exams list — powers the hub Exams screen.
+  Stream<List<ExamModel>> watchPublishedExams() {
+    return _examsRef
+        .where('status', isEqualTo: 'published')
+        .snapshots()
+        .map((snap) => snap.docs.map(ExamModel.fromFirestore).toList());
+  }
+
+  /// Starts an attempt document (rules-whitelisted fields only) and returns
+  /// its id; grading/submission happen server-side via callable.
+  Future<String> startAttempt({
+    required String assessmentId,
     required String studentId,
-    required String lectureId,
-    required Map<String, int> selectedAnswers,
-    required List<ExamQuestion> questions,
-    required int passingScore,
-    required DateTime startedAt,
   }) async {
-    int totalScore = 0;
-    int totalPossible = 0;
+    final docRef = await _attemptsRef.add({
+      'student_id': studentId,
+      'assessment_id': assessmentId,
+      'status': 'started',
+      'started_at': FieldValue.serverTimestamp(),
+    });
+    return docRef.id;
+  }
 
-    for (final q in questions) {
-      totalPossible += q.points;
-      if (selectedAnswers[q.id] == q.correctOptionIndex) {
-        totalScore += q.points;
-      }
-    }
-
-    final passed = totalScore >= passingScore;
-
-    final docRef = _attemptsRef.doc();
-    final model = ExamAttemptModel(
-      id: docRef.id,
-      examId: examId,
-      studentId: studentId,
-      lectureId: lectureId,
-      selectedAnswers: selectedAnswers,
-      score: totalScore,
-      totalPossibleScore: totalPossible,
-      passed: passed,
-      startedAt: startedAt,
-      submittedAt: DateTime.now(),
+  /// Submits answers through the server-side grader (submitAssessmentAttempt).
+  Future<AssessmentSubmitResult> submitAnswers({
+    required String attemptId,
+    required Map<String, String> answers,
+  }) async {
+    final callable = FirebaseFunctions.instance
+        .httpsCallable('submitAssessmentAttempt');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'exam',
+      'answers': answers,
+    });
+    final data = response.data as Map<dynamic, dynamic>? ?? {};
+    return AssessmentSubmitResult(
+      submitted: data['submitted'] == true,
+      score: (data['score'] as num?)?.toInt(),
+      totalMarks: (data['totalMarks'] as num?)?.toInt() ?? 0,
+      percentage: (data['percentage'] as num?)?.toDouble(),
+      needsManualGrading: data['needsManualGrading'] == true,
     );
+  }
 
-    await docRef.set(model.toMap());
-    return model;
+  /// Evaluates a single answer statelessly on the server for immediate feedback.
+  Future<Map<String, dynamic>> evaluateAnswer({
+    required String attemptId,
+    required String questionId,
+    required String answer,
+  }) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('evaluateQuestionAnswer');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'exam',
+      'questionId': questionId,
+      'answer': answer,
+    });
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  /// Securely fetches questions for an attempt without correct answers or explanations.
+  Future<List<Map<String, dynamic>>> getAssessmentQuestions({
+    required String attemptId,
+  }) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('getAssessmentQuestions');
+    final response = await callable.call({
+      'attemptId': attemptId,
+      'attemptType': 'exam',
+    });
+    final data = response.data as Map<dynamic, dynamic>? ?? {};
+    final questions = data['questions'] as List<dynamic>? ?? [];
+    return questions.map((q) => Map<String, dynamic>.from(q as Map)).toList();
   }
 }
+

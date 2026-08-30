@@ -53,12 +53,11 @@ class DefaultFirebaseOptions {
     projectId: 'dr-tarek-platform',
     authDomain: 'dr-tarek-platform.firebaseapp.com',
     storageBucket: 'dr-tarek-platform.firebasestorage.app',
-    measurementId: 'G-MX2RPN44T1',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBdHz2ZF9QLsR6dJw56RX0x0MV2pzavXhc',
-    appId: '1:606744934510:android:3d55cc03076b0adcc54e7f',
+    appId: '1:606744934510:android:e272d428dbc477bbc54e7f',
     messagingSenderId: '606744934510',
     projectId: 'dr-tarek-platform',
     storageBucket: 'dr-tarek-platform.firebasestorage.app',
@@ -66,10 +65,10 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDBPOaR6KcNN4kH_KQWfGhL0gcQZMp9uQo',
-    appId: '1:606744934510:ios:123c69688cf114cbc54e7f',
+    appId: '1:606744934510:ios:9718f3e90867d668c54e7f',
     messagingSenderId: '606744934510',
     projectId: 'dr-tarek-platform',
     storageBucket: 'dr-tarek-platform.firebasestorage.app',
-    iosBundleId: 'com.example.flutterAnalyzerTest',
+    iosBundleId: 'com.drtarek.platform',
   );
 }

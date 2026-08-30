@@ -1,14 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../../core/errors/failure.dart';
+import '../../../../../core/errors/failure_messages.dart';
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../admin/presentation/screens/admin_home_screen.dart';
 import '../../../student_home/presentation/screens/student_home_screen.dart';
 import '../../domain/entities/session_state.dart';
 import '../providers/session_provider.dart';
-import 'splash_screen.dart';
+
 import 'user_type_selection_screen.dart';
 
 enum AuthGateDestination { student, admin, blocked }
+
+/// Maps any session error object into a localized, user-friendly message.
+/// Raw exception details are never shown to users.
+String friendlySessionError(AppLocalizations l10n, Object? error) {
+  if (error == null) return failureMessage(l10n, FailureCode.unknown);
+  return failureMessage(l10n, Failure.from(error).code);
+}
 
 AuthGateDestination authGateDestinationForRole(String role) {
   return switch (role.trim().toLowerCase()) {
@@ -25,16 +35,18 @@ class AuthGate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
+
     return sessionState.when(
-      loading: () => const SplashScreen(),
+      loading: () => const Scaffold(backgroundColor: Color(0xFFFFFCF7)),
       error: (error, stackTrace) => _SessionMessage(
-        title: 'Session error',
-        message: error.toString().replaceFirst('Exception: ', ''),
-        actionLabel: 'Retry',
+        title: l10n.sessionErrorTitle,
+        message: friendlySessionError(l10n, error),
+        actionLabel: l10n.actionRetry,
         onAction: () => ref.read(sessionProvider.notifier).retry(),
       ),
       data: (session) => switch (session) {
-        SessionInitializing() => const SplashScreen(),
+        SessionInitializing() => const Scaffold(backgroundColor: Color(0xFFFFFCF7)),
         SessionUnauthenticated() => const UserTypeSelectionScreen(),
         SessionAuthenticated(:final user) => switch (authGateDestinationForRole(
           user.role,
@@ -42,57 +54,52 @@ class AuthGate extends ConsumerWidget {
           AuthGateDestination.student => StudentHomeScreen(user: user),
           AuthGateDestination.admin => AdminHomeScreen(user: user),
           AuthGateDestination.blocked => _SessionMessage(
-            title: 'Role unavailable',
-            message:
-                'This role does not have an available platform destination.',
-            actionLabel: 'Sign out',
+            title: l10n.roleUnavailableTitle,
+            message: l10n.roleUnavailableMessage(user.role),
+            actionLabel: l10n.actionSignOut,
             onAction: () => ref.read(sessionProvider.notifier).logout(),
             userName: user.fullName,
           ),
         },
         SessionRoleBlocked(:final user, :final role) => _SessionMessage(
-          title: 'Access unavailable',
-          message:
-              'No approved destination is currently available for the $role role.',
-          actionLabel: 'Sign out',
+          title: l10n.roleUnavailableTitle,
+          message: l10n.roleUnavailableMessage(role),
+          actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
         ),
         SessionPendingApproval(:final user) => _SessionMessage(
-          title: 'Account pending approval',
-          message:
-              'Your account is awaiting approval. You cannot access the platform yet.',
-          actionLabel: 'Sign out',
+          title: l10n.pendingApprovalTitle,
+          message: l10n.pendingApprovalMessage,
+          actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
         ),
         SessionRejected(:final user) => _SessionMessage(
-          title: 'Account rejected',
-          message:
-              'This account was not approved. Please contact the platform administrator.',
-          actionLabel: 'Sign out',
+          title: l10n.rejectedTitle,
+          message: l10n.rejectedMessage,
+          actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
         ),
         SessionDisabled(:final user) => _SessionMessage(
-          title: 'Account disabled',
-          message: 'This account is disabled and cannot access the platform.',
-          actionLabel: 'Sign out',
+          title: l10n.disabledTitle,
+          message: l10n.disabledMessage,
+          actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
         ),
         SessionUnauthorizedDevice(:final user) => _SessionMessage(
-          title: 'Unauthorized device',
-          message:
-              'This device is not authorized for this account. Please use an approved device or contact support.',
-          actionLabel: 'Sign out',
+          title: l10n.unauthorizedDeviceTitle,
+          message: l10n.unauthorizedDeviceMessage,
+          actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
         ),
         SessionError(:final error) => _SessionMessage(
-          title: 'Session error',
-          message: error.toString().replaceFirst('Exception: ', ''),
-          actionLabel: 'Retry',
+          title: l10n.sessionErrorTitle,
+          message: friendlySessionError(l10n, error),
+          actionLabel: l10n.actionRetry,
           onAction: () => ref.read(sessionProvider.notifier).retry(),
         ),
       },

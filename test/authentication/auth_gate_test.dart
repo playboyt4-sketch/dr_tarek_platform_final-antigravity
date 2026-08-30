@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dr_tarek_platform/core/localization/locale_controller.dart';
 import 'package:dr_tarek_platform/core/routing/app_router.dart';
 import 'package:dr_tarek_platform/features/authentication/domain/entities/auth_user.dart';
 import 'package:dr_tarek_platform/features/authentication/domain/entities/session_state.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/providers/session_provider.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/screens/auth_gate.dart';
+import 'package:dr_tarek_platform/l10n/generated/app_localizations.dart';
 
 void main() {
   AuthUser testUser({
@@ -27,6 +29,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
+          locale: const Locale('ar'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
           home: AuthGate(sessionState: AsyncData<SessionState>(state)),
         ),
       ),
@@ -39,8 +44,8 @@ void main() {
   ) async {
     await pumpGate(tester, const SessionUnauthenticated());
 
-    expect(find.text('New Student'), findsOneWidget);
-    expect(find.text('Current Student'), findsOneWidget);
+    expect(find.text('طالب جديد'), findsOneWidget);
+    expect(find.text('طالب حالي'), findsOneWidget);
   });
 
   testWidgets('student role reaches Student Home directly after login', (
@@ -52,11 +57,12 @@ void main() {
       SessionAuthenticated(user: user, claims: const {'approved': true}),
     );
 
-    // Student Home is the direct landing screen: greeting + 3-tab bottom nav.
+    // Student Home is the direct landing screen: greeting + 2-tab bottom nav
+    // (chat was removed from the current phase).
     expect(find.text('Hi, Test'), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('Notifications'), findsOneWidget);
+    expect(find.text('الرئيسية'), findsOneWidget);
+    expect(find.text('الإشعارات'), findsOneWidget);
+    expect(find.byIcon(Icons.chat_bubble_outline_rounded), findsNothing);
   });
 
   test('role mapping sends admin only to the existing admin destination', () {
@@ -70,7 +76,7 @@ void main() {
       final user = testUser(role: 'teacher', approvalStatus: 'approved');
       await pumpGate(tester, SessionRoleBlocked(user: user, role: 'teacher'));
 
-      expect(find.text('Access unavailable'), findsOneWidget);
+      expect(find.text('الدور غير متاح'), findsOneWidget);
       expect(find.text('لوحة الإدارة'), findsNothing);
     },
   );
@@ -81,17 +87,17 @@ void main() {
     final user = testUser(role: 'new_student', approvalStatus: 'approved');
     await pumpGate(tester, SessionRoleBlocked(user: user, role: 'new_student'));
 
-      expect(find.text('Access unavailable'), findsOneWidget);
-      expect(find.text('لوحة الإدارة'), findsNothing);
-    });
+    expect(find.text('الدور غير متاح'), findsOneWidget);
+    expect(find.text('لوحة الإدارة'), findsNothing);
+  });
 
   testWidgets('pending session cannot reach a protected destination', (
     tester,
   ) async {
     await pumpGate(tester, SessionPendingApproval(user: testUser()));
 
-    expect(find.text('Account pending approval'), findsOneWidget);
-    expect(find.text('New Student'), findsNothing);
+    expect(find.text('الحساب بانتظار الموافقة'), findsOneWidget);
+    expect(find.text('طالب جديد'), findsNothing);
   });
 
   testWidgets(
@@ -99,29 +105,45 @@ void main() {
     (tester) async {
       await pumpGate(tester, SessionUnauthorizedDevice(user: testUser()));
 
-      expect(find.text('Unauthorized device'), findsOneWidget);
-      expect(find.text('Current Student'), findsNothing);
+      expect(find.text('جهاز غير مصرح به'), findsOneWidget);
+      expect(find.text('طالب حالي'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'session error renders a localized friendly message instead of raw text',
+    (tester) async {
+      await pumpGateWithSessionError(tester);
+
+      // The raw exception text must never appear on screen.
+      expect(find.textContaining('RawBoom'), findsNothing);
+      expect(find.text('خطأ في الجلسة'), findsOneWidget);
+      expect(find.text('حدث خطأ غير متوقع، حاول مرة أخرى.'), findsOneWidget);
+      expect(find.text('إعادة المحاولة'), findsOneWidget);
     },
   );
 
   testWidgets(
     'AppRouter clears protected routes after session becomes unauthenticated',
     (tester) async {
-      late _SwitchableSessionController controller;
+      final controller = _SwitchableSessionController(
+        SessionAuthenticated(
+          user: testUser(role: 'student', approvalStatus: 'approved'),
+          claims: const {'approved': true},
+        ),
+      );
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(() {
-              controller = _SwitchableSessionController(
-                SessionAuthenticated(
-                  user: testUser(role: 'student', approvalStatus: 'approved'),
-                  claims: const {'approved': true},
-                ),
-              );
-              return controller;
-            }),
+            initialLocaleProvider.overrideWithValue(const Locale('ar')),
+            sessionProvider.overrideWith(() => controller),
           ],
-          child: const MaterialApp(home: AppRouter()),
+          child: MaterialApp(
+            locale: const Locale('ar'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: const AppRouter(),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -138,14 +160,14 @@ void main() {
       controller.setSession(const SessionUnauthenticated());
       await tester.pumpAndSettle();
 
-      expect(find.text('Current Student'), findsOneWidget);
+      expect(find.text('طالب حالي'), findsOneWidget);
       expect(find.text('Protected Detail'), findsNothing);
-      expect(find.text('New Student'), findsOneWidget);
+      expect(find.text('طالب جديد'), findsOneWidget);
 
       final didPop = await Navigator.of(navigatorContext).maybePop();
       await tester.pumpAndSettle();
       expect(didPop, isFalse);
-      expect(find.text('Current Student'), findsOneWidget);
+      expect(find.text('طالب حالي'), findsOneWidget);
     },
   );
 
@@ -155,18 +177,43 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            initialLocaleProvider.overrideWithValue(const Locale('ar')),
             sessionProvider.overrideWith(
               () => _FakeSessionController(const SessionUnauthenticated()),
             ),
           ],
-          child: const MaterialApp(home: AppRouter()),
+          child: MaterialApp(
+            locale: const Locale('ar'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: const AppRouter(),
+          ),
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Current Student'), findsOneWidget);
+      expect(find.text('طالب حالي'), findsOneWidget);
     },
   );
+}
+
+Future<void> pumpGateWithSessionError(WidgetTester tester) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      child: MaterialApp(
+        locale: const Locale('ar'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: AuthGate(
+          sessionState: AsyncError<SessionState>(
+            StateError('RawBoom failure detail'),
+            StackTrace.current,
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 class _SwitchableSessionController extends SessionController {

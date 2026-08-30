@@ -37,6 +37,10 @@ final deviceBindingProvider =
 class DeviceBindingController extends AsyncNotifier<bool> {
   @override
   Future<bool> build() async {
+    // validateDevice() is invoked imperatively from the session bootstrap;
+    // the element must survive between the notifier read and the state write.
+    ref.keepAlive();
+
     return false;
   }
 

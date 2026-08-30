@@ -7,7 +7,7 @@ service cloud.firestore {
     }
 
     function role() {
-      return signedIn() ? request.auth.token.role : null;
+      return (signedIn() && 'role' in request.auth.token) ? request.auth.token.role : null;
     }
 
     function isTeacher() {
@@ -91,8 +91,21 @@ service cloud.firestore {
 
     function isApprovedContent(data) {
       return isStudent()
-        && data.is_deleted != true
-        && data.status == 'published';
+        && data.get('is_deleted', false) != true
+        && data.get('status', 'none') == 'published';
+    }
+
+    function hasSubjectAccess(userId, subjectId) {
+      return exists(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId))
+        && get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId)).data.is_deleted == false;
+    }
+
+    function hasEntitlement(userId, subjectId, entitlementName) {
+      let assignment = get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId));
+      return exists(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId))
+        && assignment.data.is_deleted == false
+        && assignment.data.subscription_expires_at > request.time
+        && entitlementName in assignment.data.entitlements;
     }
 
     // User profiles are readable only after password_hash has been migrated
@@ -186,20 +199,28 @@ service cloud.firestore {
       allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
         || canManageContent()
         || isTeacher();
-      allow write: if false;
+      allow create: if canManageContent();
+      allow update: if canManageContent() 
+        && (!('is_deleted' in request.resource.data) || request.resource.data.is_deleted == false || resource.data.is_system_section != true);
+      allow delete: if false;
     }
 
     match /lectures/{lectureId} {
       allow get, list: if isApprovedContent(resource.data)
         || canManageContent()
         || isTeacher();
-      allow write: if false;
+      allow create: if canManageContent();
+      allow update: if canManageContent();
+      allow delete: if false;
     }
 
-    // Raw lecture resources are delivered through authorized Functions/Bunny
-    // URLs. They are never directly writable or readable by a client.
     match /lecture_resources/{resourceId} {
-      allow read, write: if false;
+      allow get, list: if (resource == null ? false : (isApprovedContent(resource.data) && hasSubjectAccess(request.auth.uid, resource.data.get('subject_id', 'missing-subject'))))
+        || canManageContent()
+        || isTeacher();
+      allow create: if canManageContent();
+      allow update: if canManageContent();
+      allow delete: if false;
     }
 
     match /learning_progress/{progressId} {
@@ -246,8 +267,8 @@ service cloud.firestore {
     }
 
     match /custom_groups/{groupId} {
-      allow get, list: if signedIn();
-      allow write: if isTeacher() || canManageStudents();
+      allow get, list: if isStaff();
+      allow write: if false;
     }
 
     match /plan_features/{featureId} {
@@ -261,7 +282,12 @@ service cloud.firestore {
       allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
         || canCommunicate()
         || isTeacher();
-      allow create, update, delete: if false;
+      allow create: if canCommunicate();
+      allow delete: if false;
+      allow update: if isStudent()
+        && resource.data.user_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at'])
+        && request.resource.data.is_read == true;
 
       match /deliveries/{deliveryId} {
         allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
@@ -285,14 +311,14 @@ service cloud.firestore {
     }
 
     match /notes/{noteId} {
-      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid;
-      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, resource.data.subject_id, 'notes.create');
+      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'notes.create');
       allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
     }
 
     match /bookmarks/{bookmarkId} {
-      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid;
-      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow get, list: if isStudent() && resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, resource.data.subject_id, 'bookmarks.create');
+      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'bookmarks.create');
       allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
     }
 
@@ -306,10 +332,17 @@ service cloud.firestore {
     match /quiz_attempts/{attemptId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
-      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow create: if isStudent() 
+        && request.resource.data.student_id == request.auth.uid
+        && !('score' in request.resource.data)
+        && !('percentage' in request.resource.data)
+        && !('passed' in request.resource.data);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && resource.data.submitted_at == null;
+        && resource.data.submitted_at == null
+        && !('score' in request.resource.data)
+        && !('percentage' in request.resource.data)
+        && !('passed' in request.resource.data);
       allow delete: if false;
     }
 
@@ -323,10 +356,17 @@ service cloud.firestore {
     match /exam_attempts/{attemptId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
-      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow create: if isStudent() 
+        && request.resource.data.student_id == request.auth.uid
+        && !('score' in request.resource.data)
+        && !('percentage' in request.resource.data)
+        && !('passed' in request.resource.data);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && resource.data.submitted_at == null;
+        && resource.data.submitted_at == null
+        && !('score' in request.resource.data)
+        && !('percentage' in request.resource.data)
+        && !('passed' in request.resource.data);
       allow delete: if false;
     }
 
@@ -359,7 +399,10 @@ service cloud.firestore {
 
     match /password_reset_requests/{requestId} {
       allow get, list: if isTeacher() || canManageStudents() || canResetPassword();
-      allow write: if false;
+      allow create: if (isTeacher() || (isStudent() && request.resource.data.student_id == request.auth.uid))
+        && request.resource.data.status == 'pending'
+        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'status', 'requested_at']);
+      allow update, delete: if false;
     }
 
     // Any collection not explicitly covered above is denied by default.

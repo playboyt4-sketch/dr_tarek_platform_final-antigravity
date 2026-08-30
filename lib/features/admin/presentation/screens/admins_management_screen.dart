@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -25,7 +26,6 @@ class AdminsManagementScreen extends StatelessWidget {
     (key: 'admin_academic_terms', label: 'إدارة الفترات الدراسية'),
     (key: 'admin_payments_view', label: 'عرض المدفوعات'),
     (key: 'admin_payments', label: 'تسجيل وتحصيل المدفوعات'),
-    (key: 'admin_chat', label: 'التواصل والمحادثات'),
     (key: 'admin_analytics', label: 'عرض التحليلات'),
     (key: 'admin_settings', label: 'إعدادات النظام'),
   ];
@@ -156,7 +156,7 @@ class AdminsManagementScreen extends StatelessWidget {
     } on FirebaseFunctionsException catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر إضافة الأدمن.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر إضافة الأدمن.'))),
         );
       }
     }
@@ -186,7 +186,7 @@ class _AdminCardState extends State<_AdminCard> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر تحديث الصلاحية.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر تحديث الصلاحية.'))),
         );
       }
     } finally {
@@ -227,7 +227,7 @@ class _AdminCardState extends State<_AdminCard> {
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message ?? 'تعذر حذف الأدمن.')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر حذف الأدمن.'))),
         );
       }
     } finally {

@@ -114,3 +114,83 @@ class VideoResumePrompt extends StatelessWidget {
     );
   }
 }
+
+/// FINAL_DECISIONS §11/§12: full-screen upgrade wall. Shown either when
+/// the Public Free per-lecture minute cap is reached (§11) or when a Center
+/// Free student tries to start a DIFFERENT video inside their rolling
+/// 24-hour window (§12 — [controller.dailyWindowBlocked]). Purely
+/// presentational; both gates are computed/enforced server-side.
+class VideoUpgradePrompt extends StatelessWidget {
+  final VideoPlaybackController controller;
+  final VoidCallback onUpgrade;
+
+  const VideoUpgradePrompt({
+    required this.controller,
+    required this.onUpgrade,
+    super.key,
+  });
+
+  String? _remainingWindowText() {
+    final expiresAt = controller.dailyWindowExpiresAt;
+    if (expiresAt == null) return null;
+    final remaining = expiresAt.difference(DateTime.now());
+    if (remaining <= Duration.zero) return null;
+    final hours = remaining.inHours;
+    final minutes = remaining.inMinutes.remainder(60);
+    if (hours > 0) {
+      return 'لسه فاضلك $hours ساعة و$minutes دقيقة على فيديوك الحالي.';
+    }
+    return 'لسه فاضلك $minutes دقيقة على فيديوك الحالي.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final windowLine =
+        controller.dailyWindowBlocked ? _remainingWindowText() : null;
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black87,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, color: Colors.white, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              controller.dailyWindowBlocked
+                  ? 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.'
+                  : controller.resource?.isPublicFreePreview == true
+                      ? 'انتهت الدقائق المجانية المسموح بها لهذه المحاضرة.'
+                      : 'هذا المحتوى متاح لمشتركي الباقة المدفوعة.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            // §12 nicety: remaining time on the currently-open video.
+            if (windowLine != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                windowLine,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 20),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00c896),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: onUpgrade,
+              child: const Text('الترقية إلى Pro'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

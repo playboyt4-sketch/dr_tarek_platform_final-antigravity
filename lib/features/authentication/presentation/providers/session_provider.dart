@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/auth_providers.dart';
 import '../../../device_binding/presentation/providers/device_binding_provider.dart';
+import '../../../membership/presentation/providers/membership_providers.dart';
+import '../../../subject_access/presentation/providers/subject_access_providers.dart';
 import '../../domain/entities/auth_user.dart';
 import '../../domain/entities/session_state.dart';
 import 'auth_provider.dart';
@@ -13,6 +15,9 @@ final sessionProvider = AsyncNotifierProvider<SessionController, SessionState>(
 class SessionController extends AsyncNotifier<SessionState> {
   @override
   Future<SessionState> build() async {
+    // Session is an app-lifecycle singleton; never auto-dispose it.
+    ref.keepAlive();
+
     try {
       return await _bootstrap();
     } catch (error, stackTrace) {
@@ -21,14 +26,17 @@ class SessionController extends AsyncNotifier<SessionState> {
   }
 
   Future<SessionState> _bootstrap() async {
-    final user = await ref.watch(authProvider.future);
-    if (user == null) {
+    final claims = await ref.watch(customClaimsProvider.future);
+    
+    if (claims == null) {
       return const SessionUnauthenticated();
     }
 
-    final claims =
-        await ref.watch(customClaimsProvider.future) ??
-        const <String, dynamic>{};
+    final user = await ref.watch(authProvider.future);
+    
+    if (user == null) {
+      return const SessionUnauthenticated();
+    }
 
     final accountState = resolveAccountSessionState(user: user, claims: claims);
     if (accountState != null) {
@@ -56,6 +64,10 @@ class SessionController extends AsyncNotifier<SessionState> {
 
   Future<void> logout() async {
     await ref.read(authProvider.notifier).logout();
+    ref.invalidate(customClaimsProvider);
+    ref.invalidate(deviceBindingProvider);
+    ref.invalidate(subjectAccessRepositoryProvider);
+    ref.invalidate(membershipRepositoryProvider);
     ref.invalidateSelf();
   }
 

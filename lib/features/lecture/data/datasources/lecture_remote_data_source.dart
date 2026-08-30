@@ -1,19 +1,26 @@
 ﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../domain/entities/lecture.dart';
 import '../../domain/entities/lecture_resource.dart';
 
 class LectureRemoteDataSource {
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? firestore;
+  final FirebaseFunctions? functions;
 
   LectureRemoteDataSource({
-    FirebaseFirestore? firestore,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance;
+    this.firestore,
+    this.functions,
+  });
+
+  FirebaseFirestore get _db => firestore ?? FirebaseFirestore.instance;
+
+  FirebaseFunctions get _fn => functions ?? FirebaseFunctions.instance;
 
   Future<List<Lecture>> getLecturesForSection(
     String sectionId,
   ) async {
-    final snapshot = await _firestore
+    final snapshot = await _db
         .collection('lectures')
         .where('section_id', isEqualTo: sectionId)
         .where('is_deleted', isEqualTo: false)
@@ -39,34 +46,48 @@ class LectureRemoteDataSource {
     }).toList();
   }
 
+  /// Lists a lecture's visible resources through the authorized
+  /// `getLectureResources` callable (index.ts getLectureResources), which
+  /// re-validates subject access, subscription and plan features server-side
+  /// (06 Firebase Architecture Sections 4.2/5.2). Direct Firestore reads of
+  /// `lecture_resources` are denied by Security Rules because raw documents
+  /// carry `resource_url` values that must never reach the client.
   Future<List<LectureResource>> getResourcesForLecture(
     String lectureId,
   ) async {
-    final snapshot = await _firestore
-        .collection('lecture_resources')
-        .where('lecture_id', isEqualTo: lectureId)
-        .where('visibility', isEqualTo: true)
-        .get();
+    final callable = _fn.httpsCallable('getLectureResources');
+    final result = await callable.call<Map<String, dynamic>>({
+      'lectureId': lectureId,
+    });
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
+    final resources =
+        (result.data['resources'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map<dynamic, dynamic>>()
+            .map((doc) {
+      final resourceType = switch (doc['resourceType'] as String?) {
+        'video' => LectureResourceType.video,
+        'pdf' => LectureResourceType.pdf,
+        'attachment' => LectureResourceType.attachment,
+        _ => LectureResourceType.externalLink,
+      };
 
       return LectureResource(
-        id: doc.id,
+        id: doc['id'] as String? ?? '',
         lectureId: lectureId,
-        resourceType: switch (data['resource_type']) {
-          'video' => LectureResourceType.video,
-          'pdf' => LectureResourceType.pdf,
-          'attachment' => LectureResourceType.attachment,
-          _ => LectureResourceType.externalLink,
-        },
-        resourceUrl: data['resource_url'] as String? ?? '',
-        bunnyVideoId: data['bunny_video_id'] as String?,
-        thumbnail: data['thumbnail'] as String?,
-        duration: (data['duration'] as num?)?.toInt(),
-        visibility: data['visibility'] as bool? ?? false,
+        resourceType: resourceType,
+        // Raw URLs stay server-side; playback/PDF access is granted through
+        // generateBunnySignedUrl / generateProtectedPdfUrl callables.
+        resourceUrl: '',
+        bunnyVideoId: doc['bunnyVideoId'] as String?,
+        thumbnail: doc['thumbnail'] as String?,
+        // Dual-provider key (FINAL_DECISIONS §15) — routed in the Data layer.
+        storageProvider: doc['storageProvider'] as String? ?? 'firebase',
+        duration: (doc['duration'] as num?)?.toInt(),
+        // The callable only returns resources whose visibility gate passed.
+        visibility: true,
       );
-    }).toList();
+    }).where((resource) => resource.id.isNotEmpty).toList();
+
+    return resources;
   }
 }
-

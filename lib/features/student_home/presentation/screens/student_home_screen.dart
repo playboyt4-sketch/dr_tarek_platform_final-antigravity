@@ -4,18 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/user_avatar.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
 import '../../../student_dashboard/domain/entities/dashboard_subject.dart';
 import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../../student_platform/presentation/screens/student_feature_hub_screen.dart';
+import '../../../notifications/presentation/providers/notifications_providers.dart';
+import '../../../notifications/presentation/screens/notifications_list_screen.dart';
 import '../../../subject_navigation/presentation/screens/subject_navigation_screen.dart';
 
 /// Student Home — the landing screen after a successful student login.
 ///
 /// Visual reference: the approved Figma frame (full colored background,
 /// UserAvatar on top, "Hi, {first name}" greeting, a vertical list of
-/// pill-shaped subject buttons, and a 3-item bottom navigation:
-/// Home (active), Chat, Notifications).
+/// pill-shaped subject buttons, and a 2-item bottom navigation:
+/// Home (active), Notifications).
 class StudentHomeScreen extends ConsumerStatefulWidget {
   final AuthUser user;
 
@@ -37,8 +40,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
       body: SafeArea(
         child: switch (_currentTab) {
           0 => _HomeTab(user: widget.user),
-          1 => ChatScreen(studentId: widget.user.id, embedded: true),
-          _ => NotificationsScreen(studentId: widget.user.id, embedded: true),
+          1 => NotificationsScreen(studentId: widget.user.id, embedded: true),
+          _ => StudentFeatureHubScreen(user: widget.user, embedded: true),
         },
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -47,18 +50,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
         backgroundColor: Colors.white,
         selectedItemColor: AppColors.primary,
         unselectedItemColor: AppColors.muted,
-        items: const [
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.home_rounded),
-            label: 'Home',
+            icon: const Icon(Icons.home_rounded),
+            label: AppLocalizations.of(context).navHome,
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            label: 'Chat',
+            icon: _NotificationsIconWithBadge(studentId: widget.user.id),
+            label: AppLocalizations.of(context).navNotifications,
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.notifications_none_rounded),
-            label: 'Notifications',
+          const BottomNavigationBarItem(
+            icon: Icon(Icons.widgets_outlined),
+            label: 'الميزات',
           ),
         ],
       ),
@@ -286,3 +289,44 @@ final studentPlanKeyProvider = FutureProvider.family<String?, String>((ref, stud
   final key = plan.data()?['plan_key'];
   return key is String ? key : null;
 });
+
+/// Bell icon with a live unread-notifications count dot.
+class _NotificationsIconWithBadge extends ConsumerWidget {
+  final String studentId;
+
+  const _NotificationsIconWithBadge({required this.studentId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unread = ref.watch(userUnreadNotificationsCountProvider(studentId));
+    final count = unread.value ?? 0;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        const Icon(Icons.notifications_none_rounded),
+        if (count > 0)
+          Positioned(
+            top: -4,
+            right: -6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              constraints: const BoxConstraints(minWidth: 15),
+              child: Text(
+                count > 99 ? '99+' : '$count',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}

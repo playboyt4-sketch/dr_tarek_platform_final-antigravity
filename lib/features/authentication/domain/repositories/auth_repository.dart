@@ -1,8 +1,27 @@
 import '../entities/auth_user.dart';
 
+class StaffDirectoryEntryEntity {
+  final String displayName;
+  final String roleKind; // 'dr' | 'admin'
+
+  const StaffDirectoryEntryEntity({
+    required this.displayName,
+    required this.roleKind,
+  });
+}
+
 abstract class AuthRepository {
   Future<AuthUser> login({
     required String phoneNumber,
+    required String password,
+  });
+
+  /// Lists active platform staff (owner + admins) for the pre-login gate.
+  Future<List<StaffDirectoryEntryEntity>> listStaffDirectory();
+
+  /// Signs a staff member in with display name + password.
+  Future<AuthUser> staffLogin({
+    required String displayName,
     required String password,
   });
 

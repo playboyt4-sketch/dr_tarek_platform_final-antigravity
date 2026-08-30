@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,6 +16,48 @@ abstract interface class VideoSourceGateway {
     required VideoQuality quality,
     String? subjectId,
   });
+}
+
+/// FINAL_DECISIONS §12 self-read snapshot for UI niceties.
+class WatchWindowSnapshot {
+  final bool active;
+  final String? activeLectureId;
+  final DateTime? expiresAt;
+
+  const WatchWindowSnapshot({
+    required this.active,
+    this.activeLectureId,
+    this.expiresAt,
+  });
+}
+
+abstract interface class WatchWindowGateway {
+  Future<WatchWindowSnapshot> load();
+}
+
+/// Callable-backed §12 window reader (getVideoWatchWindow). The callable
+/// itself returns active:false for any non-Center-Free caller.
+class CallableWatchWindowGateway implements WatchWindowGateway {
+  final FirebaseFunctions functions;
+
+  CallableWatchWindowGateway({FirebaseFunctions? functions})
+      : functions = functions ?? FirebaseFunctions.instance;
+
+  @override
+  Future<WatchWindowSnapshot> load() async {
+    final response =
+        await functions.httpsCallable('getVideoWatchWindow').call();
+    final data = Map<String, dynamic>.from(response.data as Map);
+    if (data['active'] != true) return const WatchWindowSnapshot(active: false);
+    final expiresMs = (data['windowExpiresAtMs'] as num?)?.toInt();
+    return WatchWindowSnapshot(
+      active: true,
+      activeLectureId: data['activeLectureId'] as String?,
+      expiresAt: expiresMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(expiresMs),
+    );
+  }
 }
 
 class VideoSourceResolver implements VideoSourceGateway {
@@ -31,16 +76,29 @@ class VideoSourceResolver implements VideoSourceGateway {
       'lectureId': lectureId,
     });
     final data = Map<String, dynamic>.from(response.data as Map);
+    // FINAL_DECISIONS §11: server-computed Public Free per-lecture gate.
+    final publicFree = data['publicFreePreview'] == null
+        ? null
+        : Map<String, dynamic>.from(data['publicFreePreview'] as Map);
     final raw = (data['resources'] as List<dynamic>? ?? const <dynamic>[]);
     return raw.map((item) {
-      final map = Map<String, dynamic>.from(item as Map);
+      final resource = VideoResource.fromCallablePayload(
+        Map<String, dynamic>.from(item as Map),
+      );
+      // Public Free is per-STUDENT+lecture state computed by the callable,
+      // not a property of the resource document — stamped here.
       return VideoResource(
-        id: map['id'] as String? ?? '',
-        title: map['title'] as String? ?? 'مورد تعليمي',
-        resourceType: map['resourceType'] as String? ?? 'attachment',
-        bunnyVideoId: map['bunnyVideoId'] as String?,
-        thumbnailUrl: map['thumbnail'] as String?,
-        duration: _duration(map['duration']),
+        id: resource.id,
+        title: resource.title,
+        resourceType: resource.resourceType,
+        bunnyVideoId: resource.bunnyVideoId,
+        thumbnailUrl: resource.thumbnailUrl,
+        storageProvider: resource.storageProvider,
+        thumbnailProvider: resource.thumbnailProvider,
+        duration: resource.duration,
+        isPublicFreePreview: publicFree != null,
+        publicFreePreviewSeconds:
+            (publicFree?['previewLimitSeconds'] as num?)?.toInt(),
       );
     }).toList();
   }
@@ -78,7 +136,7 @@ class VideoSourceResolver implements VideoSourceGateway {
         selectedQuality: selected,
       );
     } on FirebaseFunctionsException catch (error) {
-      throw VideoSourceException(_messageFor(error));
+      throw classifyVideoSourceError(error.code, error.message, error.details);
     } catch (error) {
       if (error is VideoSourceException) rethrow;
       throw VideoSourceException(
@@ -92,14 +150,29 @@ class VideoSourceResolver implements VideoSourceGateway {
     if (custom != null) return custom();
     final existing = await _secureStorage.read(key: _deviceIdKey);
     if (existing != null && existing.isNotEmpty) return existing;
-    final created = _uuid.v4();
+
+    String? hardwareId;
+    try {
+      final plugin = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        hardwareId = (await plugin.androidInfo).id;
+      } else if (Platform.isIOS) {
+        hardwareId = (await plugin.iosInfo).identifierForVendor;
+      }
+    } catch (_) {}
+
+    String created;
+    if (hardwareId != null && hardwareId.isNotEmpty) {
+      // Deterministically generate a UUIDv5, then force the version nibble to '4' 
+      // so it passes strict backend UUIDv4 regex checks.
+      final v5 = _uuid.v5(Namespace.url.value, hardwareId);
+      created = v5.replaceRange(14, 15, '4');
+    } else {
+      created = _uuid.v4();
+    }
+    
     await _secureStorage.write(key: _deviceIdKey, value: created);
     return created;
-  }
-
-  Duration? _duration(Object? value) {
-    if (value is! num || value <= 0) return null;
-    return Duration(seconds: value.round());
   }
 
   DateTime _dateFromEpoch(Object? value) {
@@ -107,18 +180,6 @@ class VideoSourceResolver implements VideoSourceGateway {
     return seconds > 0
         ? DateTime.fromMillisecondsSinceEpoch(seconds * 1000)
         : DateTime.now().add(const Duration(minutes: 4));
-  }
-
-  String _messageFor(FirebaseFunctionsException error) {
-    return switch (error.code) {
-      'permission-denied' =>
-        'لا تملك صلاحية مشاهدة هذا الفيديو أو انتهى اشتراكك.',
-      'unauthenticated' => 'يجب تسجيل الدخول لمشاهدة هذا الفيديو.',
-      'not-found' => 'الفيديو غير متاح حاليًا.',
-      'deadline-exceeded' ||
-      'unavailable' => 'تعذر الاتصال بخدمة الفيديو. حاول مرة أخرى.',
-      _ => 'تعذر تحميل الفيديو. حاول مرة أخرى.',
-    };
   }
 }
 
@@ -129,6 +190,64 @@ class VideoSourceException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// FINAL_DECISIONS §12: generateBunnySignedUrl refused to start a different
+/// video while the caller's Center Free rolling 24-hour window is active.
+/// Carries the server-provided expiry so the UI can show a live countdown
+/// and the upgrade CTA BEFORE any playback is attempted.
+class CenterFreeWindowBlockedException extends VideoSourceException {
+  final int? windowExpiresAtMs;
+  final String? activeLectureId;
+
+  const CenterFreeWindowBlockedException({
+    required String message,
+    this.windowExpiresAtMs,
+    this.activeLectureId,
+  }) : super(message);
+}
+
+/// Stable sentinel echoed by functions/src/index.ts
+/// (CENTER_FREE_WINDOW_BLOCKED_MESSAGE) and mapped in failure.dart.
+const String kCenterFreeWindowBlockedMessage =
+    'A Center Free 24-hour video window is already active for another video.';
+
+/// Pure mapping of a callable failure into the typed video-source
+/// exception hierarchy. Kept side-effect-free and top-level so the §12
+/// contract is unit-testable without Firebase platform channels.
+VideoSourceException classifyVideoSourceError(
+  String code,
+  String? message,
+  Object? details,
+) {
+  if (message?.trim() == kCenterFreeWindowBlockedMessage) {
+    int? expiresAtMs;
+    String? activeLectureId;
+    if (details is Map) {
+      final rawExpiry = details['windowExpiresAtMs'];
+      if (rawExpiry is num) expiresAtMs = rawExpiry.toInt();
+      final rawLecture = details['activeLectureId'];
+      if (rawLecture is String) activeLectureId = rawLecture;
+    }
+    return CenterFreeWindowBlockedException(
+      message: 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.',
+      windowExpiresAtMs: expiresAtMs,
+      activeLectureId: activeLectureId,
+    );
+  }
+  return VideoSourceException(_staticMessageFor(code));
+}
+
+String _staticMessageFor(String code) {
+  return switch (code) {
+    'permission-denied' =>
+      'لا تملك صلاحية مشاهدة هذا الفيديو أو انتهى اشتراكك.',
+    'unauthenticated' => 'يجب تسجيل الدخول لمشاهدة هذا الفيديو.',
+    'not-found' => 'الفيديو غير متاح حاليًا.',
+    'deadline-exceeded' ||
+    'unavailable' => 'تعذر الاتصال بخدمة الفيديو. حاول مرة أخرى.',
+    _ => 'تعذر تحميل الفيديو. حاول مرة أخرى.',
+  };
 }
 
 abstract interface class VideoEntitlementGateway {
