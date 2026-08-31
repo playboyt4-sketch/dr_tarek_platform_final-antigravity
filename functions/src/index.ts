@@ -2203,7 +2203,23 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     .limit(1)
     .get();
   if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
-  assertSubjectAccess(subscriptionSnap.docs[0].data());
+  const subjectSubscription = subscriptionSnap.docs[0].data();
+  assertSubjectAccess(subjectSubscription);
+
+  const subjectPlanId = getString(subjectSubscription.plan_id);
+  let publicFreePreviewSeconds: number | null = null;
+  if (subjectPlanId) {
+    const subjectPlanSnap = await db.collection("plans").doc(subjectPlanId).get();
+    if (subjectPlanSnap.exists) {
+      const subjectPlan = dataOf(subjectPlanSnap.data());
+      if (subjectPlan.student_type === "public_student" && subjectPlan.plan_key === "public_free") {
+        if (lecture.public_free_enabled === true) {
+          const mins = typeof lecture.public_free_preview_minutes === 'number' ? lecture.public_free_preview_minutes : 0;
+          publicFreePreviewSeconds = mins * 60;
+        }
+      }
+    }
+  }
 
   const resourcesSnap = await db.collection("lecture_resources")
     .where("lecture_id", "==", lectureId)
@@ -2212,6 +2228,7 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     .get();
 
   return {
+    publicFreePreview: publicFreePreviewSeconds != null ? { previewLimitSeconds: publicFreePreviewSeconds } : null,
     resources: resourcesSnap.docs.map((doc) => {
       const resource = dataOf(doc.data());
       return {
