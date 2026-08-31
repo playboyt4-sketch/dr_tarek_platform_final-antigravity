@@ -1,8 +1,23 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../core/responsive/responsive.dart';
-import '../../../../core/routing/app_router.dart';
+import '../../../../core/theme/design_tokens.dart';
+import 'user_type_selection_screen.dart';
+
+/// Design constants — copied verbatim from `splash_screen.md`. Raw
+/// design-pixel values (393×852 canvas); consumed only via
+/// `context.rs()` / `context.rsFont()`.
+abstract final class _SplashScreenDesign {
+  // ---- Brand signature (Gardenia Summer) ----
+  static const signatureFontSize = 128.0;
+  static const signatureColor = AppColors.black;
+
+  // ---- Animation timing ----
+  static const fadeInDelay = Duration(milliseconds: 300);
+  static const fadeInDuration = Duration(milliseconds: 800);
+  static const holdDuration = Duration(milliseconds: 5000);
+  static const exitTransitionDuration = Duration(milliseconds: 800);
+}
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -13,62 +28,50 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   double _opacity = 0.0;
-  Timer? _fadeTimer;
-  Timer? _navigateTimer;
 
   @override
   void initState() {
     super.initState();
-    // 1. Initial delay: 300ms
-    _fadeTimer = Timer(const Duration(milliseconds: 300), () {
+
+    Future.delayed(_SplashScreenDesign.fadeInDelay, () {
       if (mounted) setState(() => _opacity = 1.0);
     });
 
-    // 2. Total Pre-navigation delay: 6100ms
-    // (300ms delay + 800ms fade-in + 5000ms visible hold = 6100ms)
-    _navigateTimer = Timer(const Duration(milliseconds: 6100), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            transitionDuration: const Duration(milliseconds: 800),
-            pageBuilder: (context, animation, secondaryAnimation) => const AppRouter(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-                FadeTransition(opacity: animation, child: child),
-          ),
-        );
-      }
-    });
-  }
+    final navigateAfter = _SplashScreenDesign.fadeInDelay +
+        _SplashScreenDesign.holdDuration +
+        _SplashScreenDesign.fadeInDuration;
 
-  @override
-  void dispose() {
-    _fadeTimer?.cancel();
-    _navigateTimer?.cancel();
-    super.dispose();
+    Future.delayed(navigateAfter, () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          transitionDuration: _SplashScreenDesign.exitTransitionDuration,
+          pageBuilder: (_, __, ___) => const UserTypeSelectionScreen(),
+          transitionsBuilder: (_, animation, __, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFCF7),
+      backgroundColor: AppColors.canvas,
       body: Center(
         child: Hero(
           tag: 'brand_logo_signature',
-          child: Material(
-            color: Colors.transparent,
-            child: AnimatedOpacity(
-              opacity: _opacity,
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.easeOut,
-              child: Text(
-                'Tarek el araby',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: 'Gardenia Summer',
-                  fontSize: context.rs(128),
-                  color: const Color(0xFF000000),
-                  height: 1.0,
-                ),
+          child: AnimatedOpacity(
+            opacity: _opacity,
+            duration: _SplashScreenDesign.fadeInDuration,
+            curve: Curves.easeOut,
+            child: Text(
+              'Tarek el araby',
+              textAlign: TextAlign.center,
+              style: AppTypography.signature(
+                context,
+                designPx: _SplashScreenDesign.signatureFontSize,
+                color: _SplashScreenDesign.signatureColor,
               ),
             ),
           ),

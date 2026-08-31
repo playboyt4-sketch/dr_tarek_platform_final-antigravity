@@ -62,3 +62,6 @@ flutter:
     - family: Gardenia Summer
       fonts:
         - asset: assets/fonts/Gardenia Summer.ttf
+    - family: Google Sans Flex
+      fonts:
+        - asset: assets/fonts/GoogleSansFlex.ttf
