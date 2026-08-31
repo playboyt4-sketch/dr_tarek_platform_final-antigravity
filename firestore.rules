@@ -397,6 +397,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /video_watch_windows/{windowId} {
+      allow read: if request.auth != null && request.auth.uid == windowId;
+      allow write: if false; // Only server writes (Admin SDK) are allowed
+    }
+
     match /password_reset_requests/{requestId} {
       allow get, list: if isTeacher() || canManageStudents() || canResetPassword();
       allow create: if (isTeacher() || (isStudent() && request.resource.data.student_id == request.auth.uid))
