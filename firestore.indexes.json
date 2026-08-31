@@ -107,6 +107,14 @@
         { "fieldPath": "is_deleted", "mode": "ASCENDING" },
         { "fieldPath": "display_order", "mode": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "video_watch_windows",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "mode": "ASCENDING" },
+        { "fieldPath": "window_expires_at", "mode": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
