@@ -1987,6 +1987,24 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
   return {url: url.toString(), expiresAt: expires, quality: selectedQuality};
 });
 
+export const getVideoWatchWindow = onCall(SECURE_CALL_OPTS, async (request) => {
+  const userId = requireAuthenticated(request);
+  const windowSnap = await db.collection("video_watch_windows").doc(userId).get();
+  if (!windowSnap.exists) return { active: false };
+  const window = windowSnap.data() as any;
+  if (!window.window_expires_at) return { active: false };
+  
+  const now = Date.now();
+  const expiresAtMs = window.window_expires_at.toMillis();
+  if (now >= expiresAtMs) return { active: false };
+  
+  return {
+    active: true,
+    activeLectureId: window.active_lecture_id,
+    windowExpiresAtMs: expiresAtMs
+  };
+});
+
 export const revalidateOfflineAccess = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const subjectIds = Array.isArray(request.data?.subjectIds) ? request.data.subjectIds.filter((id: unknown): id is string => typeof id === "string" && id.length > 0) : [];
