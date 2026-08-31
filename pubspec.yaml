@@ -42,7 +42,7 @@ dependencies:
   path_provider: ^2.1.2
   firebase_crashlytics: ^5.0.0
   firebase_messaging: ^16.1.1
-  firebase_app_check: ^0.4.1
+  firebase_app_check: ^0.4.7
   flutter_local_notifications: ^19.0.0
   state_notifier: ^1.0.0
 
