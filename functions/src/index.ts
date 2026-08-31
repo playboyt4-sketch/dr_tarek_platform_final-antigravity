@@ -1974,6 +1974,32 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
   const selectedQuality = requestedQuality ??
     [...allowedQualities].sort((left, right) => qualityRank(right) - qualityRank(left))[0];
 
+  if (plan.studentType === 'center_student' && plan.plan.plan_key === 'center_free') {
+    const windowRef = db.collection('video_watch_windows').doc(userId);
+    await db.runTransaction(async (t) => {
+      const windowSnap = await t.get(windowRef);
+      const existingWindow = windowSnap.data() as any;
+      const now = Date.now();
+      const decision = decideVideoWatchWindow(existingWindow, lectureId, now);
+      
+      if (!decision.allowed) {
+        throw new HttpsError('resource-exhausted', CENTER_FREE_WINDOW_BLOCKED_MESSAGE, {
+          windowExpiresAtMs: existingWindow.window_expires_at.toMillis(),
+          activeLectureId: existingWindow.active_lecture_id
+        });
+      }
+      
+      if (decision.reason === 'no_window' || decision.reason === 'expired') {
+        const expiresAt = Timestamp.fromMillis(now + 24 * 60 * 60 * 1000);
+        t.set(windowRef, {
+          active_lecture_id: lectureId,
+          window_expires_at: expiresAt,
+          user_id: userId
+        });
+      }
+    });
+  }
+
   const template = getEnv("BUNNY_PLAYBACK_URL_TEMPLATE");
   const secret = getEnv("BUNNY_TOKEN_KEY");
   const expires = Math.floor(Date.now() / 1000) + 300;
