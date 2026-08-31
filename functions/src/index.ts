@@ -28,6 +28,25 @@ const db = getFirestore();
 const auth = getAuth();
 const messaging = getMessaging();
 const storage = getStorage();
+
+export const CENTER_FREE_WINDOW_BLOCKED_MESSAGE =
+  'A Center Free 24-hour video window is already active for another video.';
+
+export function decideVideoWatchWindow(
+  existingWindow: {active_lecture_id: string; window_expires_at: Timestamp} | null | undefined,
+  requestedLectureId: string,
+  now: number
+): { allowed: boolean; reason: 'no_window' | 'same_video' | 'different_video' | 'expired' } {
+  if (!existingWindow || !existingWindow.window_expires_at) {
+    return { allowed: true, reason: 'no_window' };
+  }
+  const expiryMs = existingWindow.window_expires_at.toMillis();
+  if (now >= expiryMs) return { allowed: true, reason: 'expired' };
+  if (existingWindow.active_lecture_id === requestedLectureId) 
+    return { allowed: true, reason: 'same_video' };
+  return { allowed: false, reason: 'different_video' };
+}
+
 async function deriveScryptKey(
   password: string,
   salt: Buffer,
