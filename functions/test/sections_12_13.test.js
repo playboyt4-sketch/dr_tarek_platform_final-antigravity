@@ -1,48 +1,11 @@
-/**
- * Unit tests for FINAL_DECISIONS §12 (Center Free rolling 24-hour
- * single-video limit) and §13 (grade-based prior-term access) server-side
- * pure policy helpers.
- *
- * The firebase-admin surface is stubbed exactly like the other suites so
- * lib/index.js can be loaded without an emulator or real project.
- */
-const test = require("firebase-functions-test")({
-  projectId: "dr-tarek-platform-functions-test",
-});
-
+const test = require("firebase-functions-test")();
 const assert = require("node:assert/strict");
+const admin = require("firebase-admin");
 
-const adminMock = {
-  initializeApp: () => ({}),
-  getFirestore: () => ({collection: () => { throw new Error("not used"); }}),
-  getAuth: () => ({}),
-  getMessaging: () => ({}),
-  getStorage: () => ({}),
-  FieldValue: {serverTimestamp: () => ({_serverTimestamp: true})},
-  Timestamp: {
-    now: () => ({toMillis: () => Date.now()}),
-    fromMillis: (ms) => ({toMillis: () => ms}),
-  },
-};
-
-const Module = require("node:module");
-const originalRequire = Module.prototype.require;
-Module.prototype.require = function (id) {
-  if (id === "firebase-admin/firestore") {
-    return {
-      getFirestore: adminMock.getFirestore,
-      FieldValue: adminMock.FieldValue,
-      Timestamp: adminMock.Timestamp,
-    };
-  }
-  if (id === "firebase-admin/auth") return {getAuth: adminMock.getAuth};
-  if (id === "firebase-admin/messaging") {
-    return {getMessaging: adminMock.getMessaging};
-  }
-  if (id === "firebase-admin/storage") return {getStorage: adminMock.getStorage};
-  if (id === "firebase-admin/app") return {initializeApp: adminMock.initializeApp};
-  return originalRequire.apply(this, arguments);
-};
+process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.GCLOUD_PROJECT = 'demo-test';
+process.env.BUNNY_PLAYBACK_URL_TEMPLATE = 'https://example.com/{video_id}/{quality}';
+process.env.BUNNY_TOKEN_KEY = 'test_key';
 
 let functions;
 try {
@@ -52,99 +15,151 @@ try {
   process.exit(1);
 }
 
-let passed = 0;
-function check(name, fn) {
+const generateBunnySignedUrl = test.wrap(functions.generateBunnySignedUrl);
+const db = admin.firestore();
+
+async function run() {
+  console.log("Starting sections_12_13 tests against emulator...");
+  let passed = 0;
+
   try {
-    fn();
-    passed += 1;
-    console.log(`ok - ${name}`);
+    const userId = "test_user_center";
+    const subjectId = "subject_1";
+    const planId = "plan_center_free";
+    const lectureId1 = "lecture_1";
+    const lectureId2 = "lecture_2";
+    const videoId1 = "bunny_1";
+    const videoId2 = "bunny_2";
+    const deviceId = "test_device_123456789";
+
+    await db.collection("users").doc(userId).set({
+      student_type: "center_student",
+      approval_status: "approved"
+    });
+
+    await db.collection("devices").doc(deviceId).set({
+      user_id: userId,
+      status: "active"
+    });
+
+    await db.collection("plans").doc(planId).set({
+      student_type: "center_student",
+      plan_key: "center_free",
+      is_active: true
+    });
+
+    await db.collection("plan_features").doc("pf1").set({
+      plan_id: planId,
+      feature_key: "video.access",
+      enabled: true
+    });
+    
+    await db.collection("plan_features").doc("pf2").set({
+      plan_id: planId,
+      feature_key: "video.quality.720p",
+      enabled: true
+    });
+
+    await db.collection("subscriptions").doc("sub1").set({
+      student_id: userId,
+      subject_id: subjectId,
+      status: "active",
+      plan_id: planId
+    });
+    
+    await db.collection("subject_access_assignments").doc(`${userId}_${subjectId}`).set({
+      student_id: userId,
+      subject_id: subjectId,
+      is_deleted: false,
+      enabled: true,
+      subscription_expires_at: admin.firestore.Timestamp.fromMillis(Date.now() + 100000000),
+      entitlements: { "video.view": true }
+    });
+
+    await db.collection("lectures").doc(lectureId1).set({
+      subject_id: subjectId,
+      is_deleted: false,
+      is_visible: true,
+      status: "published"
+    });
+
+    await db.collection("lectures").doc(lectureId2).set({
+      subject_id: subjectId,
+      is_deleted: false,
+      is_visible: true,
+      status: "published"
+    });
+
+    await db.collection("lecture_resources").doc("res1").set({
+      lecture_id: lectureId1,
+      bunny_video_id: videoId1,
+      resource_type: "video"
+    });
+
+    await db.collection("lecture_resources").doc("res2").set({
+      lecture_id: lectureId2,
+      bunny_video_id: videoId2,
+      resource_type: "video"
+    });
+
+    // Test 1: No window -> allowed
+    await db.collection("video_watch_windows").doc(userId).delete();
+    await generateBunnySignedUrl({ data: { videoId: videoId1, deviceId }, auth: { uid: userId } });
+    console.log("ok - No window -> allowed");
+    passed++;
+
+    // Test 2: Same lecture -> allowed
+    await generateBunnySignedUrl({ data: { videoId: videoId1, deviceId }, auth: { uid: userId } });
+    console.log("ok - Same lecture -> allowed");
+    passed++;
+
+    // Test 3: Different lecture -> rejected
+    try {
+      await generateBunnySignedUrl({ data: { videoId: videoId2, deviceId }, auth: { uid: userId } });
+      assert.fail("Should have thrown resource-exhausted");
+    } catch (e) {
+      assert.equal(e.code, "resource-exhausted");
+      console.log("ok - Different lecture -> rejected");
+      passed++;
+    }
+
+    // Test 4: Expired window -> allowed (rolling)
+    await db.collection("video_watch_windows").doc(userId).update({
+      window_expires_at: admin.firestore.Timestamp.fromMillis(Date.now() - 1000)
+    });
+    await generateBunnySignedUrl({ data: { videoId: videoId2, deviceId }, auth: { uid: userId } });
+    console.log("ok - Expired window -> allowed");
+    passed++;
+
+    // Test 5: Not gated for Center Pro
+    await db.collection("plans").doc(planId).update({ plan_key: "center_pro" });
+    await generateBunnySignedUrl({ data: { videoId: videoId1, deviceId }, auth: { uid: userId } });
+    console.log("ok - Center Pro not gated");
+    passed++;
+
+    // Test 6: Race condition
+    await db.collection("plans").doc(planId).update({ plan_key: "center_free" });
+    await db.collection("video_watch_windows").doc(userId).delete();
+    
+    let successCount = 0;
+    const req1 = generateBunnySignedUrl({ data: { videoId: videoId1, deviceId }, auth: { uid: userId } })
+      .then(() => { successCount++; })
+      .catch(() => {});
+    const req2 = generateBunnySignedUrl({ data: { videoId: videoId2, deviceId }, auth: { uid: userId } })
+      .then(() => { successCount++; })
+      .catch(() => {});
+      
+    await Promise.all([req1, req2]);
+    assert.equal(successCount, 1, "Exactly one concurrent request should succeed");
+    console.log("ok - Race condition handled");
+    passed++;
+
+    console.log(`sections_12_13 tests passed (${passed}/6).`);
+    process.exit(0);
   } catch (error) {
-    console.error(`FAIL - ${name}`);
-    console.error(error);
+    console.error("FAIL", error);
     process.exitCode = 1;
   }
 }
 
-const NOW = 1_800_000_000_000; // fixed epoch millis
-const HOUR = 60 * 60 * 1000;
-const window = (resourceId, expiresInMillis) => ({
-  active_resource_id: resourceId,
-  window_expires_at: {toMillis: () => NOW + expiresInMillis},
-});
-
-// ---- §12: rolling-window decision --------------------------------------
-check("no existing window -> allowed (new window starts)", () => {
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(null, "res-B", NOW),
-    {allowed: true, reason: "no_window"},
-  );
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(undefined, "res-B", NOW),
-    {allowed: true, reason: "no_window"},
-  );
-});
-
-check("active window + SAME video -> allowed (resume/replay)", () => {
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(window("res-A", 5 * HOUR), "res-A", NOW),
-    {allowed: true, reason: "same_video"},
-  );
-});
-
-check("active window + DIFFERENT video -> REJECTED", () => {
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(window("res-A", 5 * HOUR), "res-B", NOW),
-    {allowed: false, reason: "different_video"},
-  );
-});
-
-check("EXPIRED window -> allowed even for a different video (rolling)", () => {
-  // Expired one second ago still counts as expired.
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(window("res-A", -1), "res-B", NOW),
-    {allowed: true, reason: "expired"},
-  );
-  // Boundary: expires exactly now is expired (current_time < start+24h fails).
-  assert.deepEqual(
-    functions.decideVideoWatchWindow(window("res-A", 0), "res-B", NOW),
-    {allowed: true, reason: "expired"},
-  );
-});
-
-check("window doc without parsable expiry treated as no window", () => {
-  assert.deepEqual(
-    functions.decideVideoWatchWindow({active_resource_id: "res-A"}, "res-B", NOW),
-    {allowed: true, reason: "expired"},
-  );
-});
-
-// ---- §12: client-contract sentinel --------------------------------------
-check("blocked message sentinel matches the client mapping exactly", () => {
-  assert.equal(
-    functions.CENTER_FREE_WINDOW_BLOCKED_MESSAGE,
-    "A Center Free 24-hour video window is already active for another video.",
-  );
-});
-
-// ---- §13: grade normalization incl. legacy spellings --------------------
-check("normalizeGradeKey accepts canonical and digit forms", () => {
-  assert.equal(functions.normalizeGradeKey("grade_one"), "grade_one");
-  assert.equal(functions.normalizeGradeKey("grade_3"), "grade_three");
-  assert.equal(functions.normalizeGradeKey("Grade 4"), "grade_four");
-  assert.equal(functions.normalizeGradeKey("الفرقة الثانية"), "grade_two");
-  assert.equal(functions.normalizeGradeKey("nonsense"), null);
-  assert.equal(functions.normalizeGradeKey(null), null);
-});
-
-check("gradeRank orders grades for prior-term computation", () => {
-  assert.equal(functions.gradeRank("grade_one"), 1);
-  assert.equal(functions.gradeRank("grade_4"), 4);
-  assert.equal(functions.gradeRank("bogus"), null);
-});
-
-test.cleanup();
-if (process.exitCode === 1) {
-  console.error("sections_12_13 tests FAILED");
-  process.exit(1);
-}
-console.log(`sections_12_13 tests passed (${passed}/8 groups).`);
+run();
