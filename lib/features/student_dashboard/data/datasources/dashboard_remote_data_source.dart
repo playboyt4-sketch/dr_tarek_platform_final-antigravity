@@ -54,7 +54,9 @@ class DashboardRemoteDataSource {
               'مادة تعليمية',
           subtitle: _text(data['description']),
           thumbnailUrl:
-              _text(data['thumbnail_url']) ?? _text(data['image_url']),
+              _text(data['poster_url']) ??
+              _text(data['thumbnail_url']) ??
+              _text(data['image_url']),
           displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
           subjectAccessState: accessState,
           subscriptionState: subscription.state,

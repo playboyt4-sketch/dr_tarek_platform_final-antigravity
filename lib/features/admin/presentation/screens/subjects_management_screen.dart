@@ -1,11 +1,15 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
+import '../../../content_authoring/data/storage/subject_poster_gateway.dart';
 import '../../domain/admin_grades.dart';
 
 /// Subjects management screen: create, edit (name/visibility/order) and
@@ -80,8 +84,14 @@ class SubjectsManagementScreen extends StatelessWidget {
     String? selectedGrade =
         existing == null ? null : existing.data()['grade'] as String?;
 
+    String? currentPosterUrl = existing?.data()['poster_url'] as String?;
+    File? selectedPosterFile;
+    bool posterRemoved = false;
+    bool isSaving = false;
+
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) => AlertDialog(
@@ -93,17 +103,20 @@ class SubjectsManagementScreen extends StatelessWidget {
                   TextField(
                     controller: nameController,
                     autofocus: true,
+                    enabled: !isSaving,
                     decoration: const InputDecoration(labelText: 'اسم المادة'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: descriptionController,
+                    enabled: !isSaving,
                     decoration: const InputDecoration(labelText: 'الوصف (اختياري)'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: orderController,
                     keyboardType: TextInputType.number,
+                    enabled: !isSaving,
                     decoration: const InputDecoration(labelText: 'ترتيب العرض'),
                   ),
                   const SizedBox(height: 12),
@@ -124,20 +137,182 @@ class SubjectsManagementScreen extends StatelessWidget {
                           child: Text(gradeLabel(key)),
                         ),
                     ],
-                    onChanged: (value) =>
+                    onChanged: isSaving ? null : (value) =>
                         setDialogState(() => selectedGrade = value),
                   ),
+                  const SizedBox(height: 16),
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('بوستر المادة:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(height: 8),
+                  if (!posterRemoved && (selectedPosterFile != null || currentPosterUrl != null))
+                    Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: selectedPosterFile != null
+                              ? Image.file(selectedPosterFile!, height: 120, width: double.infinity, fit: BoxFit.cover)
+                              : Image.network(currentPosterUrl!, height: 120, width: double.infinity, fit: BoxFit.cover),
+                        ),
+                        if (!isSaving)
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: IconButton(
+                              style: IconButton.styleFrom(backgroundColor: Colors.white70),
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () {
+                                setDialogState(() {
+                                  selectedPosterFile = null;
+                                  posterRemoved = true;
+                                });
+                              },
+                            ),
+                          ),
+                      ],
+                    )
+                  else
+                    InkWell(
+                      onTap: isSaving ? null : () async {
+                        try {
+                          final picker = ImagePicker();
+                          final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+                          if (picked != null) {
+                            final bytes = await picked.length();
+                            if (bytes > 5 * 1024 * 1024) {
+                              if (dialogContext.mounted) {
+                                ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('الصورة أكبر من 5 ميجابايت.')));
+                              }
+                              return;
+                            }
+                            setDialogState(() {
+                              selectedPosterFile = File(picked.path);
+                              posterRemoved = false;
+                            });
+                          }
+                        } catch (e) {
+                          if (dialogContext.mounted) {
+                            ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('فشل اختيار الصورة: $e')));
+                          }
+                        }
+                      },
+                      child: Container(
+                        height: 120,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey),
+                        ),
+                        child: const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.add_a_photo, color: Colors.grey),
+                              SizedBox(height: 4),
+                              Text('اختر صورة (بحد أقصى 5MB)', style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء'),
-              ),
+              if (!isSaving)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('إلغاء'),
+                ),
               FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: Text(existing == null ? 'إنشاء' : 'حفظ'),
+                onPressed: isSaving ? null : () async {
+                  final name = nameController.text.trim();
+                  if (name.isEmpty) return;
+
+                  setDialogState(() => isSaving = true);
+                  try {
+                    final functions = FirebaseFunctions.instance;
+                    final gateway = SubjectPosterGateway();
+                    final description = descriptionController.text.trim();
+                    final order = int.tryParse(orderController.text.trim()) ?? 0;
+
+                    if (existing == null) {
+                      final result = await functions.httpsCallable('createSubject').call({
+                        'name': name,
+                        'description': description,
+                        'displayOrder': order,
+                        'grade': selectedGrade,
+                      });
+                      
+                      final subjectId = result.data['subjectId'] as String;
+                      
+                      if (selectedPosterFile != null) {
+                        final fileName = selectedPosterFile!.path.split('/').last;
+                        final url = await gateway.uploadPoster(
+                          subjectId: subjectId,
+                          file: selectedPosterFile!,
+                          fileName: fileName,
+                        );
+                        await functions.httpsCallable('updateSubject').call({
+                          'subjectId': subjectId,
+                          'posterUrl': url,
+                        });
+                      }
+                    } else {
+                      String? finalPosterUrl = currentPosterUrl;
+                      if (posterRemoved) {
+                        if (currentPosterUrl != null) await gateway.deletePoster(currentPosterUrl);
+                        finalPosterUrl = null;
+                      } else if (selectedPosterFile != null) {
+                        if (currentPosterUrl != null) await gateway.deletePoster(currentPosterUrl);
+                        final fileName = selectedPosterFile!.path.split('/').last;
+                        finalPosterUrl = await gateway.uploadPoster(
+                          subjectId: existing.id,
+                          file: selectedPosterFile!,
+                          fileName: fileName,
+                        );
+                      }
+                      
+                      final updatePayload = <String, dynamic>{
+                        'subjectId': existing.id,
+                        'name': name,
+                        'description': description,
+                        'displayOrder': order,
+                        'grade': selectedGrade,
+                      };
+                      
+                      if (posterRemoved) {
+                        updatePayload['posterUrl'] = null;
+                      } else if (selectedPosterFile != null) {
+                        updatePayload['posterUrl'] = finalPosterUrl;
+                      }
+                      
+                      await functions.httpsCallable('updateSubject').call(updatePayload);
+                    }
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext, true);
+                    }
+                  } on FirebaseFunctionsException catch (error) {
+                    setDialogState(() => isSaving = false);
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'فشلت العملية.'))),
+                      );
+                    }
+                  } catch (e) {
+                    setDialogState(() => isSaving = false);
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text('حدث خطأ غير متوقع: $e')),
+                      );
+                    }
+                  }
+                },
+                child: isSaving
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text(existing == null ? 'إنشاء' : 'حفظ'),
               ),
             ],
           ),
@@ -145,47 +320,16 @@ class SubjectsManagementScreen extends StatelessWidget {
       },
     );
 
-    final name = nameController.text.trim();
-    final description = descriptionController.text.trim();
-    final order = int.tryParse(orderController.text.trim()) ?? 0;
     nameController.dispose();
     descriptionController.dispose();
     orderController.dispose();
 
-    if (confirmed != true || name.isEmpty || !context.mounted) return;
-
-    try {
-      final functions = FirebaseFunctions.instance;
-      if (existing == null) {
-        await functions.httpsCallable('createSubject').call({
-          'name': name,
-          'description': description,
-          'displayOrder': order,
-          'grade': ?selectedGrade,
-        });
-      } else {
-        await functions.httpsCallable('updateSubject').call({
-          'subjectId': existing.id,
-          'name': name,
-          'description': description,
-          'displayOrder': order,
-          // Explicit key so the callable can also CLEAR the tag (null).
-          'grade': selectedGrade,
-        });
-      }
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(existing == null ? 'تم إنشاء المادة.' : 'تم حفظ التعديلات.'),
-          ),
-        );
-      }
-    } on FirebaseFunctionsException catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'فشلت العملية.'))),
-        );
-      }
+    if (confirmed == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(existing == null ? 'تم إنشاء المادة.' : 'تم حفظ التعديلات.'),
+        ),
+      );
     }
   }
 

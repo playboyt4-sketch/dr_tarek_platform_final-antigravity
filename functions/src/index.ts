@@ -3120,6 +3120,16 @@ export const createSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const description = getString(request.data?.description);
   const displayOrder = getNumber(request.data?.displayOrder) ?? 0;
   const grade = getString(request.data?.grade);
+  const posterUrl = request.data?.posterUrl;
+
+  let validPosterUrl: string | null = null;
+  if (posterUrl !== undefined && posterUrl !== null) {
+    const urlStr = getString(posterUrl);
+    if (!urlStr || (!urlStr.startsWith("https://firebasestorage.googleapis.com/") && !urlStr.startsWith("https://dr-tarek-platform.firebasestorage.app"))) {
+      throw new HttpsError("invalid-argument", "invalid_poster_url");
+    }
+    validPosterUrl = urlStr;
+  }
 
   if (!name) {
     throw new HttpsError("invalid-argument", "Subject name is required.");
@@ -3132,6 +3142,7 @@ export const createSubject = onCall(SECURE_CALL_OPTS, async (request) => {
     name,
     description: description ?? null,
     grade: grade ?? null,
+    poster_url: validPosterUrl,
     display_order: displayOrder,
     is_visible: true,
     is_deleted: false,
@@ -3164,6 +3175,7 @@ export const updateSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const description = getString(request.data?.description);
   const displayOrder = getNumber(request.data?.displayOrder);
   const isVisible = request.data?.isVisible;
+  const posterUrl = request.data?.posterUrl;
 
   if (!subjectId) {
     throw new HttpsError("invalid-argument", "subjectId is required.");
@@ -3181,6 +3193,17 @@ export const updateSubject = onCall(SECURE_CALL_OPTS, async (request) => {
       updated_at: FieldValue.serverTimestamp(),
       updated_by: authorization.actorId,
     };
+    if (posterUrl !== undefined) {
+      if (posterUrl === null) {
+        update.poster_url = FieldValue.delete();
+      } else {
+        const urlStr = getString(posterUrl);
+        if (!urlStr || (!urlStr.startsWith("https://firebasestorage.googleapis.com/") && !urlStr.startsWith("https://dr-tarek-platform.firebasestorage.app"))) {
+          throw new HttpsError("invalid-argument", "invalid_poster_url");
+        }
+        update.poster_url = urlStr;
+      }
+    }
     if (name !== null) {
       update.title = name;
       update.name = name;
