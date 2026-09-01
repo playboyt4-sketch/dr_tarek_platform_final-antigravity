@@ -66,13 +66,13 @@ abstract final class AppTheme {
     );
 
     final textTheme = TextTheme(
-      displayLarge: AppTypography.titleLarge.copyWith(color: textColor),
-      titleLarge: AppTypography.titleLarge.copyWith(color: textColor),
-      titleMedium: AppTypography.titleMedium.copyWith(color: textColor),
-      bodyLarge: AppTypography.bodyRegular.copyWith(color: textColor),
-      bodyMedium: AppTypography.bodyThin.copyWith(color: textColor),
-      bodySmall: AppTypography.captionSmall.copyWith(color: textColor),
-      labelSmall: AppTypography.captionSmall.copyWith(color: textColor),
+      displayLarge: AppTypography.titleLargeFallback.copyWith(color: textColor),
+      titleLarge: AppTypography.titleLargeFallback.copyWith(color: textColor),
+      titleMedium: AppTypography.titleLargeFallback.copyWith(color: textColor, fontSize: 20, height: 26 / 20),
+      bodyLarge: AppTypography.bodyRegularFallback.copyWith(color: textColor),
+      bodyMedium: AppTypography.bodyRegularFallback.copyWith(color: textColor, fontWeight: FontWeight.w100),
+      bodySmall: AppTypography.bodyRegularFallback.copyWith(color: textColor, fontSize: 12, height: 16 / 12),
+      labelSmall: AppTypography.bodyRegularFallback.copyWith(color: textColor, fontSize: 12, height: 16 / 12),
     );
 
     return ThemeData(
@@ -109,7 +109,7 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppShapes.radiusFull),
           ),
-          textStyle: AppTypography.titleMedium,
+          textStyle: AppTypography.titleLargeFallback.copyWith(fontSize: 20, height: 26 / 20),
         ),
       ),
     );

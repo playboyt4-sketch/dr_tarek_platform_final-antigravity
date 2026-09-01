@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/design_tokens.dart';
 import 'user_type_selection_screen.dart';
 
@@ -46,8 +45,8 @@ class _SplashScreenState extends State<SplashScreen> {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           transitionDuration: _SplashScreenDesign.exitTransitionDuration,
-          pageBuilder: (_, __, ___) => const UserTypeSelectionScreen(),
-          transitionsBuilder: (_, animation, __, child) =>
+          pageBuilder: (_, _, _) => const UserTypeSelectionScreen(),
+          transitionsBuilder: (_, animation, _, child) =>
               FadeTransition(opacity: animation, child: child),
         ),
       );
