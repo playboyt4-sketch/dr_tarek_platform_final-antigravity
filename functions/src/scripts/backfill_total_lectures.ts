@@ -29,7 +29,7 @@ async function backfillTotalLectures() {
       .where("subject_id", "==", subjectId)
       .where("status", "==", "published")
       .get();
-    
+
     // Also count legacy published lectures
     const legacySnap = await db.collection("lectures")
       .where("subject_id", "==", subjectId)
@@ -39,13 +39,13 @@ async function backfillTotalLectures() {
     const uniqueLectures = new Set<string>();
     for (const doc of lecturesSnap.docs) uniqueLectures.add(doc.id);
     for (const doc of legacySnap.docs) uniqueLectures.add(doc.id);
-    
+
     const publishedCount = uniqueLectures.size;
 
     console.log(`Subject ${subjectId}: found ${publishedCount} published lectures.`);
 
     // Update subject document
-    currentBatch.update(subjectDoc.ref, { total_lectures: publishedCount });
+    currentBatch.update(subjectDoc.ref, {total_lectures: publishedCount});
     operationsCount++;
     if (operationsCount >= batchSize) await commitBatch();
 

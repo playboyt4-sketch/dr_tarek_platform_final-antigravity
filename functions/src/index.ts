@@ -1,4 +1,4 @@
-import { SECURE_CALL_OPTS } from "./core/utils/security_helpers";
+﻿import {SECURE_CALL_OPTS} from "./core/utils/security_helpers";
 import {onCall, HttpsError, CallableRequest} from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
@@ -30,21 +30,22 @@ const messaging = getMessaging();
 const storage = getStorage();
 
 export const CENTER_FREE_WINDOW_BLOCKED_MESSAGE =
-  'A Center Free 24-hour video window is already active for another video.';
+  "A Center Free 24-hour video window is already active for another video.";
 
 export function decideVideoWatchWindow(
   existingWindow: {active_lecture_id: string; window_expires_at: Timestamp} | null | undefined,
   requestedLectureId: string,
   now: number
-): { allowed: boolean; reason: 'no_window' | 'same_video' | 'different_video' | 'expired' } {
+): { allowed: boolean; reason: "no_window" | "same_video" | "different_video" | "expired" } {
   if (!existingWindow || !existingWindow.window_expires_at) {
-    return { allowed: true, reason: 'no_window' };
+    return {allowed: true, reason: "no_window"};
   }
   const expiryMs = existingWindow.window_expires_at.toMillis();
-  if (now >= expiryMs) return { allowed: true, reason: 'expired' };
-  if (existingWindow.active_lecture_id === requestedLectureId) 
-    return { allowed: true, reason: 'same_video' };
-  return { allowed: false, reason: 'different_video' };
+  if (now >= expiryMs) return {allowed: true, reason: "expired"};
+  if (existingWindow.active_lecture_id === requestedLectureId) {
+    return {allowed: true, reason: "same_video"};
+  }
+  return {allowed: false, reason: "different_video"};
 }
 
 async function deriveScryptKey(
@@ -1063,20 +1064,20 @@ export const onLoginAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
       const activeSnap = await tx.get(
         devicesRef.where("user_id", "==", userId).where("active_device", "==", true),
       );
-      const otherActiveDevices = activeSnap.docs.filter(d => d.id !== existing.id);
+      const otherActiveDevices = activeSnap.docs.filter((d) => d.id !== existing.id);
       if (otherActiveDevices.length >= maxDevices) {
         const devicesToDeactivate = otherActiveDevices.sort((a, b) => {
-            const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
-            const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
-            return timeA - timeB;
+          const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
+          const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
+          return timeA - timeB;
         });
         const excessCount = otherActiveDevices.length - maxDevices + 1;
         for (let i = 0; i < excessCount && i < devicesToDeactivate.length; i++) {
-            tx.update(devicesToDeactivate[i].ref, {
-                active_device: false,
-                updated_at: FieldValue.serverTimestamp(),
-                updated_by: "system",
-            });
+          tx.update(devicesToDeactivate[i].ref, {
+            active_device: false,
+            updated_at: FieldValue.serverTimestamp(),
+            updated_by: "system",
+          });
         }
       }
       tx.update(existing.ref, {
@@ -1093,15 +1094,15 @@ export const onLoginAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
     const otherActiveDevices = activeSnap.docs;
     if (otherActiveDevices.length >= maxDevices) {
       const devicesToDeactivate = otherActiveDevices.sort((a, b) => {
-          const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
-          const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
-          return timeA - timeB;
+        const timeA = (a.data().last_login?.toMillis && a.data().last_login.toMillis()) || 0;
+        const timeB = (b.data().last_login?.toMillis && b.data().last_login.toMillis()) || 0;
+        return timeA - timeB;
       });
       const excessCount = otherActiveDevices.length - maxDevices + 1;
       for (let i = 0; i < excessCount && i < devicesToDeactivate.length; i++) {
-          tx.update(devicesToDeactivate[i].ref, {
-              active_device: false, updated_at: FieldValue.serverTimestamp(), updated_by: "system",
-          });
+        tx.update(devicesToDeactivate[i].ref, {
+          active_device: false, updated_at: FieldValue.serverTimestamp(), updated_by: "system",
+        });
       }
     }
     const newDevice = devicesRef.doc();
@@ -1116,10 +1117,10 @@ export const onLoginAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
   });
 
   return {
-    allowed: true, 
-    status: outcome.kind === "existing" ? "existing_device" : "new_device", 
-    maxDevices, 
-    deviceDocumentId: outcome.deviceDocId
+    allowed: true,
+    status: outcome.kind === "existing" ? "existing_device" : "new_device",
+    maxDevices,
+    deviceDocumentId: outcome.deviceDocId,
   };
 });
 
@@ -1441,7 +1442,7 @@ export async function calculateAndSetSubjectProgress(db: any, studentId: string,
       .where("student_id", "==", studentId)
       .where("lecture_id", "in", batchIds)
       .get();
-    
+
     const completed = new Set(
       progressSnap.docs
         .filter((doc: any) => doc.data().is_completed === true)
@@ -1974,27 +1975,27 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
   const selectedQuality = requestedQuality ??
     [...allowedQualities].sort((left, right) => qualityRank(right) - qualityRank(left))[0];
 
-  if (plan.studentType === 'center_student' && plan.plan.plan_key === 'center_free') {
-    const windowRef = db.collection('video_watch_windows').doc(userId);
+  if (plan.studentType === "center_student" && plan.plan.plan_key === "center_free") {
+    const windowRef = db.collection("video_watch_windows").doc(userId);
     await db.runTransaction(async (t) => {
       const windowSnap = await t.get(windowRef);
       const existingWindow = windowSnap.data() as any;
       const now = Date.now();
       const decision = decideVideoWatchWindow(existingWindow, lectureId, now);
-      
+
       if (!decision.allowed) {
-        throw new HttpsError('resource-exhausted', CENTER_FREE_WINDOW_BLOCKED_MESSAGE, {
+        throw new HttpsError("resource-exhausted", CENTER_FREE_WINDOW_BLOCKED_MESSAGE, {
           windowExpiresAtMs: existingWindow.window_expires_at.toMillis(),
-          activeLectureId: existingWindow.active_lecture_id
+          activeLectureId: existingWindow.active_lecture_id,
         });
       }
-      
-      if (decision.reason === 'no_window' || decision.reason === 'expired') {
+
+      if (decision.reason === "no_window" || decision.reason === "expired") {
         const expiresAt = Timestamp.fromMillis(now + 24 * 60 * 60 * 1000);
         t.set(windowRef, {
           active_lecture_id: lectureId,
           window_expires_at: expiresAt,
-          user_id: userId
+          user_id: userId,
         });
       }
     });
@@ -2016,18 +2017,18 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
 export const getVideoWatchWindow = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const windowSnap = await db.collection("video_watch_windows").doc(userId).get();
-  if (!windowSnap.exists) return { active: false };
+  if (!windowSnap.exists) return {active: false};
   const window = windowSnap.data() as any;
-  if (!window.window_expires_at) return { active: false };
-  
+  if (!window.window_expires_at) return {active: false};
+
   const now = Date.now();
   const expiresAtMs = window.window_expires_at.toMillis();
-  if (now >= expiresAtMs) return { active: false };
-  
+  if (now >= expiresAtMs) return {active: false};
+
   return {
     active: true,
     activeLectureId: window.active_lecture_id,
-    windowExpiresAtMs: expiresAtMs
+    windowExpiresAtMs: expiresAtMs,
   };
 });
 
@@ -2086,7 +2087,7 @@ export const revalidateOfflineAccess = onCall(SECURE_CALL_OPTS, async (request) 
 
 /**
 /**
- * Shared helper: resolves document resource → subject → subscription → plan,
+ * Shared helper: resolves document resource â†’ subject â†’ subscription â†’ plan,
  * verifies subject access and subscription, and returns context needed
  * by both the viewing and download endpoints.
  * @param {string} userId The student user ID.
@@ -2214,7 +2215,7 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
       const subjectPlan = dataOf(subjectPlanSnap.data());
       if (subjectPlan.student_type === "public_student" && subjectPlan.plan_key === "public_free") {
         if (lecture.public_free_enabled === true) {
-          const mins = typeof lecture.public_free_preview_minutes === 'number' ? lecture.public_free_preview_minutes : 0;
+          const mins = typeof lecture.public_free_preview_minutes === "number" ? lecture.public_free_preview_minutes : 0;
           publicFreePreviewSeconds = mins * 60;
         }
       }
@@ -2228,13 +2229,13 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     .get();
 
   return {
-    publicFreePreview: publicFreePreviewSeconds != null ? { previewLimitSeconds: publicFreePreviewSeconds } : null,
+    publicFreePreview: publicFreePreviewSeconds != null ? {previewLimitSeconds: publicFreePreviewSeconds} : null,
     resources: resourcesSnap.docs.map((doc) => {
       const resource = dataOf(doc.data());
       return {
         id: doc.id,
         resourceType: getString(resource.resource_type) ?? "attachment",
-        title: getString(resource.title) ?? getString(resource.resource_title) ?? "Ù…ÙˆØ±Ø¯ ØªØ¹Ù„ÙŠÙ…ÙŠ",
+        title: getString(resource.title) ?? getString(resource.resource_title) ?? "Ã™â€¦Ã™Ë†Ã˜Â±Ã˜Â¯ Ã˜ÂªÃ˜Â¹Ã™â€žÃ™Å Ã™â€¦Ã™Å ",
         bunnyVideoId: getString(resource.bunny_video_id),
         storagePath: getString(resource.storage_path),
         thumbnail: getString(resource.thumbnail),
@@ -2774,9 +2775,9 @@ export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async 
 const ACADEMIC_PERIOD_STATUSES = new Set(["active", "ended"]);
 
 const CORE_ACADEMIC_PERIODS = [
-  {id: "term_1", periodType: "term_1", label: "الترم الأول", displayOrder: 1},
-  {id: "term_2", periodType: "term_2", label: "الترم الثاني", displayOrder: 2},
-  {id: "summer_course", periodType: "summer_course", label: "السمر كورس", displayOrder: 3},
+  {id: "term_1", periodType: "term_1", label: "Ø§Ù„ØªØ±Ù… Ø§Ù„Ø£ÙˆÙ„", displayOrder: 1},
+  {id: "term_2", periodType: "term_2", label: "Ø§Ù„ØªØ±Ù… Ø§Ù„Ø«Ø§Ù†ÙŠ", displayOrder: 2},
+  {id: "summer_course", periodType: "summer_course", label: "Ø§Ù„Ø³Ù…Ø± ÙƒÙˆØ±Ø³", displayOrder: 3},
 ];
 
 function normalizePeriodStatus(value: unknown): string {
@@ -3050,7 +3051,7 @@ export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) 
         updated_by: teacherId,
       });
       operations++;
-      
+
       const subData = subscription.data();
       const assignmentId = `${subData.student_id}_${subData.subject_id}`;
       batch.update(db.collection("subject_access_assignments").doc(assignmentId), {
@@ -3488,7 +3489,7 @@ export const propagatePlanFeatureChange = onDocumentUpdated("plan_features/{feat
     console.log("No after data.");
     return;
   }
-  
+
   const planId = getString(after.plan_id);
   if (!planId) {
     console.log("No plan_id found.");
@@ -3498,21 +3499,21 @@ export const propagatePlanFeatureChange = onDocumentUpdated("plan_features/{feat
   console.log("Fetching active entitlements for plan:", planId);
   const entitlements = await getActiveEntitlements(planId);
   console.log("Active entitlements:", entitlements);
-  
+
   let lastDoc = null;
-  while (true) {
+  for (;;) {
     let query = db.collection("subscriptions")
       .where("plan_id", "==", planId)
       .where("status", "==", "active")
       .limit(500);
-      
+
     if (lastDoc) {
       query = query.startAfter(lastDoc);
     }
-    
+
     const snap = await query.get();
     if (snap.empty) break;
-    
+
     const batch = db.batch();
     for (const doc of snap.docs) {
       const data = doc.data();
@@ -3522,7 +3523,7 @@ export const propagatePlanFeatureChange = onDocumentUpdated("plan_features/{feat
       });
       lastDoc = doc;
     }
-    
+
     await batch.commit();
   }
 });
@@ -3542,7 +3543,7 @@ export function gradeObjectiveAnswers(
     const qId = answer.questionId;
     const marks = Number.isNaN(answer.marks) ? 1 : answer.marks;
     const qDef = questionBank.get(qId);
-    
+
     if (!qDef) {
       missingQuestions++;
       continue;
@@ -3553,16 +3554,16 @@ export function gradeObjectiveAnswers(
       totalMarks += marks;
       continue;
     }
-    
+
     totalMarks += marks;
-    
+
     const submitted = submittedAnswers[qId];
     if (submitted && submitted.trim().toLowerCase() === qDef.correctAnswer.trim().toLowerCase()) {
       score += marks;
     }
   }
 
-  const result: any = { score, totalMarks, hasEssay };
+  const result: any = {score, totalMarks, hasEssay};
   if (missingQuestions > 0) {
     result.missingQuestions = missingQuestions;
   }
@@ -3577,7 +3578,7 @@ export function isDocumentResourceType(type: any): boolean {
 export function documentFeatureKeys(type: string) {
   return {
     view: `${type}.access`,
-    download: `${type}.download`
+    download: `${type}.download`,
   };
 }
 
