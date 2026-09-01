@@ -226,7 +226,10 @@ service cloud.firestore {
     match /learning_progress/{progressId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
-      allow create, update: if isStudent()
+      allow create: if isStudent()
+        && request.resource.data.student_id == request.auth.uid;
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
         && request.resource.data.student_id == request.auth.uid;
       allow delete: if false;
     }
@@ -234,7 +237,10 @@ service cloud.firestore {
     match /lecture_progress/{progressId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
-      allow create, update: if isStudent()
+      allow create: if isStudent()
+        && request.resource.data.student_id == request.auth.uid;
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
         && request.resource.data.student_id == request.auth.uid;
       allow delete: if false;
     }
@@ -312,13 +318,25 @@ service cloud.firestore {
 
     match /notes/{noteId} {
       allow get, list: if isStudent() && resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, resource.data.subject_id, 'notes.create');
-      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'notes.create');
+      allow create: if isStudent()
+        && request.resource.data.student_id == request.auth.uid
+        && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'notes.create');
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
+        && request.resource.data.student_id == request.auth.uid
+        && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'notes.create');
       allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
     }
 
     match /bookmarks/{bookmarkId} {
       allow get, list: if isStudent() && resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, resource.data.subject_id, 'bookmarks.create');
-      allow create, update: if isStudent() && request.resource.data.student_id == request.auth.uid && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'bookmarks.create');
+      allow create: if isStudent()
+        && request.resource.data.student_id == request.auth.uid
+        && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'bookmarks.create');
+      allow update: if isStudent()
+        && resource.data.student_id == request.auth.uid
+        && request.resource.data.student_id == request.auth.uid
+        && hasEntitlement(request.auth.uid, request.resource.data.subject_id, 'bookmarks.create');
       allow delete: if isStudent() && resource.data.student_id == request.auth.uid;
     }
 
@@ -339,7 +357,7 @@ service cloud.firestore {
         && !('passed' in request.resource.data);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && resource.data.submitted_at == null
+        && resource.data.get('submitted_at', null) == null
         && !('score' in request.resource.data)
         && !('percentage' in request.resource.data)
         && !('passed' in request.resource.data);
@@ -363,7 +381,7 @@ service cloud.firestore {
         && !('passed' in request.resource.data);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && resource.data.submitted_at == null
+        && resource.data.get('submitted_at', null) == null
         && !('score' in request.resource.data)
         && !('percentage' in request.resource.data)
         && !('passed' in request.resource.data);
