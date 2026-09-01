@@ -1,66 +1,67 @@
 {
-    "storage":  {
-                      "rules":  "storage.rules"
-                  },
-    "firestore":  {
-                      "database":  "(default)",
-                      "location":  "us-central1",
-                      "rules":  "firestore.rules",
-                      "indexes":  "firestore.indexes.json"
-                  },
-    "functions":  [
-                      {
-                          "source":  "functions",
-                          "codebase":  "default",
-                          "disallowLegacyRuntimeConfig":  true,
-                          "invoker":  "public",
-                          "ignore":  [
-                                          "node_modules",
-                                          ".git",
-                                          "firebase-debug.log",
-                                          "firebase-debug.*.log",
-                                          "*.local"
-                                      ],
-                          "predeploy":  [
-                                            "npm --prefix \"$RESOURCE_DIR\" run lint",
-                                            "npm --prefix \"$RESOURCE_DIR\" run build"
-                                        ]
-                      }
-                  ],
-    "flutter":  {
-                    "platforms":  {
-                                      "android":  {
-                                                      "default":  {
-                                                                      "projectId":  "dr-tarek-platform",
-                                                                      "appId":  "1:606744934510:android:3d55cc03076b0adcc54e7f",
-                                                                      "fileOutput":  "android/app/google-services.json"
-                                                                  }
-                                                  },
-                                      "dart":  {
-                                                   "lib/firebase_options.dart":  {
-                                                                                     "projectId":  "dr-tarek-platform",
-                                                                                     "configurations":  {
-                                                                                                            "android":  "1:606744934510:android:3d55cc03076b0adcc54e7f",
-                                                                                                            "ios":  "1:606744934510:ios:123c69688cf114cbc54e7f",
-                                                                                                            "web":  "1:606744934510:web:0ed4cde346f56acec54e7f"
-                                                                                                        }
-                                                                                 }
-                                               }
-                                  }
-                },
-    "emulators":  {
-                      "auth":  {
-                                   "port":  9099
-                               },
-                      "functions":  {
-                                        "port":  5001
-                                    },
-                      "firestore":  {
-                                        "port":  8080
-                                    },
-                      "ui":  {
-                                 "enabled":  true,
-                                 "port":  4000
-                             }
-                  }
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "us-central1",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "invoker": "public",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "timeout": "60s"
+    }
+  ],
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "dr-tarek-platform",
+          "appId": "1:606744934510:android:3d55cc03076b0adcc54e7f",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "dr-tarek-platform",
+          "configurations": {
+            "android": "1:606744934510:android:3d55cc03076b0adcc54e7f",
+            "ios": "1:606744934510:ios:123c69688cf114cbc54e7f",
+            "web": "1:606744934510:web:0ed4cde346f56acec54e7f"
+          }
+        }
+      }
+    }
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    }
+  }
 }

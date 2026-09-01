@@ -1,8 +1,9 @@
-﻿import {SECURE_CALL_OPTS} from "./core/utils/security_helpers";
+import {SECURE_CALL_OPTS} from "./core/utils/security_helpers";
 import {onCall, HttpsError, CallableRequest} from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
   onDocumentUpdated,
+  onDocumentWritten,
 } from "firebase-functions/v2/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
@@ -15,6 +16,250 @@ import {getAuth} from "firebase-admin/auth";
 import {getMessaging, Message} from "firebase-admin/messaging";
 import {getStorage} from "firebase-admin/storage";
 import {initializeApp} from "firebase-admin/app";
+import {defineSecret} from "firebase-functions/params";
+
+// --- Helpers for restored functions ---
+
+const SECRET_BUNNY_TOKEN_KEY = defineSecret("BUNNY_TOKEN_KEY");
+
+const SECRET_BUNNY_STORAGE_BASE_URL = defineSecret("BUNNY_STORAGE_BASE_URL");
+
+const SECRET_BUNNY_STORAGE_ZONE_NAME = defineSecret("BUNNY_STORAGE_ZONE_NAME");
+
+const SECRET_BUNNY_STORAGE_PASSWORD = defineSecret("BUNNY_STORAGE_PASSWORD");
+
+async function assertLoginNotLocked(scope: string, key: string): Promise<void> {
+  const snap = await throttleRef(scope, key).get();
+  if (!snap.exists) return;
+  const lockedUntil = dataOf(snap.data()).locked_until;
+  const untilMs =
+    lockedUntil && typeof lockedUntil.toMillis === "function" ?
+      lockedUntil.toMillis() :
+      0;
+  if (untilMs > Date.now()) {
+    const minutes = Math.max(1, Math.ceil((untilMs - Date.now()) / 60000));
+    throw new HttpsError(
+      "resource-exhausted",
+      `Too many failed attempts. Try again in ${minutes} minute(s).`,
+    );
+  }
+}
+
+async function recordLoginFailure(scope: string, key: string): Promise<void> {
+  await db.runTransaction(async (tx) => {
+    const ref = throttleRef(scope, key);
+    const snap = await tx.get(ref);
+    const prevFailures =
+      snap.exists && typeof dataOf(snap.data()).fail_count === "number" ?
+        (dataOf(snap.data()).fail_count as number) :
+        0;
+    const failures = prevFailures + 1;
+
+    let lockMinutes = 0;
+    if (failures >= MAX_LOGIN_FAILURES) {
+      lockMinutes = calculateLockMinutes(failures);
+    }
+
+    const update: Record<string, unknown> = {
+      scope,
+      key,
+      fail_count: failures,
+      updated_at: FieldValue.serverTimestamp(),
+    };
+    if (lockMinutes > 0) {
+      update.locked_until = Timestamp.fromDate(
+        new Date(Date.now() + lockMinutes * 60_000),
+      );
+      update.last_lock_minutes = lockMinutes;
+    }
+    tx.set(ref, update, {merge: true});
+  });
+}
+
+async function clearLoginFailures(scope: string, key: string): Promise<void> {
+  await throttleRef(scope, key).delete();
+}
+
+async function slidingWindowAllowed(
+  scope: string,
+  key: string,
+  max: number,
+  windowMs: number,
+): Promise<boolean> {
+  const ref = db.collection(scope).doc(key);
+  const nowMs = Date.now();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? dataOf(snap.data()) : {};
+    const timestamps: number[] = Array.isArray(data.recent) ?
+      (data.recent as Timestamp[])
+        .filter((t) => t?.toMillis && t.toMillis() > nowMs - windowMs)
+        .map((t) => t.toMillis()) :
+      [];
+    if (timestamps.length >= max) return false;
+    timestamps.push(nowMs);
+    tx.set(ref, {recent: timestamps.map((ms) => Timestamp.fromMillis(ms))}, {merge: true});
+    return true;
+  });
+}
+
+async function assertStaffDirectoryAllowed(request: CallableRequest): Promise<void> {
+  const ip =
+    typeof request.rawRequest?.ip === "string" ? request.rawRequest.ip :
+      typeof request.rawRequest?.socket?.remoteAddress === "string" ?
+        request.rawRequest.socket.remoteAddress :
+        null;
+  if (!ip) return;
+  const key = createHash("sha256").update(`staff_directory:${ip}`).digest("hex");
+  const allowed = await slidingWindowAllowed(
+    "public_rate_limits",
+    key,
+    STAFF_DIRECTORY_RATE_LIMIT,
+    STAFF_DIRECTORY_WINDOW_MS,
+  );
+  if (!allowed) {
+    await db.collection("auth_security_events").add({
+      event_type: "staff_directory_rate_limited",
+      created_at: FieldValue.serverTimestamp(),
+      created_by: "system",
+    });
+    throw new HttpsError("resource-exhausted", "Too many requests. Try again later.");
+  }
+}
+
+function buildBunnyResourceAccessUrl(storagePath: string, expiresInSeconds = 300): {url: string; expiresAt: number} {
+  const secret = getEnv("BUNNY_TOKEN_KEY");
+  const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
+  const url = bunnyResourceUrl(storagePath);
+  const token = hashPathToken(secret, url.pathname, expires);
+  url.searchParams.set("token", token);
+  url.searchParams.set("expires", String(expires));
+  return {url: url.toString(), expiresAt: expires};
+}
+
+async function bunnyStorageRequest(
+  method: "PUT" | "DELETE",
+  storagePath: string,
+  body?: Buffer,
+): Promise<void> {
+  const password = getEnv("BUNNY_STORAGE_PASSWORD");
+  const zoneName = getEnv("BUNNY_STORAGE_ZONE_NAME");
+  const url = `${bunnyResourceUrl(storagePath).toString().replace(/^https:\/\//, "")}`;
+  const target = new URL(`https://${url}`);
+  // Bunny storage API addresses the zone as the first path segment.
+  const zonedPath = `/${zoneName}${target.pathname}`;
+  const response = await fetch(`https://${target.host}${zonedPath}`, {
+    method,
+    headers: {
+      AccessKey: password,
+      ...(body ? {"Content-Type": "application/octet-stream"} : {}),
+    },
+    body: body ? new Uint8Array(body) : undefined,
+  });
+  if (!response.ok) {
+    // Never include the password (or any credential material) in errors.
+    throw new HttpsError("internal", `Bunny storage request failed (${response.status}).`);
+  }
+}
+
+const BUNNY_UPLOAD_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/octet-stream",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "image/jpeg",
+  "image/png",
+]);
+
+const BUNNY_PROXY_MAX_BYTES = 24 * 1024 * 1024;
+
+export function pickDueLectures(
+  docs: Array<{id: string; status: unknown; isDeleted: unknown; publishDateMs: number | null}>,
+  nowMs: number,
+): string[] {
+  return docs
+    .filter((doc) =>
+      doc.status === "draft" &&
+      doc.isDeleted !== true &&
+      doc.publishDateMs !== null &&
+      doc.publishDateMs <= nowMs)
+    .map((doc) => doc.id);
+}
+
+export interface GradingLink {
+  questionId: string;
+  marks: number;
+}
+
+export interface GradingQuestion {
+  questionType: string;
+  correctAnswer: string;
+}
+
+const EXAM_SUBMIT_TIME_GRACE_MS = 90_000;
+
+const MAX_EXAM_ANSWERS = 500;
+
+type ContentEntity = "subject_sections" | "lectures" | "lecture_resources";
+
+function contentAuditTrigger(entity: ContentEntity) {
+  return onDocumentWritten(`${entity}/{docId}`, async (event) => {
+    const before = event.data?.before.data() ?? null;
+    const after = event.data?.after.data() ?? null;
+    const change: ContentChange =
+      !before ? "created" : !after ? "deleted" : "updated";
+    const snapshot = (after ?? before) as Record<string, unknown> | null;
+    const actorId =
+      typeof snapshot?.updated_by === "string" ?
+        snapshot.updated_by :
+        typeof snapshot?.created_by === "string" ?
+          snapshot.created_by :
+          "unknown_staff";
+
+    await db.collection("admin_audit_log").add({
+      action: `content_${change}`,
+      entity,
+      target_id: event.params.docId,
+      actor_id: actorId,
+      actor_role: "staff_content",
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+
+const MAX_LOGIN_FAILURES = 3;
+
+function throttleRef(scope: string, key: string) {
+  // Firestore document IDs must not contain "/". Derive a collision-safe,
+  // path-safe ID from scope+key (phones, staff names, anything).
+  const id = createHash("sha256")
+    .update(`${scope}:${key}`)
+    .digest("hex");
+
+  return db.collection("login_throttle").doc(id);
+}
+
+const STAFF_DIRECTORY_RATE_LIMIT = 30;
+
+const STAFF_DIRECTORY_WINDOW_MS = 10 * 60 * 1000;
+
+function bunnyResourceUrl(storagePath: string): URL {
+  const base = getEnv("BUNNY_STORAGE_BASE_URL").replace(/\/+$/, "");
+  const cleanPath = storagePath.replace(/^\/+/, "");
+  return new URL(`${base}/${cleanPath}`);
+}
+
+type ContentChange = "created" | "updated" | "deleted";
+
 import {
   createHash,
   randomBytes,
@@ -2127,7 +2372,7 @@ async function resolveDocumentAccess(userId: string, resourceId: string) {
   const storagePath = getString(resource.storage_path) ?? getString(resource.resource_url);
   if (!storagePath) throw new HttpsError("failed-precondition", "Document storage path is missing.");
 
-  return {planId, subjectId, lectureId, storagePath, resourceTitle: getString(resource.title), resourceType: type};
+  return {planId, subjectId, lectureId, storagePath, storageProvider: getString(resource.storage_provider) || "firebase", resourceTitle: getString(resource.title), resourceType: type};
 }
 
 /**
@@ -3587,4 +3832,537 @@ export function isDirectThumbnailUrl(url: any): boolean {
   const lower = url.toLowerCase();
   return lower.startsWith("http://") || lower.startsWith("https://");
 }
+
+
+// ============================================================
+// RESTORED FUNCTIONS (recovered from dr_tarek_platform_code_review — 2026-09-01)
+// Reason: functions were present on server but missing from local code after legacy sync
+// ============================================================
+
+export const getActiveCustomGroups = onCall(async (request) => {
+  await assertStaffDirectoryAllowed(request);
+  const snap = await db.collection("custom_groups")
+    .where("is_active", "==", true)
+    .get();
+  const groups = snap.docs
+    .map((doc) => ({
+      id: doc.id,
+      name: getString(doc.data().name) ?? "",
+      grade: getString(doc.data().grade),
+    }))
+    .filter((group) => group.name.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return {groups};
+});
+
+export const listStaffDirectory = onCall(async (request) => {
+  await assertStaffDirectoryAllowed(request);
+  const snap = await db.collection("users").where("role", "in", ["teacher", "admin"]).get();
+
+  const staff = snap.docs
+    .map((doc) => ({id: doc.id, data: dataOf(doc.data())}))
+    .filter(({data}) => {
+      const status = getString(data.account_status);
+      return !status || status === "active";
+    })
+    .map(({data}) => ({
+      displayName: getString(data.full_name)?.trim() ?? "",
+      roleKind: data.role === "teacher" ? "dr" : "admin",
+    }))
+    .filter((entry) => entry.displayName.length > 0)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .slice(0, 25);
+
+  return {staff};
+});
+
+export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
+  const displayName = getString(request.data?.displayName)?.trim() ?? "";
+  const password = getString(request.data?.password);
+
+  if (!displayName || !password) {
+    throw new HttpsError("invalid-argument", "Display name and password are required.");
+  }
+
+  const throttleKey = displayName.toLowerCase();
+  await assertLoginNotLocked("staff_login", throttleKey);
+
+  const snap = await db.collection("users").where("role", "in", ["teacher", "admin"]).get();
+  const matches = snap.docs.filter((doc) => {
+    const user = dataOf(doc.data());
+    if (!user || typeof user !== "object") return false;
+    const record = user as Record<string, unknown>;
+    const name = getString(record.full_name)?.trim().toLowerCase() ?? "";
+    if (name !== throttleKey) return false;
+    const status = getString(record.account_status);
+    return !status || status === "active";
+  });
+
+  if (matches.length === 0) {
+    await recordLoginFailure("staff_login", throttleKey);
+    throw new HttpsError("unauthenticated", "Invalid name or password.");
+  }
+  if (matches.length > 1) {
+    throw new HttpsError(
+      "failed-precondition",
+      "This display name is ambiguous. Ask the platform owner to make staff names unique.",
+    );
+  }
+
+  const userDoc = matches[0];
+  const user = dataOf(userDoc.data());
+
+  const secretSnap = await db.collection("user_secrets").doc(userDoc.id).get();
+  const secretData = secretSnap.exists ? dataOf(secretSnap.data()) : {};
+  const passwordHash = getString(secretData.password_hash) ?? getString(user.password_hash);
+  if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
+    await recordLoginFailure("staff_login", throttleKey);
+    await writeAnalyticsEvent(userDoc.id, "Failed Login", userDoc.id, {reason: "invalid_staff_credentials"}, request);
+    throw new HttpsError("unauthenticated", "Invalid name or password.");
+  }
+
+  await clearLoginFailures("staff_login", throttleKey);
+
+  const role = getString(user.role) ?? "admin";
+  const token = await auth.createCustomToken(userDoc.id, {
+    role,
+    approved: true,
+    force_password_change: user.force_password_change === true,
+  });
+
+  await writeAnalyticsEvent(userDoc.id, "Login", userDoc.id, {method: "staff_name_password"}, request);
+  return {token, userId: userDoc.id};
+});
+
+export const uploadBunnyResource = onCall(
+  {
+    secrets: [
+      SECRET_BUNNY_TOKEN_KEY,
+      SECRET_BUNNY_STORAGE_BASE_URL,
+      SECRET_BUNNY_STORAGE_ZONE_NAME,
+      SECRET_BUNNY_STORAGE_PASSWORD,
+    ],
+  },
+  async (request) => {
+    const actorId = await (async () => {
+      const uid = requireAuthenticated(request);
+      const role = callerRole(request);
+      if (!role || !ADMIN_ROLES.has(role)) {
+        throw new HttpsError("permission-denied", "Admin or Teacher permission is required.");
+      }
+      return uid;
+    })();
+
+    const lectureId = getString(request.data?.lectureId);
+    const resourceId = getString(request.data?.resourceId);
+    const fileName = getString(request.data?.fileName);
+    const contentType = getString(request.data?.contentType);
+    const dataBase64 = typeof request.data?.dataBase64 === "string" ? request.data.dataBase64 : null;
+
+    if (!lectureId || !resourceId || !fileName || !contentType || !dataBase64) {
+      throw new HttpsError("invalid-argument", "lectureId, resourceId, fileName, contentType and dataBase64 are required.");
+    }
+    if (!/^[\w.\- ]+$/.test(fileName)) {
+      throw new HttpsError("invalid-argument", "Invalid file name.");
+    }
+    if (!BUNNY_UPLOAD_CONTENT_TYPES.has(contentType)) {
+      throw new HttpsError("invalid-argument", "Unsupported content type.");
+    }
+    const bytes = Buffer.from(dataBase64, "base64");
+    if (bytes.length === 0 || bytes.length > BUNNY_PROXY_MAX_BYTES) {
+      throw new HttpsError("invalid-argument", "Payload exceeds the Bunny proxy upload limit.");
+    }
+
+    const storagePath = `lecture_resources/${lectureId}/${resourceId}/${fileName}`;
+    await bunnyStorageRequest("PUT", storagePath, bytes);
+
+    await db.collection("admin_audit_log").add({
+      action: "bunny_resource_uploaded",
+      entity: "lecture_resources",
+      target_id: resourceId,
+      storage_path: storagePath,
+      byte_size: bytes.length,
+      actor_id: actorId,
+      actor_role: callerRole(request),
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    return {storagePath};
+  });
+
+export const deleteBunnyResource = onCall(
+  {
+    secrets: [
+      SECRET_BUNNY_TOKEN_KEY,
+      SECRET_BUNNY_STORAGE_BASE_URL,
+      SECRET_BUNNY_STORAGE_ZONE_NAME,
+      SECRET_BUNNY_STORAGE_PASSWORD,
+    ],
+  },
+  async (request) => {
+    const uid = requireAuthenticated(request);
+    const role = callerRole(request);
+    if (!role || !ADMIN_ROLES.has(role)) {
+      throw new HttpsError("permission-denied", "Admin or Teacher permission is required.");
+    }
+    const storagePath = getString(request.data?.storagePath);
+    if (!storagePath || storagePath.includes("..")) {
+      throw new HttpsError("invalid-argument", "A valid storagePath is required.");
+    }
+    await bunnyStorageRequest("DELETE", storagePath);
+    await db.collection("admin_audit_log").add({
+      action: "bunny_resource_deleted",
+      entity: "lecture_resources",
+      target_id: storagePath,
+      actor_id: uid,
+      actor_role: role,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+    return {success: true};
+  });
+
+export const generateBunnyResourceUrl = onCall(
+  {
+    secrets: [
+      SECRET_BUNNY_TOKEN_KEY,
+      SECRET_BUNNY_STORAGE_BASE_URL,
+    ],
+  },
+  async (request) => {
+    const userId = requireAuthenticated(request);
+    const resourceId = getString(request.data?.resourceId);
+    const forDownload = request.data?.forDownload === true;
+    if (!resourceId) throw new HttpsError("invalid-argument", "resourceId is required.");
+
+    const ctx = await resolveDocumentAccess(userId, resourceId);
+    if (ctx.storageProvider !== "bunny") {
+      throw new HttpsError("failed-precondition", "This resource is not Bunny-hosted; use the Firebase PDF endpoints.");
+    }
+
+    const featureKeys = documentFeatureKeys(ctx.resourceType);
+    const featureKey = forDownload ? featureKeys.download : featureKeys.view;
+    const feature = await getPlanFeature(ctx.planId, featureKey);
+    if (feature?.enabled !== true) {
+      throw new HttpsError("permission-denied", `${featureKey} is not enabled for your plan.`);
+    }
+
+    const signed = buildBunnyResourceAccessUrl(ctx.storagePath, 300);
+    await writeAnalyticsEvent(
+      userId,
+      forDownload ? "Download PDF" : "View PDF",
+      resourceId,
+      {subject_id: ctx.subjectId, lecture_id: ctx.lectureId, storage_provider: "bunny", resource_type: ctx.resourceType},
+    );
+    return {url: signed.url, expiresAt: signed.expiresAt * 1000, canDownload: !forDownload ? false : true};
+  });
+
+export const submitPasswordResetRequest = onCall(SECURE_CALL_OPTS, async (request) => {
+  const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
+  if (!phone) throw new HttpsError("invalid-argument", "Valid Egyptian phone number is required.");
+
+  // Per-phone request throttling (sliding window).
+  const allowed = await slidingWindowAllowed(
+    "password_reset_request_throttle",
+    createHash("sha256").update(phone).digest("hex"),
+    3,
+    15 * 60 * 1000,
+  );
+  if (!allowed) {
+    await db.collection("auth_security_events").add({
+      event_type: "password_reset_request_rate_limited",
+      created_at: FieldValue.serverTimestamp(),
+      created_by: "system",
+    });
+    throw new HttpsError("resource-exhausted", "Too many requests. Try again later.");
+  }
+
+  // Anti-enumeration: unknown or ineligible phones receive the SAME uniform
+  // success response — no document is created and nothing is disclosed.
+  const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
+  const userDoc = userSnap.empty ? null : userSnap.docs[0];
+  const userData = userDoc ? dataOf(userDoc.data()) : null;
+  const role = getString(userData?.role);
+  const isActive = !userData?.account_status || userData?.account_status === "active";
+  const eligible =
+    !!userDoc && isActive && (role === "student" || role === "new_student");
+
+  if (userDoc && eligible) {
+    // requested_at is the 08 §9.3 schema name; created_at mirrors what the
+    // staff-side dashboards already write for the same collection.
+    await db.collection("password_reset_requests").add({
+      student_id: userDoc.id,
+      phone_number: phone,
+      status: "pending",
+      requested_at: FieldValue.serverTimestamp(),
+      created_at: FieldValue.serverTimestamp(),
+    });
+  }
+
+  return {submitted: true};
+});
+
+export const submitAssessmentAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
+  const userId = requireAuthenticated(request);
+  const attemptId = getString(request.data?.attemptId);
+  const rawAnswers = request.data?.answers;
+  const attemptType = getString(request.data?.attemptType) === "quiz" ? "quiz" : "exam";
+
+  if (!attemptId || !rawAnswers || typeof rawAnswers !== "object" || Array.isArray(rawAnswers)) {
+    throw new HttpsError("invalid-argument", "attemptId and an answers map are required.");
+  }
+  const answerEntries = Object.entries(rawAnswers as Record<string, unknown>);
+  if (answerEntries.length > MAX_EXAM_ANSWERS) {
+    throw new HttpsError("invalid-argument", "Too many answers submitted.");
+  }
+  const answers: Record<string, string> = {};
+  for (const [key, value] of answerEntries) {
+    if (typeof key === "string" && key.length > 0 && typeof value === "string" && value.length <= 4096) {
+      answers[key] = value;
+    }
+  }
+
+  const attemptsCollection = attemptType === "quiz" ? "quiz_attempts" : "exam_attempts";
+  const assessmentsCollection = attemptType === "quiz" ? "timeline_quizzes" : "exams";
+  const linksCollection = attemptType === "quiz" ? "quiz_questions" : "exam_questions";
+  const linkKeyField = attemptType === "quiz" ? "quiz_id" : "exam_id";
+
+  const attemptRef = db.collection(attemptsCollection).doc(attemptId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const attemptSnap = await tx.get(attemptRef);
+    if (!attemptSnap.exists) {
+      throw new HttpsError("not-found", `${attemptType} attempt not found.`);
+    }
+    const attempt = dataOf(attemptSnap.data());
+    if (getString(attempt.student_id) !== userId) {
+      throw new HttpsError("permission-denied", "Attempt does not belong to the caller.");
+    }
+    if (getString(attempt.status) !== "started") {
+      throw new HttpsError("failed-precondition", "This attempt was already submitted.");
+    }
+    const assessmentId = getString(attempt.assessment_id);
+    if (!assessmentId) throw new HttpsError("failed-precondition", "Attempt is missing its assessment reference.");
+
+    const assessmentSnap = await tx.get(db.collection(assessmentsCollection).doc(assessmentId));
+    if (!assessmentSnap.exists || dataOf(assessmentSnap.data()).is_deleted === true) {
+      throw new HttpsError("not-found", `${attemptType} not found.`);
+    }
+    const assessment = dataOf(assessmentSnap.data());
+    const published =
+      assessment.is_published === true || getString(assessment.status) === "published";
+    if (!published) {
+      throw new HttpsError("failed-precondition", `${attemptType} is not published.`);
+    }
+
+    // Server-side time limit (duration in minutes; 90s network grace).
+    // Quizzes have no duration field in the approved schema → no time gate.
+    const startedAt = attempt.started_at;
+    const durationMinutes =
+      getNumber(assessment.duration_minutes) ?? getNumber(assessment.duration);
+    const startedMs =
+      startedAt && typeof startedAt.toMillis === "function" ? startedAt.toMillis() : null;
+    if (
+      durationMinutes !== null &&
+      durationMinutes >= 0 &&
+      startedMs !== null &&
+      Date.now() > startedMs + durationMinutes * 60_000 + EXAM_SUBMIT_TIME_GRACE_MS
+    ) {
+      throw new HttpsError("deadline-exceeded", "The assessment time limit has elapsed.");
+    }
+
+    const linksSnap = await tx.get(
+      db.collection(linksCollection).where(linkKeyField, "==", assessmentId),
+    );
+    const links: GradingLink[] = linksSnap.docs
+      .map((doc) => {
+        const data = doc.data();
+        return {
+          questionId: getString((data as Record<string, unknown>).question_id) ?? "",
+          marks:
+            getNumber((data as Record<string, unknown>).marks) ?? 1,
+          order: getNumber((data as Record<string, unknown>).order) ?? 0,
+        };
+      })
+      .filter((link) => link.questionId.length > 0)
+      .sort((a, b) => a.order - b.order);
+
+    const questionsById = new Map<string, GradingQuestion>();
+    for (const link of links) {
+      const qSnap = await tx.get(db.collection("question_bank").doc(link.questionId));
+      if (!qSnap.exists) continue;
+      const q = dataOf(qSnap.data());
+      questionsById.set(link.questionId, {
+        questionType: q.question_type ?? q.type,
+        correctAnswer: q.correct_answer ?? q.correctAnswer,
+      });
+    }
+
+    // No question linkage (e.g. quizzes before content authoring exists):
+    // store answers without inventing a score. Clients cannot forge one —
+    // rules deny any client write to these collections entirely.
+    if (links.length === 0) {
+      tx.update(attemptRef, {
+        answers,
+        status: "submitted",
+        submitted_at: FieldValue.serverTimestamp(),
+        score: null,
+        percentage: null,
+        needs_manual_grading: false,
+        graded: false,
+        graded_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: "system",
+      });
+      return {score: null as number | null, totalMarks: 0, hasEssay: false};
+    }
+
+    const grade = gradeObjectiveAnswers(links, questionsById, answers);
+    const percentage =
+      grade.totalMarks > 0 ?
+        Math.round((grade.score / grade.totalMarks) * 1000) / 10 :
+        null;
+
+    tx.update(attemptRef, {
+      answers,
+      status: "submitted",
+      submitted_at: FieldValue.serverTimestamp(),
+      score: grade.score,
+      percentage,
+      needs_manual_grading: grade.hasEssay,
+      graded: true,
+      graded_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: "system",
+    });
+
+    return {score: grade.score as number | null, totalMarks: grade.totalMarks, hasEssay: grade.hasEssay};
+  });
+
+  await writeAnalyticsEvent(userId, attemptType === "quiz" ? "Quiz Submitted" : "Exam Submitted", attemptId, {
+    score: result.score,
+    total_marks: result.totalMarks,
+    needs_manual_grading: result.hasEssay,
+    server_graded: true,
+  }, request);
+
+  return {
+    submitted: true,
+    attemptType,
+    score: result.score,
+    totalMarks: result.totalMarks,
+    percentage:
+      result.score !== null && result.totalMarks > 0 ?
+        Math.round((result.score / result.totalMarks) * 1000) / 10 :
+        null,
+    needsManualGrading: result.hasEssay,
+  };
+});
+
+export const submitExamAttempt = submitAssessmentAttempt;
+
+export const onSectionWritten = contentAuditTrigger("subject_sections");
+
+export const onLectureWritten = contentAuditTrigger("lectures");
+
+export const onLectureResourceWritten = contentAuditTrigger("lecture_resources");
+
+export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => {
+  const nowMs = Date.now();
+  let publishedCount = 0;
+
+  // Paged scan so a large backlog cannot exceed function memory/time.
+  for (;;) {
+    const snap = await db.collection("lectures")
+      .where("status", "==", "draft")
+      .where("is_deleted", "==", false)
+      .limit(200)
+      .get();
+    if (snap.empty) break;
+
+    const due = pickDueLectures(
+      snap.docs.map((doc) => {
+        const data = dataOf(doc.data());
+        return {
+          id: doc.id,
+          status: data.status,
+          isDeleted: data.is_deleted,
+          publishDateMs: data.publish_date && typeof data.publish_date.toMillis === "function" ? data.publish_date.toMillis() : null,
+        };
+      }),
+      nowMs,
+    );
+
+    for (const lectureId of due) {
+      await db.collection("lectures").doc(lectureId).update({
+        status: "published",
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: "system_scheduler",
+      });
+      await db.collection("analytics_events").add({
+        user_id: "system_scheduler",
+        event_type: "Lecture Auto Published",
+        reference_id: lectureId,
+        metadata: {reason: "publish_date_reached"},
+        device_id: null,
+        ip_address: null,
+        user_agent: null,
+        created_at: FieldValue.serverTimestamp(),
+        created_by: "system_scheduler",
+      });
+      await db.collection("admin_audit_log").add({
+        action: "lecture_auto_published",
+        entity: "lectures",
+        target_id: lectureId,
+        actor_id: "system_scheduler",
+        actor_role: "system_scheduler",
+        created_at: FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      publishedCount += 1;
+    }
+
+    if (snap.size < 200) break;
+  }
+
+  if (publishedCount > 0) {
+    console.log(`autoPublishDueLectures: published ${publishedCount} lecture(s).`);
+  }
+});
+
+export const setDefaultStorageProvider = onCall(async (request) => {
+  const teacherId = requireTeacher(request);
+  const provider = getString(request.data?.provider)?.toLowerCase();
+
+  if (provider !== "bunny" && provider !== "firebase") {
+    throw new HttpsError("invalid-argument", "provider must be 'bunny' or 'firebase'.");
+  }
+
+  const settingsSnap = await db.collection("system_settings").limit(1).get();
+  const settingsRef = settingsSnap.empty ?
+    db.collection("system_settings").doc() :
+    settingsSnap.docs[0].ref;
+
+  await db.runTransaction(async (transaction) => {
+    transaction.set(settingsRef, {
+      default_storage_provider: provider,
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: teacherId,
+    }, {merge: true});
+    transaction.set(db.collection("admin_audit_log").doc(), {
+      action: "default_storage_provider_set",
+      entity: "system_settings",
+      target_id: settingsRef.id,
+      previous_provider: settingsSnap.empty ? null : getString(settingsSnap.docs[0].data().default_storage_provider),
+      new_provider: provider,
+      actor_id: teacherId,
+      actor_role: "teacher",
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {success: true, provider};
+});
 
