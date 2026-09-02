@@ -4366,3 +4366,395 @@ export const setDefaultStorageProvider = onCall(async (request) => {
   return {success: true, provider};
 });
 
+async function verifyPasswordForDeletion(userId: string, password: string): Promise<void> {
+  const secretSnap = await db.collection("user_secrets").doc(userId).get();
+  const secretData = secretSnap.exists ? dataOf(secretSnap.data()) : {};
+
+  if (secretData.locked_until && secretData.locked_until.toDate() > new Date()) {
+    throw new HttpsError("resource-exhausted", "Account locked due to too many failed attempts. Try again later.");
+  }
+
+  const passwordHash = getString(secretData.password_hash);
+  if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
+    const failedAttempts = (typeof secretData.failed_login_attempts === "number" ? secretData.failed_login_attempts : 0) + 1;
+    const lockMinutes = calculateLockMinutes(failedAttempts);
+    const updateData: Record<string, unknown> = {
+      failed_login_attempts: failedAttempts,
+      updated_at: FieldValue.serverTimestamp(),
+    };
+    if (lockMinutes > 0) {
+      updateData.locked_until = Timestamp.fromDate(new Date(Date.now() + lockMinutes * 60000));
+    }
+    await db.collection("user_secrets").doc(userId).set(updateData, {merge: true});
+
+    await writeAnalyticsEvent(userId, "Failed Account Deletion Password", userId, {reason: "invalid_credentials"});
+    throw new HttpsError("unauthenticated", "Invalid password.");
+  }
+
+  if (secretData.failed_login_attempts > 0 || secretData.locked_until != null) {
+    await db.collection("user_secrets").doc(userId).set({
+      failed_login_attempts: FieldValue.delete(),
+      locked_until: FieldValue.delete(),
+      updated_at: FieldValue.serverTimestamp(),
+    }, {merge: true});
+  }
+}
+
+interface DeletionCounts {
+  users: number;
+  user_secrets: number;
+  devices: number;
+  notifications: number;
+  analytics_events: number;
+  security_events: number;
+  notes: number;
+  bookmarks: number;
+  learning_progress: number;
+  lecture_progress: number;
+  subject_progress_summary: number;
+  subscriptions: number;
+  subject_access_assignments: number;
+  quiz_attempts: number;
+  exam_attempts: number;
+  password_reset_requests: number;
+  student_questions: number;
+  student_question_replies: number;
+  chat_rooms: number;
+  chat_messages: number;
+  video_watch_windows: number;
+  device_change_requests: number;
+  payment_logs_updated: number;
+}
+
+async function deleteBatchWithQuery(
+  query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>,
+  batch: FirebaseFirestore.WriteBatch,
+  counter: {value: number}
+): Promise<void> {
+  const snapshot = await query.get();
+  for (const doc of snapshot.docs) {
+    batch.delete(doc.ref);
+    counter.value += 1;
+  }
+}
+
+async function purgeUserAccount(
+  targetUid: string,
+  targetSnapshot: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>,
+  actorUid: string,
+  actorRole: "teacher" | "student",
+  actionType: "account_deleted_self" | "account_deleted_by_owner"
+): Promise<DeletionCounts> {
+  const targetData = targetSnapshot.data() as Record<string, unknown> | undefined;
+  const targetRole = getString(targetData?.role) ?? "student";
+  const targetPhone = getString(targetData?.phone_number) ?? "";
+  const targetName = getString(targetData?.full_name) ?? "";
+
+  const auditRef = db.collection("admin_audit_log").doc();
+  const now = FieldValue.serverTimestamp();
+
+  await auditRef.set({
+    actor_uid: actorUid,
+    actor_role: actorRole,
+    action: actionType,
+    target_uid: targetUid,
+    target_role: targetRole,
+    target_phone: targetPhone,
+    target_name: targetName,
+    status: "started",
+    created_at: now,
+    timestamp: now,
+  });
+
+  const counts: DeletionCounts = {
+    users: 0,
+    user_secrets: 0,
+    devices: 0,
+    notifications: 0,
+    analytics_events: 0,
+    security_events: 0,
+    notes: 0,
+    bookmarks: 0,
+    learning_progress: 0,
+    lecture_progress: 0,
+    subject_progress_summary: 0,
+    subscriptions: 0,
+    subject_access_assignments: 0,
+    quiz_attempts: 0,
+    exam_attempts: 0,
+    password_reset_requests: 0,
+    student_questions: 0,
+    student_question_replies: 0,
+    chat_rooms: 0,
+    chat_messages: 0,
+    video_watch_windows: 0,
+    device_change_requests: 0,
+    payment_logs_updated: 0,
+  };
+
+  try {
+    const batch = db.batch();
+
+    batch.delete(db.collection("users").doc(targetUid));
+    counts.users = 1;
+
+    batch.delete(db.collection("user_secrets").doc(targetUid));
+    counts.user_secrets = 1;
+
+    await deleteBatchWithQuery(
+      db.collection("devices").where("user_id", "==", targetUid),
+      batch,
+      {value: counts.devices}
+    );
+    counts.devices = (counts.devices || 0);
+
+    await deleteBatchWithQuery(
+      db.collection("notifications").where("user_id", "==", targetUid),
+      batch,
+      {value: counts.notifications}
+    );
+    counts.notifications = (counts.notifications || 0);
+
+    await deleteBatchWithQuery(
+      db.collection("analytics_events").where("user_id", "==", targetUid),
+      batch,
+      {value: counts.analytics_events}
+    );
+    counts.analytics_events = (counts.analytics_events || 0);
+
+    await deleteBatchWithQuery(
+      db.collection("security_events").where("user_id", "==", targetUid),
+      batch,
+      {value: counts.security_events}
+    );
+    counts.security_events = (counts.security_events || 0);
+
+    const studentCollections = ["student", "new_student"];
+    if (studentCollections.includes(targetRole)) {
+      await deleteBatchWithQuery(
+        db.collection("notes").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.notes}
+      );
+      counts.notes = (counts.notes || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("bookmarks").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.bookmarks}
+      );
+      counts.bookmarks = (counts.bookmarks || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("learning_progress").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.learning_progress}
+      );
+      counts.learning_progress = (counts.learning_progress || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("lecture_progress").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.lecture_progress}
+      );
+      counts.lecture_progress = (counts.lecture_progress || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("subject_progress_summary").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.subject_progress_summary}
+      );
+      counts.subject_progress_summary = (counts.subject_progress_summary || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("subscriptions").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.subscriptions}
+      );
+      counts.subscriptions = (counts.subscriptions || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("subject_access_assignments").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.subject_access_assignments}
+      );
+      counts.subject_access_assignments = (counts.subject_access_assignments || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("quiz_attempts").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.quiz_attempts}
+      );
+      counts.quiz_attempts = (counts.quiz_attempts || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("exam_attempts").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.exam_attempts}
+      );
+      counts.exam_attempts = (counts.exam_attempts || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("password_reset_requests").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.password_reset_requests}
+      );
+      counts.password_reset_requests = (counts.password_reset_requests || 0);
+
+      const questionsSnap = await db.collection("student_questions").where("student_id", "==", targetUid).get();
+      const questionIds = questionsSnap.docs.map((doc) => doc.id);
+      for (const qId of questionIds) {
+        batch.delete(db.collection("student_questions").doc(qId));
+        counts.student_questions += 1;
+
+        const repliesSnap = await db.collection("student_question_replies").where("question_id", "==", qId).get();
+        for (const replyDoc of repliesSnap.docs) {
+          batch.delete(replyDoc.ref);
+          counts.student_question_replies += 1;
+        }
+      }
+
+      const chatRoomsSnap = await db.collection("chat_rooms").where("student_id", "==", targetUid).get();
+      const roomIds = chatRoomsSnap.docs.map((doc) => doc.id);
+      for (const roomId of roomIds) {
+        batch.delete(db.collection("chat_rooms").doc(roomId));
+        counts.chat_rooms += 1;
+
+        const messagesSnap = await db.collection("chat_messages").where("room_id", "==", roomId).get();
+        for (const msgDoc of messagesSnap.docs) {
+          batch.delete(msgDoc.ref);
+          counts.chat_messages += 1;
+        }
+      }
+
+      await deleteBatchWithQuery(
+        db.collection("video_watch_windows").where("user_id", "==", targetUid),
+        batch,
+        {value: counts.video_watch_windows}
+      );
+      counts.video_watch_windows = (counts.video_watch_windows || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("device_change_requests").where("student_id", "==", targetUid),
+        batch,
+        {value: counts.device_change_requests}
+      );
+      counts.device_change_requests = (counts.device_change_requests || 0);
+    }
+
+    const paymentLogsSnap = await db.collection("payment_logs").where("student_id", "==", targetUid).get();
+    for (const doc of paymentLogsSnap.docs) {
+      batch.update(doc.ref, {student_account_deleted: true, updated_at: FieldValue.serverTimestamp(), updated_by: actorUid});
+      counts.payment_logs_updated += 1;
+    }
+
+    await batch.commit();
+
+    const storage = getStorage();
+    const bucket = storage.bucket();
+    const profilePhotosPrefix = `profile_photos/${targetUid}/`;
+    const [files] = await bucket.getFiles({prefix: profilePhotosPrefix});
+    for (const file of files) {
+      try {
+        await file.delete();
+      } catch {
+        // Ignore individual file deletion errors
+      }
+    }
+
+    try {
+      await getAuth().deleteUser(targetUid);
+    } catch (authError: unknown) {
+      const err = authError as {code?: string};
+      if (err.code !== "auth/user-not-found") {
+        throw authError;
+      }
+    }
+
+    await auditRef.update({
+      status: "completed",
+      deleted_counts: counts,
+      completed_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+
+    return counts;
+  } catch (error) {
+    const err = error as Error;
+    await auditRef.update({
+      status: "failed",
+      failure_stage: err.message,
+      error_message: err.message,
+      failed_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+    throw new HttpsError("internal", "Account deletion failed. Please contact support.");
+  }
+}
+
+export const deleteMyAccount = onCall({...SECURE_CALL_OPTS, timeoutSeconds: 300}, async (request) => {
+  const callerUid = requireAuthenticated(request);
+
+  const userSnap = await db.collection("users").doc(callerUid).get();
+  if (!userSnap.exists) {
+    throw new HttpsError("not-found", "User not found.");
+  }
+  const userData = userSnap.data();
+  const role = getString(userData?.role);
+  if (role !== "student" && role !== "new_student") {
+    throw new HttpsError("permission-denied", "Only students can delete their own account using this function.");
+  }
+
+  const password = getString(request.data?.password);
+  if (!password) {
+    throw new HttpsError("invalid-argument", "Password is required for account deletion.");
+  }
+
+  await verifyPasswordForDeletion(callerUid, password);
+
+  const counts = await purgeUserAccount(callerUid, userSnap, callerUid, "student", "account_deleted_self");
+
+  return {success: true, deleted: counts};
+});
+
+export const deleteAccountByOwner = onCall({...SECURE_CALL_OPTS, timeoutSeconds: 300}, async (request) => {
+  const callerUid = requireAuthenticated(request);
+
+  const callerSnap = await db.collection("users").doc(callerUid).get();
+  if (!callerSnap.exists) {
+    throw new HttpsError("not-found", "Caller user not found.");
+  }
+  const callerData = callerSnap.data();
+  if (getString(callerData?.role) !== "teacher") {
+    throw new HttpsError("permission-denied", "Only the platform owner (teacher) can delete other accounts.");
+  }
+
+  const password = getString(request.data?.password);
+  if (!password) {
+    throw new HttpsError("invalid-argument", "Owner password is required for this operation.");
+  }
+  await verifyPasswordForDeletion(callerUid, password);
+
+  const targetUid = getString(request.data?.targetUid);
+  if (!targetUid) {
+    throw new HttpsError("invalid-argument", "targetUid is required.");
+  }
+  if (targetUid === callerUid) {
+    throw new HttpsError("invalid-argument", "Cannot delete your own account using this function. Use deleteMyAccount instead.");
+  }
+
+  const targetSnap = await db.collection("users").doc(targetUid).get();
+  if (!targetSnap.exists) {
+    throw new HttpsError("not-found", "Target user not found.");
+  }
+  const targetData = targetSnap.data();
+  const targetRole = getString(targetData?.role);
+  if (targetRole === "teacher") {
+    throw new HttpsError("permission-denied", "Owner accounts cannot be deleted via this function.");
+  }
+
+  const counts = await purgeUserAccount(targetUid, targetSnap, callerUid, "teacher", "account_deleted_by_owner");
+
+  return {success: true, deleted: counts};
+});
+
