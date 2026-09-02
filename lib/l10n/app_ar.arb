@@ -48,5 +48,16 @@
   "errorSubscriptionInactive": "اشتراكك في هذه المادة غير مفعّل حالياً.",
   "errorDisciplinaryDisabled": "تم إيقاف اشتراكك إدارياً، تواصل مع الإدارة.",
   "errorUnauthorizedDevice": "هذا الجهاز غير مصرح به لهذا الحساب.",
-  "errorGeneric": "حدث خطأ غير متوقع، حاول مرة أخرى."
+  "errorGeneric": "حدث خطأ غير متوقع، حاول مرة أخرى.",
+
+  "dangerZoneTitle": "منطقة الخطر",
+  "dangerZoneDescription": "الإجراءات في هذه المنطقة لا يمكن التراجع عنها. يرجى الحذر.",
+  "dangerZoneDeleteButton": "حذف حسابي نهائيًا",
+  "deleteAccountDialogTitle": "حذف الحساب نهائيًا",
+  "deleteAccountDialogWarning": "⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه",
+  "deleteAccountDialogDescription": "سيتم حذف حسابك وكل بياناتك نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية.",
+  "deleteAccountPasswordLabel": "كلمة المرور الحالية",
+  "deleteAccountConfirmButton": "تأكيد الحذف نهائيًا",
+  "deleteAccountSuccessMessage": "تم حذف حسابك بنجاح",
+  "actionCancel": "إلغاء"
 }

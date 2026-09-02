@@ -142,4 +142,38 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errorGeneric => 'An unexpected error occurred. Please try again.';
+
+  @override
+  String get dangerZoneTitle => 'Danger Zone';
+
+  @override
+  String get dangerZoneDescription =>
+      'Actions in this zone are irreversible. Please proceed with caution.';
+
+  @override
+  String get dangerZoneDeleteButton => 'Delete My Account Permanently';
+
+  @override
+  String get deleteAccountDialogTitle => 'Delete Account Permanently';
+
+  @override
+  String get deleteAccountDialogWarning =>
+      '⚠ This action is final and cannot be undone';
+
+  @override
+  String get deleteAccountDialogDescription =>
+      'Your account and all data will be permanently deleted: study progress, notes, grades, messages, and profile photo. Payment records are retained for accounting purposes without personal data.';
+
+  @override
+  String get deleteAccountPasswordLabel => 'Current Password';
+
+  @override
+  String get deleteAccountConfirmButton => 'Confirm Permanent Deletion';
+
+  @override
+  String get deleteAccountSuccessMessage =>
+      'Your account has been deleted successfully';
+
+  @override
+  String get actionCancel => 'Cancel';
 }

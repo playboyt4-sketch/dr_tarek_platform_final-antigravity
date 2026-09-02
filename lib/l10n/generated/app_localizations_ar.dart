@@ -136,4 +136,37 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get errorGeneric => 'حدث خطأ غير متوقع، حاول مرة أخرى.';
+
+  @override
+  String get dangerZoneTitle => 'منطقة الخطر';
+
+  @override
+  String get dangerZoneDescription =>
+      'الإجراءات في هذه المنطقة لا يمكن التراجع عنها. يرجى الحذر.';
+
+  @override
+  String get dangerZoneDeleteButton => 'حذف حسابي نهائيًا';
+
+  @override
+  String get deleteAccountDialogTitle => 'حذف الحساب نهائيًا';
+
+  @override
+  String get deleteAccountDialogWarning =>
+      '⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه';
+
+  @override
+  String get deleteAccountDialogDescription =>
+      'سيتم حذف حسابك وكل بياناتك نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية.';
+
+  @override
+  String get deleteAccountPasswordLabel => 'كلمة المرور الحالية';
+
+  @override
+  String get deleteAccountConfirmButton => 'تأكيد الحذف نهائيًا';
+
+  @override
+  String get deleteAccountSuccessMessage => 'تم حذف حسابك بنجاح';
+
+  @override
+  String get actionCancel => 'إلغاء';
 }

@@ -43,5 +43,16 @@
   "errorSubscriptionInactive": "Your subscription to this subject is not active.",
   "errorDisciplinaryDisabled": "Your subscription has been suspended by the administration. Please contact support.",
   "errorUnauthorizedDevice": "This device is not authorized for this account.",
-  "errorGeneric": "An unexpected error occurred. Please try again."
+  "errorGeneric": "An unexpected error occurred. Please try again.",
+
+  "dangerZoneTitle": "Danger Zone",
+  "dangerZoneDescription": "Actions in this zone are irreversible. Please proceed with caution.",
+  "dangerZoneDeleteButton": "Delete My Account Permanently",
+  "deleteAccountDialogTitle": "Delete Account Permanently",
+  "deleteAccountDialogWarning": "⚠ This action is final and cannot be undone",
+  "deleteAccountDialogDescription": "Your account and all data will be permanently deleted: study progress, notes, grades, messages, and profile photo. Payment records are retained for accounting purposes without personal data.",
+  "deleteAccountPasswordLabel": "Current Password",
+  "deleteAccountConfirmButton": "Confirm Permanent Deletion",
+  "deleteAccountSuccessMessage": "Your account has been deleted successfully",
+  "actionCancel": "Cancel"
 }

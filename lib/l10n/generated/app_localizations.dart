@@ -331,6 +331,66 @@ abstract class AppLocalizations {
   /// In ar, this message translates to:
   /// **'حدث خطأ غير متوقع، حاول مرة أخرى.'**
   String get errorGeneric;
+
+  /// No description provided for @dangerZoneTitle.
+  ///
+  /// In ar, this message translates to:
+  /// **'منطقة الخطر'**
+  String get dangerZoneTitle;
+
+  /// No description provided for @dangerZoneDescription.
+  ///
+  /// In ar, this message translates to:
+  /// **'الإجراءات في هذه المنطقة لا يمكن التراجع عنها. يرجى الحذر.'**
+  String get dangerZoneDescription;
+
+  /// No description provided for @dangerZoneDeleteButton.
+  ///
+  /// In ar, this message translates to:
+  /// **'حذف حسابي نهائيًا'**
+  String get dangerZoneDeleteButton;
+
+  /// No description provided for @deleteAccountDialogTitle.
+  ///
+  /// In ar, this message translates to:
+  /// **'حذف الحساب نهائيًا'**
+  String get deleteAccountDialogTitle;
+
+  /// No description provided for @deleteAccountDialogWarning.
+  ///
+  /// In ar, this message translates to:
+  /// **'⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه'**
+  String get deleteAccountDialogWarning;
+
+  /// No description provided for @deleteAccountDialogDescription.
+  ///
+  /// In ar, this message translates to:
+  /// **'سيتم حذف حسابك وكل بياناتك نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية.'**
+  String get deleteAccountDialogDescription;
+
+  /// No description provided for @deleteAccountPasswordLabel.
+  ///
+  /// In ar, this message translates to:
+  /// **'كلمة المرور الحالية'**
+  String get deleteAccountPasswordLabel;
+
+  /// No description provided for @deleteAccountConfirmButton.
+  ///
+  /// In ar, this message translates to:
+  /// **'تأكيد الحذف نهائيًا'**
+  String get deleteAccountConfirmButton;
+
+  /// No description provided for @deleteAccountSuccessMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'تم حذف حسابك بنجاح'**
+  String get deleteAccountSuccessMessage;
+
+  /// No description provided for @actionCancel.
+  ///
+  /// In ar, this message translates to:
+  /// **'إلغاء'**
+  String get actionCancel;
 }
 
 class _AppLocalizationsDelegate
