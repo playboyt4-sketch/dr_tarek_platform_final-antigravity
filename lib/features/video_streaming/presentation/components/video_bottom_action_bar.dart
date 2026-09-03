@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../controllers/video_playback_controller.dart';
 
 class VideoBottomActionBar extends StatelessWidget {
@@ -37,7 +38,7 @@ class VideoBottomActionBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildTimeline(context),
-        const SizedBox(height: 15),
+        SizedBox(height: context.rsV(15)),
         _buildToolbar(context),
       ],
     );
@@ -48,21 +49,21 @@ class VideoBottomActionBar extends StatelessWidget {
     final duration = controller.duration;
     
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      padding: EdgeInsets.symmetric(horizontal: context.rs(16)),
       child: Row(
         children: [
           SizedBox(
-            width: 45,
+            width: context.rs(40),
             child: Text(
               _formatDuration(position),
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: context.rsFont(12),
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFDDDDDD),
+                color: const Color(0xFFDDDDDD),
               ),
             ),
           ),
-          const SizedBox(width: 15),
+          SizedBox(width: context.rs(15)),
           Expanded(
             child: SliderTheme(
               data: SliderThemeData(
@@ -87,16 +88,16 @@ class VideoBottomActionBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 15),
+          SizedBox(width: context.rs(15)),
           SizedBox(
-            width: 45,
+            width: context.rs(40),
             child: Text(
               _formatDuration(duration),
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: context.rsFont(12),
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFDDDDDD),
+                color: const Color(0xFFDDDDDD),
               ),
             ),
           ),
@@ -108,38 +109,43 @@ class VideoBottomActionBar extends StatelessWidget {
   Widget _buildToolbar(BuildContext context) {
     final hasNext = controller.hasNextEpisode;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
+      padding: EdgeInsets.only(bottom: context.rsV(16)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _buildToolBtn(
+            context,
             icon: Icons.layers_outlined,
             label: 'الحلقات',
             onTap: onLecturesTap,
           ),
-          const SizedBox(width: 35),
+          SizedBox(width: context.rs(35)),
           _buildToolBtn(
+            context,
             // Documents entry opens both the lecture PDF and attachments
             // (storage-delivery Fix 1); label generalized accordingly.
             icon: Icons.folder_open_outlined,
             label: 'الملفات',
             onTap: onPdfTap,
           ),
-          const SizedBox(width: 35),
+          SizedBox(width: context.rs(35)),
           _buildToolBtn(
+            context,
             icon: Icons.settings_outlined,
             label: 'الجودة',
             onTap: onQualityTap,
           ),
-          const SizedBox(width: 35),
+          SizedBox(width: context.rs(35)),
           _buildToolBtn(
+            context,
             icon: Icons.bookmark_border_rounded,
             label: 'حفظ',
             onTap: onBookmarkTap,
             opacity: onBookmarkTap == null ? 0.3 : 0.85,
           ),
-          const SizedBox(width: 35),
+          SizedBox(width: context.rs(35)),
           _buildToolBtn(
+            context,
             icon: Icons.skip_next_outlined,
             label: 'التالي',
             onTap: hasNext ? onNextTap : null,
@@ -150,7 +156,8 @@ class VideoBottomActionBar extends StatelessWidget {
     );
   }
 
-  Widget _buildToolBtn({
+  Widget _buildToolBtn(
+    BuildContext context, {
     required IconData icon,
     required String label,
     required VoidCallback? onTap,
@@ -164,13 +171,13 @@ class VideoBottomActionBar extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 18),
-            const SizedBox(width: 6),
+            Icon(icon, color: Colors.white, size: context.rsFont(18)),
+            SizedBox(width: context.rs(6)),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: context.rsFont(13),
                 fontWeight: FontWeight.w600,
               ),
             ),

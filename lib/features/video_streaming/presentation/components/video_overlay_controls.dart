@@ -133,6 +133,8 @@ class VideoOverlayControls extends StatelessWidget {
     );
   }
 
+  /// Scrim matching `docs/video player .html`:
+  /// `linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 40%, rgba(0,0,0,0.8) 100%)`.
   Widget _buildGradient() {
     return const IgnorePointer(
       child: DecoratedBox(
@@ -142,9 +144,9 @@ class VideoOverlayControls extends StatelessWidget {
             end: Alignment.bottomCenter,
             stops: [0.0, 0.4, 1.0],
             colors: [
-              Colors.black87,
+              Color.fromRGBO(0, 0, 0, 0.6),
               Colors.transparent,
-              Colors.black87,
+              Color.fromRGBO(0, 0, 0, 0.8),
             ],
           ),
         ),

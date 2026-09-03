@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../controllers/video_playback_controller.dart';
 
+/// Center controls matching `docs/video player .html`:
+/// skip-back 42 | gap 70 | plain triangle/pause glyph 85 | gap 70 | skip-forward 42.
 class VideoCenterControls extends StatelessWidget {
   final VideoPlaybackController controller;
 
@@ -16,9 +19,9 @@ class VideoCenterControls extends StatelessWidget {
             icon: Icons.replay_10_rounded,
             onPressed: () => controller.seekRelative(const Duration(seconds: -10)),
           ),
-          const SizedBox(width: 70),
-          _buildPlayBtn(),
-          const SizedBox(width: 70),
+          SizedBox(width: context.rs(70)),
+          _buildPlayBtn(context),
+          SizedBox(width: context.rs(70)),
           _buildSkipBtn(
             icon: Icons.forward_10_rounded,
             onPressed: () => controller.seekRelative(const Duration(seconds: 10)),
@@ -38,12 +41,12 @@ class VideoCenterControls extends StatelessWidget {
     );
   }
 
-  Widget _buildPlayBtn() {
+  Widget _buildPlayBtn(BuildContext context) {
     return IconButton(
-      iconSize: 85,
+      iconSize: context.rsFont(85),
       color: Colors.white,
       onPressed: controller.togglePlayPause,
-      icon: Icon(controller.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled),
+      icon: Icon(controller.isPlaying ? Icons.pause : Icons.play_arrow),
     );
   }
 }

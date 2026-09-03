@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../controllers/video_playback_controller.dart';
 import '../../domain/entities/playback_entities.dart';
 
+/// Top bar matching `docs/video player .html`:
+/// back chevron (32) | centered course title (18/w800) + subtitle (13/#ccc)
+/// | quality pill badge (12/w700, frosted white 20%).
 class VideoHeader extends StatelessWidget {
   final VideoPlaybackController controller;
   final VoidCallback onBack;
@@ -14,26 +18,38 @@ class VideoHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final qualityLabel = controller.selectedQuality == VideoQuality.auto ||
+            controller.selectedQuality.backendValue == null
+        ? 'Auto'
+        : controller.selectedQuality.backendValue!;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+      padding: EdgeInsets.symmetric(
+        horizontal: context.rs(30),
+        vertical: context.rsV(20),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           IconButton(
             padding: EdgeInsets.zero,
-            icon: const Icon(Icons.chevron_left, size: 32, color: Colors.white),
+            icon: Icon(
+              Icons.chevron_left,
+              size: context.rsFont(32),
+              color: Colors.white,
+            ),
             onPressed: onBack,
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: context.rs(15)),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   controller.episodeTitle,
-                  style: const TextStyle(
-                    fontSize: 18,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: context.rsFont(18),
                     fontWeight: FontWeight.w800,
                     color: Colors.white,
                     letterSpacing: 0.5,
@@ -41,12 +57,13 @@ class VideoHeader extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: context.rsV(2)),
                 Text(
                   'حلقة ${controller.currentEpisodeIndex + 1}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Colors.white70,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: context.rsFont(13),
+                    color: const Color(0xFFCCCCCC),
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -54,23 +71,25 @@ class VideoHeader extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 16),
-          if (controller.selectedQuality != VideoQuality.auto && controller.selectedQuality.backendValue != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                controller.selectedQuality.backendValue!,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+          SizedBox(width: context.rs(15)),
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: context.rs(12),
+              vertical: context.rsV(4),
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(context.rs(20)),
+            ),
+            child: Text(
+              qualityLabel,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: context.rsFont(12),
+                fontWeight: FontWeight.w700,
               ),
             ),
+          ),
         ],
       ),
     );

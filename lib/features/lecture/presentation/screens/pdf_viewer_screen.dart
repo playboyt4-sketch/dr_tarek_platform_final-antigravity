@@ -10,6 +10,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../core/errors/friendly_error_message.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
 import '../../../membership/presentation/providers/membership_providers.dart';
@@ -594,7 +595,10 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFf4f6f8),
+      // Top bar per `docs/pdf viewer.html`: fixed 60px, white surface,
+      // title 15/w600 + page counter 12/secondary, back + menu actions.
       appBar: AppBar(
+        toolbarHeight: 60,
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
@@ -615,7 +619,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
               const SizedBox(height: 2),
               Text(
                 'صفحة ${_currentPage + 1} من $_totalPages',
-                style: const TextStyle(fontSize: 11, color: Color(0xFF6b7280)),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF6b7280)),
               ),
             ],
           ],
@@ -814,13 +818,15 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
           }
 
           // Render appropriate layout based on viewMode
+          // (`docs/pdf viewer.html`: split = video 40% + pdf 60%;
+          // floating = fullscreen video + 180x260 pdf card).
           Widget content;
           if (_viewMode == 1 && hasVideo) {
             // Split screen mode
             content = Column(
               children: [
                 SizedBox(
-                  height: media.size.height * 0.35,
+                  height: media.size.height * 0.40,
                   child: VideoSurface(controller: widget.videoController!),
                 ),
                 Expanded(child: buildPdfReader()),
@@ -835,17 +841,17 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
                   child: VideoSurface(controller: widget.videoController!),
                 ),
                 Positioned(
-                  bottom: 24,
-                  left: 16,
+                  bottom: context.rsV(24),
+                  left: context.rs(16),
                   child: Card(
                     elevation: 12,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     clipBehavior: Clip.antiAlias,
                     child: Container(
-                      width: 160,
-                      height: 240,
+                      width: context.rs(180),
+                      height: context.rsV(260),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 2),
+                        border: Border.all(color: const Color(0xFFe5e7eb), width: 2),
                       ),
                       child: buildPdfReader(),
                     ),
@@ -864,8 +870,8 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
               content,
               if (hasVideo)
                 Positioned(
-                  bottom: 24,
-                  right: 24,
+                  bottom: context.rsV(24),
+                  right: context.rs(24),
                   child: FloatingActionButton(
                     onPressed: _switchViewMode,
                     backgroundColor: const Color(0xFF2563eb),
