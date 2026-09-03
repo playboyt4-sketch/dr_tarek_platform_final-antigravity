@@ -9,7 +9,7 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "npm run build && node test/academic_periods.test.js && node test/login_throttle.test.js && node test/device_limits.test.js && node test/password_reset.test.js"
+    "test": "npm run build && firebase emulators:exec --project demo-tarek-platform --only firestore,functions \"node test/wait_for_triggers.js && node test/academic_periods.test.js && node test/login_throttle.test.js && node test/device_limits.test.js && node test/password_reset.test.js && node test/exam_grading.test.js && node test/final_decisions_addendum.test.js && node test/resource_delivery.test.js && node test/progress_percentage.test.js && node test/sections_12_13.test.js\""
   },
   "engines": {
     "node": "24"

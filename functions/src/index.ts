@@ -193,11 +193,31 @@ export function pickDueLectures(
     .map((doc) => doc.id);
 }
 
+/**
+ * Public Free per-lecture preview cap (FINAL_DECISIONS §11).
+ * Exported for unit testing.
+ *
+ * Gate not armed (`publicFreeEnabled` false) returns null (not applicable).
+ * Per-lecture minutes win over the plan's video.preview_duration default;
+ * null lecture minutes fall back to the plan default. When neither source
+ * defines minutes the cap is 0 — the student sees the upgrade prompt
+ * immediately instead of unbounded playback.
+ */
+export function resolvePublicFreePreviewSeconds(opts: {
+  publicFreeEnabled: boolean;
+  lectureMinutes: number | null;
+  planDefaultMinutes: number | null;
+}): number | null {
+  if (!opts.publicFreeEnabled) return null;
+  const minutes = opts.lectureMinutes ?? opts.planDefaultMinutes;
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return 0;
+  return Math.round(minutes * 60);
+}
+
 export interface GradingLink {
   questionId: string;
   marks: number;
 }
-
 export interface GradingQuestion {
   questionType: string;
   correctAnswer: string;
@@ -2459,10 +2479,14 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     if (subjectPlanSnap.exists) {
       const subjectPlan = dataOf(subjectPlanSnap.data());
       if (subjectPlan.student_type === "public_student" && subjectPlan.plan_key === "public_free") {
-        if (lecture.public_free_enabled === true) {
-          const mins = typeof lecture.public_free_preview_minutes === "number" ? lecture.public_free_preview_minutes : 0;
-          publicFreePreviewSeconds = mins * 60;
-        }
+        // Public Free per-lecture cap: per-lecture minutes win, falling back
+        // to the plan's video.preview_duration default (FINAL_DECISIONS §11).
+        const previewFeature = await getPlanFeature(subjectPlanId, "video.preview_duration");
+        publicFreePreviewSeconds = resolvePublicFreePreviewSeconds({
+          publicFreeEnabled: lecture.public_free_enabled === true,
+          lectureMinutes: typeof lecture.public_free_preview_minutes === "number" ? lecture.public_free_preview_minutes : null,
+          planDefaultMinutes: previewFeature ? getNumber(previewFeature.feature_value) : null,
+        });
       }
     }
   }
