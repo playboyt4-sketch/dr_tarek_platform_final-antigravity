@@ -59,5 +59,22 @@
   "deleteAccountPasswordLabel": "كلمة المرور الحالية",
   "deleteAccountConfirmButton": "تأكيد الحذف نهائيًا",
   "deleteAccountSuccessMessage": "تم حذف حسابك بنجاح",
-  "actionCancel": "إلغاء"
+  "actionCancel": "إلغاء",
+
+  "ownerDeleteAccountButton": "حذف الحساب نهائيًا",
+  "ownerDeleteAccountDialogTitle": "حذف الحساب نهائيًا",
+  "ownerDeleteAccountDialogWarning": "⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه",
+  "ownerDeleteAccountDialogDescription": "سيتم حذف حساب الطالب \"{studentName}\" وكل بياناته نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية. أدخل كلمة مرور المالك للتأكيد.",
+  "@ownerDeleteAccountDialogDescription": {
+    "placeholders": {
+      "studentName": { "type": "String" }
+    }
+  },
+  "ownerDeleteAccountPasswordLabel": "كلمة مرور المالك",
+  "ownerDeleteAccountConfirmButton": "تأكيد الحذف نهائيًا",
+  "ownerDeleteAccountSuccessMessage": "تم حذف حساب الطالب بنجاح",
+  "ownerDeleteAccountNotTeacherMessage": "هذه الميزة متاحة للمعلم (مالك المنصة) فقط.",
+  "ownerDeleteAccountNotFoundMessage": "الحساب غير موجود — ربما حُذف مسبقًا.",
+  "ownerDeleteAccountInvalidTargetMessage": "لا يمكن حذف حسابك باستخدام هذه الوظيفة.",
+  "ownerDeleteAccountTeacherTargetMessage": "لا يمكن حذف حسابات المعلمين (مالكي المنصة) من هنا."
 }

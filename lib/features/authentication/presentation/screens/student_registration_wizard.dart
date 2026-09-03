@@ -12,7 +12,14 @@ import '../../../../core/widgets/password_strength_meter.dart';
 import '../providers/auth_provider.dart';
 
 class StudentRegistrationWizard extends ConsumerStatefulWidget {
-  const StudentRegistrationWizard({super.key});
+  final int initialStep;
+  final String? initialFullName;
+
+  const StudentRegistrationWizard({
+    super.key,
+    this.initialStep = 0,
+    this.initialFullName,
+  });
 
   @override
   ConsumerState<StudentRegistrationWizard> createState() =>
@@ -37,6 +44,15 @@ class _StudentRegistrationWizardState
   File? _photoFile;
 
   @override
+  void initState() {
+    super.initState();
+    _step = widget.initialStep.clamp(0, 4);
+    if (widget.initialFullName != null && widget.initialFullName!.isNotEmpty) {
+      _fullNameController.text = widget.initialFullName!;
+    }
+  }
+
+  @override
   void dispose() {
     _fullNameController.dispose();
     _phoneController.dispose();
@@ -59,6 +75,11 @@ class _StudentRegistrationWizardState
       Navigator.of(context).pop();
       return;
     }
+    if (_step == 1 && widget.initialStep > 0) {
+      // Go back to the dedicated name screen (pop with reverse transition)
+      Navigator.of(context).pop();
+      return;
+    }
     setState(() => _step -= 1);
   }
 
@@ -67,19 +88,18 @@ class _StudentRegistrationWizardState
     required String hint,
     Widget? suffixIcon,
   }) {
-    final rs = context.rs;
     return InputDecoration(
       labelText: label,
       hintText: hint,
       floatingLabelBehavior: FloatingLabelBehavior.always,
-      contentPadding: EdgeInsets.symmetric(horizontal: rs(16), vertical: rs(20)),
+      contentPadding: EdgeInsets.symmetric(horizontal: context.rs(16), vertical: context.rsV(20)),
       suffixIcon: suffixIcon,
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(rs(12)),
+        borderRadius: BorderRadius.circular(context.rs(12)),
         borderSide: const BorderSide(color: Color(0xFFD0D0D0)),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(rs(12)),
+        borderRadius: BorderRadius.circular(context.rs(12)),
         borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
       ),
     );
@@ -195,7 +215,6 @@ class _StudentRegistrationWizardState
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
-    final rs = context.rs;
     if (_submitted) return const _RegistrationSubmittedView();
 
     return Scaffold(
@@ -211,7 +230,7 @@ class _StudentRegistrationWizardState
           'خطوة ${_step + 1} من 5',
           style: TextStyle(
             color: Colors.black,
-            fontSize: rs(18),
+            fontSize: context.rsFont(18),
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -226,11 +245,11 @@ class _StudentRegistrationWizardState
                 value: (_step + 1) / 5,
                 backgroundColor: const Color(0xFFE0E4EA),
                 color: const Color(0xFF2563EB),
-                minHeight: rs(6),
-                borderRadius: BorderRadius.circular(rs(3)),
+                minHeight: context.rsV(6),
+                borderRadius: BorderRadius.circular(context.rsV(3)),
               ),
             ),
-            SizedBox(height: rs(16)),
+            SizedBox(height: context.rsV(16)),
             Expanded(
               child: Center(
                 child: ConstrainedBox(
@@ -249,7 +268,7 @@ class _StudentRegistrationWizardState
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.error,
                     fontWeight: FontWeight.bold,
-                    fontSize: rs(14),
+                    fontSize: context.rsFont(14),
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -265,14 +284,14 @@ class _StudentRegistrationWizardState
                     if (_step > 0) ...[
                       Expanded(
                         child: SizedBox(
-                          height: rs(60),
+                          height: context.rsV(60),
                           child: OutlinedButton(
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(
                                   color: Color(0xFFD0D0D0)),
                               shape: RoundedRectangleBorder(
                                 borderRadius:
-                                    BorderRadius.circular(rs(12)),
+                                    BorderRadius.circular(context.rs(12)),
                               ),
                             ),
                             onPressed:
@@ -280,7 +299,7 @@ class _StudentRegistrationWizardState
                             child: Text(
                               'السابق',
                               style: TextStyle(
-                                fontSize: rs(18),
+                                fontSize: context.rsFont(18),
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black,
                               ),
@@ -288,17 +307,17 @@ class _StudentRegistrationWizardState
                           ),
                         ),
                       ),
-                      SizedBox(width: rs(12)),
+                      SizedBox(width: context.rs(12)),
                     ],
                     Expanded(
                       child: SizedBox(
-                        height: rs(60),
+                        height: context.rsV(60),
                         child: FilledButton(
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF2563EB),
                             shape: RoundedRectangleBorder(
                               borderRadius:
-                                  BorderRadius.circular(rs(12)),
+                                  BorderRadius.circular(context.rs(12)),
                             ),
                           ),
                           onPressed: authState.isLoading
@@ -306,8 +325,8 @@ class _StudentRegistrationWizardState
                               : (_step == 4 ? _submit : _next),
                           child: authState.isLoading
                               ? SizedBox(
-                                  height: rs(24),
-                                  width: rs(24),
+                                  height: context.rsV(24),
+                                  width: context.rsV(24),
                                   child: const CircularProgressIndicator(
                                     strokeWidth: 2.5,
                                     color: Colors.white,
@@ -316,7 +335,7 @@ class _StudentRegistrationWizardState
                               : Text(
                                   _step == 4 ? 'Finish' : 'Next',
                                   style: TextStyle(
-                                    fontSize: rs(20),
+                                    fontSize: context.rsFont(20),
                                     fontWeight: FontWeight.w600,
                                     color: Colors.white,
                                   ),
@@ -374,7 +393,8 @@ class _StudentRegistrationWizardState
           title: 'الصورة الشخصية',
           subtitle: 'يمكنك إضافة صورتك الشخصية هنا أو لاحقاً من الملف الشخصي.',
           child: Center(
-            child: Stack(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   width: context.rs(150),
@@ -394,24 +414,21 @@ class _StudentRegistrationWizardState
                   child: ClipOval(
                     child: _photoFile != null
                         ? Image.file(_photoFile!, fit: BoxFit.cover)
-                        : Icon(Icons.person, size: context.rs(76), color: const Color(0xFF9A9A9A)),
+                        : Icon(Icons.person, size: context.rsFont(76), color: const Color(0xFF9A9A9A)),
                   ),
                 ),
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    width: context.rs(44),
-                    height: context.rs(44),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF2563EB),
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: Icon(Icons.add_a_photo_outlined, color: Colors.white, size: context.rs(20)),
-                      onPressed: _pickImage,
-                    ),
+                SizedBox(height: context.rsV(12)),
+                Container(
+                  width: context.rs(44),
+                  height: context.rsV(44),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2563EB),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    icon: Icon(Icons.add_a_photo_outlined, color: Colors.white, size: context.rsFont(20)),
+                    onPressed: _pickImage,
                   ),
                 ),
               ],
@@ -575,7 +592,6 @@ class _RegistrationStepLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rs = context.rs;
     return SingleChildScrollView(
       physics: const ClampingScrollPhysics(),
       child: Column(
@@ -585,22 +601,22 @@ class _RegistrationStepLayout extends StatelessWidget {
           Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: rs(260),
+                maxHeight: context.rsV(260),
               ),
               child: Image.asset(
                 imagePath,
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) {
                   return SizedBox(
-                    height: rs(150),
+                    height: context.rsV(150),
                     child: Icon(Icons.image_outlined,
-                        size: rs(64), color: const Color(0xFF9A9A9A)),
+                        size: context.rsFont(64), color: const Color(0xFF9A9A9A)),
                   );
                 },
               ),
             ),
           ),
-          SizedBox(height: rs(20)),
+          SizedBox(height: context.rsV(20)),
           // Step title & subtitle
           Padding(
             padding:
@@ -611,17 +627,17 @@ class _RegistrationStepLayout extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: rs(22),
+                    fontSize: context.rsFont(22),
                     fontWeight: FontWeight.bold,
                     color: Colors.black,
                   ),
                 ),
                 if (subtitle != null) ...[
-                  SizedBox(height: rs(4)),
+                  SizedBox(height: context.rsV(4)),
                   Text(
                     subtitle!,
                     style: TextStyle(
-                      fontSize: rs(13),
+                      fontSize: context.rsFont(13),
                       color: const Color(0xFF9A9A9A),
                     ),
                   ),
@@ -629,14 +645,14 @@ class _RegistrationStepLayout extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(height: rs(20)),
+          SizedBox(height: context.rsV(20)),
           // Form child
           Padding(
             padding:
                 EdgeInsets.symmetric(horizontal: context.pagePadding),
             child: child,
           ),
-          SizedBox(height: rs(20)),
+          SizedBox(height: context.rsV(20)),
         ],
       ),
     );
@@ -661,11 +677,10 @@ class _GradeRadioGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rs = context.rs;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(rs(12)),
+        borderRadius: BorderRadius.circular(context.rs(12)),
         border: Border.all(color: const Color(0xFFD0D0D0), width: 1),
       ),
       child: Column(
@@ -673,10 +688,10 @@ class _GradeRadioGroup extends StatelessWidget {
           final isSelected = selectedGrade == grade['key'];
           return InkWell(
             onTap: () => onChanged(grade['key']!),
-            borderRadius: BorderRadius.circular(rs(12)),
+            borderRadius: BorderRadius.circular(context.rs(12)),
             child: Container(
-              height: rs(52),
-              padding: EdgeInsets.symmetric(horizontal: rs(16)),
+              height: context.rsV(52),
+              padding: EdgeInsets.symmetric(horizontal: context.rs(16)),
               decoration: BoxDecoration(
                 border: grade['key'] != 'grade_four'
                     ? Border(bottom: BorderSide(color: Color(0xFFEFEFEF), width: 1))
@@ -686,8 +701,8 @@ class _GradeRadioGroup extends StatelessWidget {
                 children: [
                   // Custom Radio Button
                   Container(
-                    width: rs(22),
-                    height: rs(22),
+                    width: context.rs(22),
+                    height: context.rs(22),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
@@ -698,8 +713,8 @@ class _GradeRadioGroup extends StatelessWidget {
                     child: isSelected
                         ? Center(
                             child: Container(
-                              width: rs(12),
-                              height: rs(12),
+                              width: context.rs(12),
+                              height: context.rs(12),
                               decoration: const BoxDecoration(
                                 color: Color(0xFF2563EB),
                                 shape: BoxShape.circle,
@@ -708,11 +723,11 @@ class _GradeRadioGroup extends StatelessWidget {
                           )
                         : null,
                   ),
-                  SizedBox(width: rs(16)),
+                  SizedBox(width: context.rs(16)),
                   Text(
                     grade['label']!,
                     style: TextStyle(
-                      fontSize: rs(16),
+                      fontSize: context.rsFont(16),
                       fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       color: const Color(0xFF1E1E1E),
                     ),
@@ -732,7 +747,6 @@ class _RegistrationSubmittedView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rs = context.rs;
     return Scaffold(
       backgroundColor: const Color(0xFFFFFCF7),
       body: SafeArea(
@@ -746,56 +760,56 @@ class _RegistrationSubmittedView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                SizedBox(height: rs(20)),
+                SizedBox(height: context.rsV(20)),
                 Center(
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      maxHeight: rs(360),
+                      maxHeight: context.rsV(360),
                     ),
                     child: Image.asset(
                       'assets/images/New Student - end.png',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return SizedBox(
-                          height: rs(190),
-                          child: Icon(Icons.mark_email_read_outlined, size: rs(84), color: Colors.green),
+                          height: context.rsV(190),
+                          child: Icon(Icons.mark_email_read_outlined, size: context.rsFont(84), color: Colors.green),
                         );
                       },
                     ),
                   ),
                 ),
-                SizedBox(height: rs(24)),
+                SizedBox(height: context.rsV(24)),
                 Text(
                   'الطلب قيد المراجعة',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: rs(24),
+                    fontSize: context.rsFont(24),
                     fontWeight: FontWeight.bold,
                     color: Colors.black,
                   ),
                 ),
-                SizedBox(height: rs(12)),
+                SizedBox(height: context.rsV(12)),
                 Padding(
-                  padding: EdgeInsets.symmetric(horizontal: rs(16)),
+                  padding: EdgeInsets.symmetric(horizontal: context.rs(16)),
                   child: Text(
                     'تم إرسال طلب تسجيلك بنجاح. ستتمكن من تسجيل الدخول فور اعتماد حسابك وتعيين موادك من قِبل إدارة المنصة.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: rs(15),
+                      fontSize: context.rsFont(15),
                       height: 1.5,
                       color: const Color(0xFF424242),
                     ),
                   ),
                 ),
-                SizedBox(height: rs(48)),
+                SizedBox(height: context.rsV(48)),
                 SizedBox(
                   width: double.infinity,
-                  height: rs(60),
+                  height: context.rsV(60),
                   child: FilledButton(
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF2563EB),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(rs(12)),
+                        borderRadius: BorderRadius.circular(context.rs(12)),
                       ),
                     ),
                     onPressed: () =>
@@ -803,14 +817,14 @@ class _RegistrationSubmittedView extends StatelessWidget {
                     child: Text(
                       'العودة للبداية',
                       style: TextStyle(
-                        fontSize: rs(18),
+                        fontSize: context.rsFont(18),
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
                     ),
                   ),
                 ),
-                SizedBox(height: rs(24)),
+                SizedBox(height: context.rsV(24)),
               ],
             ),
           ),

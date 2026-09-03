@@ -2,21 +2,23 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/failure.dart';
 import '../../../../core/errors/friendly_error_message.dart';
+import '../../../../core/di/auth_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
-import '../../../authentication/domain/entities/auth_user.dart';
+import '../../../../l10n/generated/app_localizations.dart';
+import '../providers/admin_providers.dart';
 
 /// Admin management screen.
 ///
 /// Teacher (Platform Owner) only: add/remove admins and toggle each
 /// delegated permission with a [CupertinoSwitch]. Permission keys match
 /// `activeAdminPermission` in firestore.rules exactly.
-class AdminsManagementScreen extends StatelessWidget {
-  final AuthUser user;
-
-  const AdminsManagementScreen({required this.user, super.key});
+class AdminsManagementScreen extends ConsumerWidget {
+  const AdminsManagementScreen({super.key});
 
   static const permissionKeys = <({String key, String label})>[
     (key: 'admin_students', label: 'إدارة الطلاب'),
@@ -31,8 +33,11 @@ class AdminsManagementScreen extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) {
-    if (user.role != 'teacher') {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currentUserRole = ref.watch(userRoleProvider);
+    final isTeacher = currentUserRole == 'teacher';
+
+    if (!isTeacher) {
       return const Scaffold(
         body: Center(child: Text('إدارة الأدمنز متاحة للمعلم (مالك المنصة) فقط.')),
       );
@@ -163,16 +168,16 @@ class AdminsManagementScreen extends StatelessWidget {
   }
 }
 
-class _AdminCard extends StatefulWidget {
+class _AdminCard extends ConsumerStatefulWidget {
   final QueryDocumentSnapshot<Map<String, dynamic>> admin;
 
   const _AdminCard({required this.admin});
 
   @override
-  State<_AdminCard> createState() => _AdminCardState();
+  ConsumerState<_AdminCard> createState() => _AdminCardState();
 }
 
-class _AdminCardState extends State<_AdminCard> {
+class _AdminCardState extends ConsumerState<_AdminCard> {
   final _pending = <String>{};
   bool _removing = false;
 
@@ -294,9 +299,156 @@ class _AdminCardState extends State<_AdminCard> {
                   ),
                 ),
               ),
+              const SizedBox(height: AppSpacing.sm),
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: OutlinedButton.icon(
+                  onPressed: _removing ? null : _showDeleteAdminDialog,
+                  icon: const Icon(Icons.delete_forever_outlined, color: AppColors.error),
+                  label: Text('حذف الحساب نهائيًا', style: TextStyle(color: AppColors.error)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                  ),
+                ),
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Future<void> _showDeleteAdminDialog() async {
+    final l10n = AppLocalizations.of(context);
+    final passwordController = TextEditingController();
+    bool obscurePassword = true;
+    bool isLoading = false;
+    String? errorMessage;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(l10n.ownerDeleteAccountDialogTitle),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.ownerDeleteAccountDialogWarning,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.ownerDeleteAccountDialogDescription(widget.admin.id),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: l10n.ownerDeleteAccountPasswordLabel,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
+                    ),
+                  ),
+                  enabled: !isLoading,
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.actionCancel),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
+              onPressed: isLoading || passwordController.text.isEmpty
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        isLoading = true;
+                        errorMessage = null;
+                      });
+                      try {
+                        await ref
+                            .read(deleteAccountByOwnerUseCaseProvider)
+                            .execute(
+                          targetUid: widget.admin.id,
+                          password: passwordController.text,
+                        );
+                        if (!ctx.mounted) return;
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop();
+                        }
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
+                          );
+                          // The admin list will auto-refresh via StreamBuilder
+                        }
+                      } on Failure catch (e) {
+                        String friendlyMessage;
+                        if (e.code == FailureCode.wrongCredentials) {
+                          friendlyMessage = l10n.errorWrongCredentials;
+                        } else if (e.code == FailureCode.permissionDenied) {
+                          friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
+                        } else if (e.code == FailureCode.notFound) {
+                          friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
+                        } else if (e.code == FailureCode.tooManyRequests) {
+                          friendlyMessage = e.debugDetail?.contains('minute') == true
+                              ? e.debugDetail!
+                              : l10n.errorTooManyRequests;
+                        } else {
+                          friendlyMessage = l10n.errorGeneric;
+                        }
+                        setDialogState(() {
+                          isLoading = false;
+                          errorMessage = friendlyMessage;
+                        });
+                      } catch (e) {
+                        setDialogState(() {
+                          isLoading = false;
+                          errorMessage = l10n.errorGeneric;
+                        });
+                      }
+                    },
+              child: isLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Text(l10n.ownerDeleteAccountConfirmButton),
+            ),
+          ],
+        ),
       ),
     );
   }

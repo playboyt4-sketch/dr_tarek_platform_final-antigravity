@@ -2,10 +2,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/di/auth_providers.dart';
+import '../../../../core/errors/failure.dart';
 import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../domain/admin_grades.dart';
+import '../providers/admin_providers.dart';
 import '../widgets/payment_receipt_dialog.dart';
 
 /// Students management screen.
@@ -114,7 +119,7 @@ class StudentsManagementScreen extends StatelessWidget {
   }
 }
 
-class StudentDetailScreen extends StatefulWidget {
+class StudentDetailScreen extends ConsumerStatefulWidget {
   final String studentId;
   final String studentName;
   final String studentType;
@@ -129,11 +134,10 @@ class StudentDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<StudentDetailScreen> createState() => _StudentDetailScreenState();
+  ConsumerState<StudentDetailScreen> createState() => _StudentDetailScreenState();
 }
 
-class _StudentDetailScreenState extends State<StudentDetailScreen> {
-  final _functions = FirebaseFunctions.instance;
+class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
   final _busy = <String>{};
 
   Future<void> _call(
@@ -144,7 +148,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   ) async {
     setState(() => _busy.add(key));
     try {
-      await _functions.httpsCallable(functionName).call(payload);
+      await FirebaseFunctions.instance.httpsCallable(functionName).call(payload);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(successMessage)));
@@ -313,7 +317,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                 // number is generated here for the manual external payment.
                 final receiptNumber =
                     'R-${DateTime.now().millisecondsSinceEpoch}';
-                await _call(
+await _call(
                   'log_payment',
                   'onPaymentLogged',
                   {
@@ -335,8 +339,154 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
     );
   }
 
+  void _showDeleteAccountDialog() {
+    final l10n = AppLocalizations.of(context);
+    final passwordController = TextEditingController();
+    bool obscurePassword = true;
+    bool isLoading = false;
+    String? errorMessage;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(l10n.ownerDeleteAccountDialogTitle),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.ownerDeleteAccountDialogWarning,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.ownerDeleteAccountDialogDescription(widget.studentName),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: l10n.ownerDeleteAccountPasswordLabel,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
+                    ),
+                  ),
+                  enabled: !isLoading,
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.actionCancel),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
+              onPressed: isLoading || passwordController.text.isEmpty
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        isLoading = true;
+                        errorMessage = null;
+                      });
+                      try {
+                        await ref
+                            .read(deleteAccountByOwnerUseCaseProvider)
+                            .execute(
+                          targetUid: widget.studentId,
+                          password: passwordController.text,
+                        );
+                        if (!ctx.mounted) return;
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop();
+                        }
+                        if (!mounted) return;
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
+                        );
+                        // The student list will auto-refresh via StreamBuilder
+                      } on Failure catch (e) {
+                        String friendlyMessage;
+                        if (e.code == FailureCode.wrongCredentials) {
+                          friendlyMessage = l10n.errorWrongCredentials;
+                        } else if (e.code == FailureCode.permissionDenied) {
+                          // Check debugDetail for more specific message
+                          if (e.debugDetail?.contains('teacher') == true) {
+                            friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
+                          } else if (e.debugDetail?.contains('owner') == true ||
+                              e.debugDetail?.contains('self') == true) {
+                            friendlyMessage = l10n.ownerDeleteAccountInvalidTargetMessage;
+                          } else {
+                            friendlyMessage = l10n.ownerDeleteAccountNotTeacherMessage;
+                          }
+                        } else if (e.code == FailureCode.notFound) {
+                          friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
+                        } else if (e.code == FailureCode.tooManyRequests) {
+                          friendlyMessage = e.debugDetail?.contains('minute') == true
+                              ? e.debugDetail!
+                              : l10n.errorTooManyRequests;
+                        } else {
+                          friendlyMessage = l10n.errorGeneric;
+                        }
+                        setDialogState(() {
+                          isLoading = false;
+                          errorMessage = friendlyMessage;
+                        });
+                      } catch (e) {
+                        setDialogState(() {
+                          isLoading = false;
+                          errorMessage = l10n.errorGeneric;
+                        });
+                      }
+                    },
+              child: isLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Text(l10n.ownerDeleteAccountConfirmButton),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
   @override
   Widget build(BuildContext context) {
+    final currentUserRole = ref.watch(userRoleProvider);
+    final isTeacher = currentUserRole == 'teacher';
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.studentName),
@@ -351,6 +501,12 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
             tooltip: 'تسجيل دفعة',
             onPressed: _showLogPaymentDialog,
           ),
+          if (isTeacher)
+            IconButton(
+              icon: const Icon(Icons.delete_forever_outlined, color: AppColors.error),
+              tooltip: 'حذف الحساب نهائيًا',
+              onPressed: _showDeleteAccountDialog,
+            ),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(

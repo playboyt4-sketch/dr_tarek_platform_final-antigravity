@@ -54,5 +54,22 @@
   "deleteAccountPasswordLabel": "Current Password",
   "deleteAccountConfirmButton": "Confirm Permanent Deletion",
   "deleteAccountSuccessMessage": "Your account has been deleted successfully",
-  "actionCancel": "Cancel"
+  "actionCancel": "Cancel",
+
+  "ownerDeleteAccountButton": "Delete Account Permanently",
+  "ownerDeleteAccountDialogTitle": "Delete Account Permanently",
+  "ownerDeleteAccountDialogWarning": "⚠ This action is final and cannot be undone",
+  "ownerDeleteAccountDialogDescription": "The student account \"{studentName}\" and all its data will be permanently deleted: study progress, notes, grades, messages, and profile photo. Payment records are retained for accounting purposes without personal data. Enter the owner password to confirm.",
+  "@ownerDeleteAccountDialogDescription": {
+    "placeholders": {
+      "studentName": { "type": "String" }
+    }
+  },
+  "ownerDeleteAccountPasswordLabel": "Owner Password",
+  "ownerDeleteAccountConfirmButton": "Confirm Permanent Deletion",
+  "ownerDeleteAccountSuccessMessage": "Student account deleted successfully",
+  "ownerDeleteAccountNotTeacherMessage": "This feature is available for the teacher (platform owner) only.",
+  "ownerDeleteAccountNotFoundMessage": "Account not found — it may have been deleted already.",
+  "ownerDeleteAccountInvalidTargetMessage": "You cannot delete your own account using this function.",
+  "ownerDeleteAccountTeacherTargetMessage": "Teacher (platform owner) accounts cannot be deleted from here."
 }

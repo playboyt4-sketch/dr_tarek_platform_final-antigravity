@@ -169,4 +169,44 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get actionCancel => 'إلغاء';
+
+  @override
+  String get ownerDeleteAccountButton => 'حذف الحساب نهائيًا';
+
+  @override
+  String get ownerDeleteAccountDialogTitle => 'حذف الحساب نهائيًا';
+
+  @override
+  String get ownerDeleteAccountDialogWarning =>
+      '⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه';
+
+  @override
+  String ownerDeleteAccountDialogDescription(String studentName) {
+    return 'سيتم حذف حساب الطالب \"$studentName\" وكل بياناته نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية. أدخل كلمة مرور المالك للتأكيد.';
+  }
+
+  @override
+  String get ownerDeleteAccountPasswordLabel => 'كلمة مرور المالك';
+
+  @override
+  String get ownerDeleteAccountConfirmButton => 'تأكيد الحذف نهائيًا';
+
+  @override
+  String get ownerDeleteAccountSuccessMessage => 'تم حذف حساب الطالب بنجاح';
+
+  @override
+  String get ownerDeleteAccountNotTeacherMessage =>
+      'هذه الميزة متاحة للمعلم (مالك المنصة) فقط.';
+
+  @override
+  String get ownerDeleteAccountNotFoundMessage =>
+      'الحساب غير موجود — ربما حُذف مسبقًا.';
+
+  @override
+  String get ownerDeleteAccountInvalidTargetMessage =>
+      'لا يمكن حذف حسابك باستخدام هذه الوظيفة.';
+
+  @override
+  String get ownerDeleteAccountTeacherTargetMessage =>
+      'لا يمكن حذف حسابات المعلمين (مالكي المنصة) من هنا.';
 }

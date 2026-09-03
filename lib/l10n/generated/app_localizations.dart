@@ -391,6 +391,72 @@ abstract class AppLocalizations {
   /// In ar, this message translates to:
   /// **'إلغاء'**
   String get actionCancel;
+
+  /// No description provided for @ownerDeleteAccountButton.
+  ///
+  /// In ar, this message translates to:
+  /// **'حذف الحساب نهائيًا'**
+  String get ownerDeleteAccountButton;
+
+  /// No description provided for @ownerDeleteAccountDialogTitle.
+  ///
+  /// In ar, this message translates to:
+  /// **'حذف الحساب نهائيًا'**
+  String get ownerDeleteAccountDialogTitle;
+
+  /// No description provided for @ownerDeleteAccountDialogWarning.
+  ///
+  /// In ar, this message translates to:
+  /// **'⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه'**
+  String get ownerDeleteAccountDialogWarning;
+
+  /// No description provided for @ownerDeleteAccountDialogDescription.
+  ///
+  /// In ar, this message translates to:
+  /// **'سيتم حذف حساب الطالب \"{studentName}\" وكل بياناته نهائيًا: التقدم الدراسي، الملاحظات، النتائج، الرسائل، وصورة الملف الشخصي. تُحفظ سجلات الدفع لأغراض محاسبية بدون أي بيانات شخصية. أدخل كلمة مرور المالك للتأكيد.'**
+  String ownerDeleteAccountDialogDescription(String studentName);
+
+  /// No description provided for @ownerDeleteAccountPasswordLabel.
+  ///
+  /// In ar, this message translates to:
+  /// **'كلمة مرور المالك'**
+  String get ownerDeleteAccountPasswordLabel;
+
+  /// No description provided for @ownerDeleteAccountConfirmButton.
+  ///
+  /// In ar, this message translates to:
+  /// **'تأكيد الحذف نهائيًا'**
+  String get ownerDeleteAccountConfirmButton;
+
+  /// No description provided for @ownerDeleteAccountSuccessMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'تم حذف حساب الطالب بنجاح'**
+  String get ownerDeleteAccountSuccessMessage;
+
+  /// No description provided for @ownerDeleteAccountNotTeacherMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'هذه الميزة متاحة للمعلم (مالك المنصة) فقط.'**
+  String get ownerDeleteAccountNotTeacherMessage;
+
+  /// No description provided for @ownerDeleteAccountNotFoundMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'الحساب غير موجود — ربما حُذف مسبقًا.'**
+  String get ownerDeleteAccountNotFoundMessage;
+
+  /// No description provided for @ownerDeleteAccountInvalidTargetMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'لا يمكن حذف حسابك باستخدام هذه الوظيفة.'**
+  String get ownerDeleteAccountInvalidTargetMessage;
+
+  /// No description provided for @ownerDeleteAccountTeacherTargetMessage.
+  ///
+  /// In ar, this message translates to:
+  /// **'لا يمكن حذف حسابات المعلمين (مالكي المنصة) من هنا.'**
+  String get ownerDeleteAccountTeacherTargetMessage;
 }
 
 class _AppLocalizationsDelegate

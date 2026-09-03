@@ -176,4 +176,45 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get actionCancel => 'Cancel';
+
+  @override
+  String get ownerDeleteAccountButton => 'Delete Account Permanently';
+
+  @override
+  String get ownerDeleteAccountDialogTitle => 'Delete Account Permanently';
+
+  @override
+  String get ownerDeleteAccountDialogWarning =>
+      '⚠ This action is final and cannot be undone';
+
+  @override
+  String ownerDeleteAccountDialogDescription(String studentName) {
+    return 'The student account \"$studentName\" and all its data will be permanently deleted: study progress, notes, grades, messages, and profile photo. Payment records are retained for accounting purposes without personal data. Enter the owner password to confirm.';
+  }
+
+  @override
+  String get ownerDeleteAccountPasswordLabel => 'Owner Password';
+
+  @override
+  String get ownerDeleteAccountConfirmButton => 'Confirm Permanent Deletion';
+
+  @override
+  String get ownerDeleteAccountSuccessMessage =>
+      'Student account deleted successfully';
+
+  @override
+  String get ownerDeleteAccountNotTeacherMessage =>
+      'This feature is available for the teacher (platform owner) only.';
+
+  @override
+  String get ownerDeleteAccountNotFoundMessage =>
+      'Account not found — it may have been deleted already.';
+
+  @override
+  String get ownerDeleteAccountInvalidTargetMessage =>
+      'You cannot delete your own account using this function.';
+
+  @override
+  String get ownerDeleteAccountTeacherTargetMessage =>
+      'Teacher (platform owner) accounts cannot be deleted from here.';
 }
