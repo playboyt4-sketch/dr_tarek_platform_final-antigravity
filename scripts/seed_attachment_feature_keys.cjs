@@ -5,15 +5,17 @@
  * into `plan_features` for ALL FOUR plans, BEFORE any deploy of the
  * attachment-gating change goes to production.
  *
- * Teacher-confirmed defaults:
- *   plan_key      attachment.access   attachment.download
- *   public_free   false               false
- *   center_free   true                false
- *   center_pro    true                true
- *   center_max    true                true
+ * Teacher-confirmed defaults (by plan DOCUMENT ID — plan_key "free" is
+ * shared by the Guest plan and the Center Free plan, so plan_key cannot
+ * identify a plan on its own):
+ *   plan id       attachment.access   attachment.download
+ *   guest         false               false
+ *   free          true                false
+ *   pro           true                true
+ *   max           true                true
  *
  * Behaviour:
- *   - Resolves plan documents by `plans.plan_key` (never hardcodes ids).
+ *   - Resolves plan documents by document ID (`plans/guest`, ...).
  *   - Upserts ONE plan_features doc per (plan, key) using the deterministic
  *     id `${planId}_${featureKey}` and MERGES, so re-running is safe.
  *   - Never overwrites a pre-existing doc's feature_value with different
@@ -49,22 +51,26 @@ try {
   process.exit(1);
 }
 
-const PLAN_KEYS = ["public_free", "center_free", "center_pro", "center_max"];
+// PHASE 4 plan ID simplification: Center plan document IDs are "free" /
+// "pro" / "max" (were "center_free" / "center_pro" / "center_max").
+// plan_key stays "free" for both guest and free — never use it here
+// as a plan identity.
+const PLAN_IDS = ["guest", "free", "pro", "max"];
 
 // Teacher-confirmed matrix (see header). feature_value mirrors the pdf.*
 // convention: booleans for on/off access keys.
 const RATIFIED_MATRIX = {
   "attachment.access": {
-    public_free: false,
-    center_free: true,
-    center_pro: true,
-    center_max: true,
+    guest: false,
+    free: true,
+    pro: true,
+    max: true,
   },
   "attachment.download": {
-    public_free: false,
-    center_free: false,
-    center_pro: true,
-    center_max: true,
+    guest: false,
+    free: false,
+    pro: true,
+    max: true,
   },
 };
 
@@ -80,27 +86,21 @@ async function main() {
   admin.initializeApp();
   const db = admin.firestore();
 
-  // Resolve every plan by plan_key; abort rather than half-seed if any of
-  // the four canonical plans is missing.
-  const plansByKey = {};
-  for (const planKey of PLAN_KEYS) {
-    const snap = await db
-      .collection("plans")
-      .where("plan_key", "==", planKey)
-      .where("is_active", "==", true)
-      .limit(2)
-      .get();
-    if (snap.empty) {
-      console.error(`ABORT: no active plan found for plan_key "${planKey}".`);
+  // Resolve every plan by document ID; abort rather than half-seed if any of
+  // the four canonical plans is missing or inactive.
+  const plansById = {};
+  for (const planId of PLAN_IDS) {
+    const ref = db.collection("plans").doc(planId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      console.error(`ABORT: plan document "plans/${planId}" was not found.`);
       process.exit(1);
     }
-    if (snap.size > 1) {
-      console.error(
-        `ABORT: multiple active plans share plan_key "${planKey}" — resolve manually first.`,
-      );
+    if (snap.data().is_active !== true) {
+      console.error(`ABORT: plan document "plans/${planId}" is not active.`);
       process.exit(1);
     }
-    plansByKey[planKey] = snap.docs[0];
+    plansById[planId] = snap;
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -108,9 +108,9 @@ async function main() {
   let unchanged = 0;
 
   for (const [featureKey, perPlan] of Object.entries(RATIFIED_MATRIX)) {
-    for (const planKey of PLAN_KEYS) {
-      const planDoc = plansByKey[planKey];
-      const expected = perPlan[planKey];
+    for (const planId of PLAN_IDS) {
+      const planDoc = plansById[planId];
+      const expected = perPlan[planId];
       const docRef = db
         .collection("plan_features")
         .doc(`${planDoc.id}_${featureKey}`);
@@ -126,7 +126,7 @@ async function main() {
       await docRef.set(
         {
           plan_id: planDoc.id,
-          plan_key: planKey,
+          plan_key: planDoc.data().plan_key ?? null,
           feature_key: featureKey,
           label: featureKey === "attachment.access"
             ? "فتح المرفقات"
@@ -146,12 +146,12 @@ async function main() {
       ) {
         unchanged += 1;
         console.log(
-          `unchanged ${planKey} :: ${featureKey} = ${expected} (doc ${docRef.id})`,
+          `unchanged ${planId} :: ${featureKey} = ${expected} (doc ${docRef.id})`,
         );
       } else {
         written += 1;
         console.log(
-          `SET       ${planKey} :: ${featureKey} = ${expected}` +
+          `SET       ${planId} :: ${featureKey} = ${expected}` +
             `${before ? ` (previous: ${JSON.stringify(before)})` : ""}` +
             ` (doc ${docRef.id})`,
         );

@@ -25,7 +25,10 @@ async function run() {
   try {
     const userId = "test_user_center";
     const subjectId = "subject_1";
-    const planId = "plan_center_free";
+    // Phase 4 plan IDs: Center Free = plans/free (plan_key "free"),
+    // Center Pro = plans/pro (plan_key "pro").
+    const planIdFree = "free";
+    const planIdPro = "pro";
     const lectureId1 = "lecture_1";
     const lectureId2 = "lecture_2";
     const videoId1 = "bunny_1";
@@ -42,21 +45,40 @@ async function run() {
       status: "active"
     });
 
-    await db.collection("plans").doc(planId).set({
+    await db.collection("plans").doc(planIdFree).set({
       student_type: "center_student",
-      plan_key: "center_free",
+      plan_key: "free",
+      is_active: true
+    });
+
+    await db.collection("plans").doc(planIdPro).set({
+      student_type: "center_student",
+      plan_key: "pro",
       is_active: true
     });
 
     await db.collection("plan_features").doc("pf1").set({
-      plan_id: planId,
+      plan_id: planIdFree,
       feature_key: "video.access",
       enabled: true
     });
     
     await db.collection("plan_features").doc("pf2").set({
-      plan_id: planId,
+      plan_id: planIdFree,
       feature_key: "video.quality.720p",
+      enabled: true
+    });
+
+    // Pro plan matrix (no rolling window): full access, 1080p.
+    await db.collection("plan_features").doc("pf3").set({
+      plan_id: planIdPro,
+      feature_key: "video.access",
+      enabled: true
+    });
+
+    await db.collection("plan_features").doc("pf4").set({
+      plan_id: planIdPro,
+      feature_key: "video.quality.1080p",
       enabled: true
     });
 
@@ -64,7 +86,7 @@ async function run() {
       student_id: userId,
       subject_id: subjectId,
       status: "active",
-      plan_id: planId
+      plan_id: planIdFree
     });
     
     await db.collection("subject_access_assignments").doc(`${userId}_${subjectId}`).set({
@@ -132,13 +154,13 @@ async function run() {
     passed++;
 
     // Test 5: Not gated for Center Pro
-    await db.collection("plans").doc(planId).update({ plan_key: "center_pro" });
+    await db.collection("subscriptions").doc("sub1").update({ plan_id: planIdPro });
     await generateBunnySignedUrl({ data: { videoId: videoId1, deviceId }, auth: { uid: userId } });
     console.log("ok - Center Pro not gated");
     passed++;
 
     // Test 6: Race condition
-    await db.collection("plans").doc(planId).update({ plan_key: "center_free" });
+    await db.collection("subscriptions").doc("sub1").update({ plan_id: planIdFree });
     await db.collection("video_watch_windows").doc(userId).delete();
     
     let successCount = 0;

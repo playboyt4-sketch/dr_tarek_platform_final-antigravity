@@ -40,6 +40,8 @@ dependencies:
   firebase_core: ^4.13.0
   flutter_riverpod: ^3.0.3
   firebase_app_check: ^0.4.7
+  firebase_storage: ^13.4.6
+  file_picker: ^12.0.0
 
 dev_dependencies:
   flutter_test:

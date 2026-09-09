@@ -60,6 +60,21 @@ class CallableWatchWindowGateway implements WatchWindowGateway {
   }
 }
 
+/// Phase 1 Guest preview contract reader (FINAL_DECISIONS §11).
+/// Canonical key is `guestPreview`; the legacy `publicFreePreview` key is
+/// honored only as a bounded fallback until the backend compatibility alias
+/// is removed after full validation.
+/// TODO(PHASE2C): drop the legacy key once backend cleanup lands.
+Map<String, dynamic>? guestPreviewFromResponse(Map<String, dynamic> data) {
+  if (data['guestPreview'] != null) {
+    return Map<String, dynamic>.from(data['guestPreview'] as Map);
+  }
+  if (data['publicFreePreview'] != null) {
+    return Map<String, dynamic>.from(data['publicFreePreview'] as Map);
+  }
+  return null;
+}
+
 class VideoSourceResolver implements VideoSourceGateway {
   static const _deviceIdKey = 'video_device_id';
   static const _secureStorage = FlutterSecureStorage();
@@ -76,16 +91,14 @@ class VideoSourceResolver implements VideoSourceGateway {
       'lectureId': lectureId,
     });
     final data = Map<String, dynamic>.from(response.data as Map);
-    // FINAL_DECISIONS §11: server-computed Public Free per-lecture gate.
-    final publicFree = data['publicFreePreview'] == null
-        ? null
-        : Map<String, dynamic>.from(data['publicFreePreview'] as Map);
+    // FINAL_DECISIONS §11: server-computed Guest per-lecture preview gate.
+    final guestPreview = guestPreviewFromResponse(data);
     final raw = (data['resources'] as List<dynamic>? ?? const <dynamic>[]);
     return raw.map((item) {
       final resource = VideoResource.fromCallablePayload(
         Map<String, dynamic>.from(item as Map),
       );
-      // Public Free is per-STUDENT+lecture state computed by the callable,
+      // Guest preview is per-STUDENT+lecture state computed by the callable,
       // not a property of the resource document — stamped here.
       return VideoResource(
         id: resource.id,
@@ -96,9 +109,9 @@ class VideoSourceResolver implements VideoSourceGateway {
         storageProvider: resource.storageProvider,
         thumbnailProvider: resource.thumbnailProvider,
         duration: resource.duration,
-        isPublicFreePreview: publicFree != null,
-        publicFreePreviewSeconds:
-            (publicFree?['previewLimitSeconds'] as num?)?.toInt(),
+        isGuestPreview: guestPreview != null,
+        guestPreviewSeconds:
+            (guestPreview?['previewLimitSeconds'] as num?)?.toInt(),
       );
     }).toList();
   }
@@ -196,20 +209,25 @@ class VideoSourceException implements Exception {
 /// video while the caller's Center Free rolling 24-hour window is active.
 /// Carries the server-provided expiry so the UI can show a live countdown
 /// and the upgrade CTA BEFORE any playback is attempted.
-class CenterFreeWindowBlockedException extends VideoSourceException {
+class FreeWindowBlockedException extends VideoSourceException {
   final int? windowExpiresAtMs;
   final String? activeLectureId;
 
-  const CenterFreeWindowBlockedException({
+  /// Watch-window length in hours echoed by the server
+  /// (`video.rolling_window.hours`, defaults to 24).
+  final int windowHours;
+
+  const FreeWindowBlockedException({
     required String message,
     this.windowExpiresAtMs,
     this.activeLectureId,
+    this.windowHours = 24,
   }) : super(message);
 }
 
 /// Stable sentinel echoed by functions/src/index.ts
-/// (CENTER_FREE_WINDOW_BLOCKED_MESSAGE) and mapped in failure.dart.
-const String kCenterFreeWindowBlockedMessage =
+/// (FREE_WINDOW_BLOCKED_MESSAGE) and mapped in failure.dart.
+const String kFreeWindowBlockedMessage =
     'A Center Free 24-hour video window is already active for another video.';
 
 /// Pure mapping of a callable failure into the typed video-source
@@ -220,19 +238,27 @@ VideoSourceException classifyVideoSourceError(
   String? message,
   Object? details,
 ) {
-  if (message?.trim() == kCenterFreeWindowBlockedMessage) {
+  if (message?.trim() == kFreeWindowBlockedMessage) {
     int? expiresAtMs;
     String? activeLectureId;
+    int windowHours = 24;
     if (details is Map) {
       final rawExpiry = details['windowExpiresAtMs'];
       if (rawExpiry is num) expiresAtMs = rawExpiry.toInt();
       final rawLecture = details['activeLectureId'];
       if (rawLecture is String) activeLectureId = rawLecture;
+      final rawHours = details['windowHours'];
+      if (rawHours is num && rawHours.toInt() > 0) {
+        windowHours = rawHours.toInt();
+      }
     }
-    return CenterFreeWindowBlockedException(
-      message: 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.',
+    return FreeWindowBlockedException(
+      message: windowHours == 24
+          ? 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.'
+          : 'باقتك تسمح بمشاهدة فيديو واحد كل $windowHours ساعة.',
       windowExpiresAtMs: expiresAtMs,
       activeLectureId: activeLectureId,
+      windowHours: windowHours,
     );
   }
   return VideoSourceException(_staticMessageFor(code));

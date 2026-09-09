@@ -13,8 +13,8 @@ void main() {
         },
       );
 
-      expect(error, isA<CenterFreeWindowBlockedException>());
-      final blocked = error as CenterFreeWindowBlockedException;
+      expect(error, isA<FreeWindowBlockedException>());
+      final blocked = error as FreeWindowBlockedException;
       expect(blocked.activeLectureId, 'lec-9');
       expect(blocked.windowExpiresAtMs, 123456789);
       expect(blocked.message, isNotEmpty);
@@ -27,8 +27,8 @@ void main() {
         null,
       );
 
-      expect(error, isA<CenterFreeWindowBlockedException>());
-      final blocked = error as CenterFreeWindowBlockedException;
+      expect(error, isA<FreeWindowBlockedException>());
+      final blocked = error as FreeWindowBlockedException;
       expect(blocked.windowExpiresAtMs, isNull);
       expect(blocked.activeLectureId, isNull);
     });
@@ -39,7 +39,7 @@ void main() {
         'nope',
         null,
       );
-      expect(denied, isNot(isA<CenterFreeWindowBlockedException>()));
+      expect(denied, isNot(isA<FreeWindowBlockedException>()));
       expect(
         denied.message,
         'لا تملك صلاحية مشاهدة هذا الفيديو أو انتهى اشتراكك.',
@@ -49,12 +49,42 @@ void main() {
       expect(generic.message, 'تعذر تحميل الفيديو. حاول مرة أخرى.');
     });
 
+    test('server windowHours override the default 24h message', () {
+      final error = classifyVideoSourceError(
+        'resource-exhausted',
+        'A Center Free 24-hour video window is already active for another video.',
+        <String, dynamic>{'windowHours': 12},
+      );
+
+      expect(error, isA<FreeWindowBlockedException>());
+      final blocked = error as FreeWindowBlockedException;
+      expect(blocked.windowHours, 12);
+      expect(
+        blocked.message,
+        'باقتك تسمح بمشاهدة فيديو واحد كل 12 ساعة.',
+      );
+    });
+
+    test('missing windowHours keeps the legacy 24h message', () {
+      final error = classifyVideoSourceError(
+        'resource-exhausted',
+        'A Center Free 24-hour video window is already active for another video.',
+        null,
+      );
+
+      final blocked = error as FreeWindowBlockedException;
+      expect(blocked.windowHours, 24);
+      expect(
+        blocked.message,
+        'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.',
+      );
+    });
+
     test('client sentinel literal matches the server constant exactly', () {
       // Drift guard: functions/src/index.ts exports
-      // CENTER_FREE_WINDOW_BLOCKED_MESSAGE with this exact value (asserted
-      // server-side in sections_12_13.test.js).
+      // FREE_WINDOW_BLOCKED_MESSAGE with this exact value.
       expect(
-        kCenterFreeWindowBlockedMessage,
+        kFreeWindowBlockedMessage,
         'A Center Free 24-hour video window is already active for another video.',
       );
     });

@@ -46,7 +46,7 @@ class VideoPlaybackController extends ChangeNotifier {
   VideoEntitlement? _entitlement;
   PlaybackProgressRecord? _resumeRecord;
 
-  /// Active Public Free per-lecture cap (FINAL_DECISIONS §11); null =
+  /// Active Guest per-lecture cap (FINAL_DECISIONS §11); null =
   /// unlimited playback. Derived from the server-armed resource metadata —
   /// the client NEVER recomputes entitlement, it only enforces.
   Duration? _previewCap;
@@ -208,7 +208,7 @@ class VideoPlaybackController extends ChangeNotifier {
         episodes = List<LectureSummary>.unmodifiable(updated);
       }
     }
-    // Per-lecture Public Free cap (FINAL_DECISIONS §11). The server already
+    // Per-lecture Guest preview cap (FINAL_DECISIONS §11). The server already
     // reconciled the lecture minutes against the plan's
     // video.preview_duration default; here we only read the verdict.
     _previewCap = PreviewCapPolicy.capFor(_resource);
@@ -229,7 +229,7 @@ class VideoPlaybackController extends ChangeNotifier {
         positionToRestore: restoreProgress ? _resumeRecord?.position : null,
         autoplay: autoplay,
       );
-    } on CenterFreeWindowBlockedException catch (blocked) {
+    } on FreeWindowBlockedException catch (blocked) {
       // FINAL_DECISIONS §12: a DIFFERENT video was requested while the
       // rolling window is active. Surface the SAME upgrade wall used by §11
       // — before playback starts, never mid-playback.
@@ -433,7 +433,7 @@ class VideoPlaybackController extends ChangeNotifier {
     await changeQuality(lower.first);
   }
 
-  /// Stops playback at the Public Free cap and shows the upgrade prompt.
+  /// Stops playback at the Guest preview cap and shows the upgrade prompt.
   Future<void> _enforcePreviewCap() async {
     final engine = _engine;
     if (engine != null && engine.value.isPlaying) {

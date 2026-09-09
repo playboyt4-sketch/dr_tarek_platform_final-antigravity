@@ -193,25 +193,86 @@ export function pickDueLectures(
     .map((doc) => doc.id);
 }
 
+// PHASE 1 terminology migration: public_student -> guest, public_free -> guest.
+// PHASE 4 plan ID simplification: center_free -> free, center_pro -> pro,
+// center_max -> max (document IDs only).
+// plan_key ("free") is NOT migrated: both the Guest plan and the Center Free
+// plan (plans/free) legitimately share plan_key = "free". Plan identity is
+// the document ID (plans/guest, plans/free, plans/pro, plans/max)
+// plus plans.student_type, never plan_key alone.
+export const GUEST_STUDENT_TYPE = "guest";
+export const CENTER_STUDENT_TYPE = "center_student";
+export const GUEST_PLAN_ID = "guest";
+
 /**
- * Public Free per-lecture preview cap (FINAL_DECISIONS §11).
+ * Identity-safe Guest plan check.
+ *
+ * Must NOT use `plan_key == "free"` alone: plans/free also carries
+ * plan_key = "free". The Guest plan is identified by its document ID
+ * (plans/guest) together with plans.student_type = "guest".
+ * @param {string|null} planId Plan document ID (subscriptions.plan_id).
+ * @param {object} plan Plan document data.
+ * @return {boolean} True only for the Guest plan.
+ */
+export function isGuestPlan(
+  planId: string | null | undefined,
+  plan: {student_type?: unknown} | null | undefined,
+): boolean {
+  return planId === GUEST_PLAN_ID && !!plan && plan.student_type === GUEST_STUDENT_TYPE;
+}
+
+/**
+ * Guest per-lecture preview cap (FINAL_DECISIONS §11).
  * Exported for unit testing.
  *
- * Gate not armed (`publicFreeEnabled` false) returns null (not applicable).
+ * Gate not armed (`guestEnabled` false) returns null (not applicable).
  * Per-lecture minutes win over the plan's video.preview_duration default;
  * null lecture minutes fall back to the plan default. When neither source
  * defines minutes the cap is 0 — the student sees the upgrade prompt
  * immediately instead of unbounded playback.
+ * @param {object} opts Preview-cap inputs.
+ * @return {number|null} Preview seconds, 0 for upgrade prompt, null if gate off.
  */
-export function resolvePublicFreePreviewSeconds(opts: {
-  publicFreeEnabled: boolean;
+export function resolveGuestPreviewSeconds(opts: {
+  guestEnabled: boolean;
   lectureMinutes: number | null;
   planDefaultMinutes: number | null;
 }): number | null {
-  if (!opts.publicFreeEnabled) return null;
+  if (!opts.guestEnabled) return null;
   const minutes = opts.lectureMinutes ?? opts.planDefaultMinutes;
   if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return 0;
   return Math.round(minutes * 60);
+}
+
+/**
+ * Read the Guest preview fields from a lecture document.
+ *
+ * Canonical schema (Phase 1): `guest_enabled` / `guest_preview_minutes`.
+ * Transitional fallback: legacy `public_free_enabled` /
+ * `public_free_preview_minutes` (written by pre-Phase-2 clients/seed).
+ * TODO(PHASE2): remove the legacy fallback once Flutter/Dashboard and all
+ * stored lecture documents use the guest_* fields (see migration script
+ * scripts/migrate_public_to_guest.cjs).
+ * @param {object} lecture Lecture document data.
+ * @return {object} Preview gate state.
+ */
+export function readGuestPreviewFields(lecture: {
+  guest_enabled?: unknown;
+  guest_preview_minutes?: unknown;
+  public_free_enabled?: unknown;
+  public_free_preview_minutes?: unknown;
+}): {guestEnabled: boolean; lectureMinutes: number | null} {
+  const rawEnabled =
+    typeof lecture.guest_enabled === "boolean" ?
+      lecture.guest_enabled :
+      lecture.public_free_enabled === true;
+  const rawMinutes =
+    typeof lecture.guest_preview_minutes === "number" ?
+      lecture.guest_preview_minutes :
+      typeof lecture.public_free_preview_minutes === "number" ?
+        lecture.public_free_preview_minutes :
+        null;
+  return {guestEnabled: rawEnabled === true, lectureMinutes: rawMinutes};
 }
 
 export interface GradingLink {
@@ -227,7 +288,7 @@ const EXAM_SUBMIT_TIME_GRACE_MS = 90_000;
 
 const MAX_EXAM_ANSWERS = 500;
 
-type ContentEntity = "subject_sections" | "lectures" | "lecture_resources";
+type ContentEntity = "subject_sections" | "lectures" | "lecture_resources" | "lecture_access_grants";
 
 function contentAuditTrigger(entity: ContentEntity) {
   return onDocumentWritten(`${entity}/{docId}`, async (event) => {
@@ -294,8 +355,16 @@ const auth = getAuth();
 const messaging = getMessaging();
 const storage = getStorage();
 
-export const CENTER_FREE_WINDOW_BLOCKED_MESSAGE =
+export const FREE_WINDOW_BLOCKED_MESSAGE =
   "A Center Free 24-hour video window is already active for another video.";
+
+// V1 Individual Per-Lecture Student Access (project-owner approved).
+// Explicit per-student deny override: a grant with allowed === false
+// denies the lecture even when plan/subject checks would pass.
+// Missing grant (or allowed === true) defers to the normal eligibility
+// model — the grant is an override, never a universal security bypass.
+export const LECTURE_ACCESS_DENIED_MESSAGE =
+  "Lecture access is not allowed for this student.";
 
 export function decideVideoWatchWindow(
   existingWindow: {active_lecture_id: string; window_expires_at: Timestamp} | null | undefined,
@@ -311,6 +380,61 @@ export function decideVideoWatchWindow(
     return {allowed: true, reason: "same_video"};
   }
   return {allowed: false, reason: "different_video"};
+}
+
+export interface RollingWindowPolicy {
+  enforced: boolean;
+  hours: number;
+}
+
+/**
+ * Rolling watch-window policy ("تحديد المشاهدة كل 24 ساعة").
+ *
+ * Controllable from the dashboard Feature Matrix on ANY plan:
+ * - `video.rolling_window.enabled == true` → enforce with
+ *   `video.rolling_window.hours` (default 24, clamped 1..168).
+ * - `video.rolling_window.enabled == false` → no enforcement.
+ * - Feature missing entirely → legacy fallback (FINAL_DECISIONS §12):
+ *   center_student + free plans stay enforced at 24h until the
+ *   matrix is configured. This keeps existing deployments safe.
+ *   The fallback is plan-ID based (Phase 4: plans/free). The pre-migration
+ *   document ID "center_free" is still honored transitionally so the
+ *   fallback keeps working on not-yet-migrated data; run
+ *   scripts/migrate_center_plan_ids.cjs --apply to converge.
+ *
+ * Pure function — unit-testable without Firestore.
+ * @param {object} opts Policy inputs from plan_features + plan doc.
+ * @return {RollingWindowPolicy} Enforcement decision + window hours.
+ */
+export function resolveRollingWindowPolicy(opts: {
+  enabledFeature?: DocumentData | null;
+  hoursFeature?: DocumentData | null;
+  studentType?: string | null;
+  planKey?: string | null;
+  planId?: string | null;
+}): RollingWindowPolicy {
+  const DEFAULT_HOURS = 24;
+  const enabled = opts.enabledFeature?.enabled;
+  if (enabled === true || enabled === false) {
+    if (!enabled) return {enforced: false, hours: DEFAULT_HOURS};
+    const raw = opts.hoursFeature?.feature_value ?? opts.hoursFeature?.value;
+    const parsed =
+      typeof raw === "number" && Number.isFinite(raw) ?
+        Math.round(raw) :
+        DEFAULT_HOURS;
+    return {enforced: true, hours: Math.min(168, Math.max(1, parsed))};
+  }
+  // Never `planKey == "free"` alone: plans/guest shares that key.
+  // Center Free identity = plan document ID (free, post-migration) together
+  // with student_type center_student. The legacy "center_free" spellings
+  // (document ID and the pre-seed plan_key convention) are accepted
+  // transitionally and removed once the migration has converged.
+  const legacy =
+    opts.studentType === "center_student" &&
+    (opts.planId === "free" ||
+      opts.planId === "center_free" ||
+      opts.planKey === "center_free");
+  return {enforced: legacy, hours: DEFAULT_HOURS};
 }
 
 async function deriveScryptKey(
@@ -570,6 +694,17 @@ async function requireEnabledSubjectAccess(studentId: string, subjectId: string)
 }
 
 
+async function assertLectureAccessNotDenied(studentId: string, lectureId: string): Promise<void> {
+  const grantSnap = await db
+    .collection("lecture_access_grants")
+    .doc(lectureAccessGrantId(lectureId, studentId))
+    .get();
+  if (grantSnap.exists && isLectureAccessDenied(dataOf(grantSnap.data()))) {
+    throw new HttpsError("permission-denied", LECTURE_ACCESS_DENIED_MESSAGE);
+  }
+}
+
+
 async function writeAnalyticsEvent(
   userId: string,
   eventType: string,
@@ -689,6 +824,7 @@ function qualityRank(value: string): number {
     "720p": 720,
     "1080p": 1080,
     "1440p": 1440,
+    "2k": 1440,
     "4k": 2160,
   };
   return ranks[value.toLowerCase()] ?? 0;
@@ -1396,7 +1532,7 @@ export const approveStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   const rawAssignments = request.data?.subjectAccess;
   if (
     !studentId ||
-    (studentType !== "public_student" && studentType !== "center_student") ||
+    (studentType !== GUEST_STUDENT_TYPE && studentType !== CENTER_STUDENT_TYPE) ||
     !Array.isArray(rawAssignments)
   ) {
     throw new HttpsError("invalid-argument", "studentId, studentType and subjectAccess are required.");
@@ -1504,13 +1640,67 @@ export const approveStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   };
 });
 
+export const rejectStudent = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  const reason = getString(request.data?.reason);
+  if (!studentId || !reason) {
+    throw new HttpsError("invalid-argument", "studentId and reason are required.");
+  }
+  if (reason.length > 500) {
+    throw new HttpsError("invalid-argument", "Rejection reason must be 500 characters or fewer.");
+  }
+
+  const userRef = db.collection("users").doc(studentId);
+  const auditRef = db.collection("admin_audit_log").doc();
+
+  await db.runTransaction(async (transaction) => {
+    const userSnap = await transaction.get(userRef);
+    if (!userSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    const user = dataOf(userSnap.data());
+    if (user.approval_status !== "pending") {
+      throw new HttpsError("failed-precondition", "Student approval is not pending.");
+    }
+
+    const now = FieldValue.serverTimestamp();
+    transaction.update(userRef, {
+      approval_status: "rejected",
+      rejection_reason: reason,
+      rejected_by: authorization.actorId,
+      rejected_at: now,
+      updated_by: authorization.actorId,
+      updated_at: now,
+    });
+
+    transaction.set(auditRef, {
+      action: "reject_student",
+      entity: "student_approval",
+      target_id: studentId,
+      student_id: studentId,
+      rejection_reason: reason,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      rejected_by: authorization.actorId,
+      rejected_at: now,
+      created_at: now,
+      timestamp: now,
+    });
+  });
+
+  return {
+    rejected: true,
+    studentId,
+  };
+});
+
 export const convertStudentType = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
   const targetStudentType = getString(request.data?.targetStudentType);
   if (
     !studentId ||
-    (targetStudentType !== "public_student" && targetStudentType !== "center_student")
+    (targetStudentType !== GUEST_STUDENT_TYPE && targetStudentType !== CENTER_STUDENT_TYPE)
   ) {
     throw new HttpsError("invalid-argument", "studentId and targetStudentType are required.");
   }
@@ -1611,7 +1801,7 @@ export const onStudentApproved = onDocumentUpdated("users/{userId}", async (even
 
   const userId = event.params.userId;
   const studentType = getString(after.student_type);
-  if (studentType !== "public_student" && studentType !== "center_student") {
+  if (studentType !== GUEST_STUDENT_TYPE && studentType !== CENTER_STUDENT_TYPE) {
     throw new Error(`Invalid student_type for approved student: ${userId}`);
   }
 
@@ -2114,6 +2304,7 @@ export const setPlanQualityFeature = onCall(SECURE_CALL_OPTS, async (request) =>
     "720p",
     "1080p",
     "1440p",
+    "2k",
     "4k",
   ]);
   if (!planId || !quality || typeof enabled !== "boolean") {
@@ -2148,6 +2339,140 @@ export const setPlanQualityFeature = onCall(SECURE_CALL_OPTS, async (request) =>
   return {ok: true, planId, quality, enabled};
 });
 
+/**
+ * Feature Matrix keys with direct monetization impact.
+ *
+ * Accidentally enabling the rolling watch window on a paid plan (or
+ * disabling it on Center Free) changes what paying students receive, so
+ * these keys are Teacher (Platform Owner) only — consistent with doc 14
+ * ("Configure Feature Matrix: Teacher only"). All other keys remain
+ * Admin-or-Teacher, matching the existing quality-matrix precedent.
+ * The dashboard mirrors this by locking these rows for Admin sessions;
+ * the backend gate below is the true enforcement boundary.
+ */
+const SENSITIVE_PLAN_FEATURES: ReadonlySet<string> = new Set([
+  "video.rolling_window.enabled",
+  "video.rolling_window.hours",
+]);
+
+/**
+ * Generic Feature Matrix writer for the Subscription Plans dashboard.
+ *
+ * One callable drives every toggle/value on the plans page
+ * (Public FREE / Center FREE / Center PRO / Center MAX), instead of a
+ * separate callable per feature family. Mirrors the audited
+ * `setPlatformFeature` pattern: server-side auth, find-or-create by
+ * (plan_id, feature_key), dual `value`/`feature_value` write for
+ * reader compatibility, analytics + admin_audit_log entries.
+ *
+ * Reads: `planId`, `featureKey`, `enabled` (boolean). Optional `value`
+ * for number/string features (preview minutes, quality max, counters).
+ * `valueType` is stored as documentation for dashboard editors.
+ */
+export const setPlanFeature = onCall(SECURE_CALL_OPTS, async (request) => {
+  const actorId = requireAuthenticated(request);
+  const planId = getString(request.data?.planId);
+  const featureKey = getString(request.data?.featureKey);
+  if (!planId || !featureKey) {
+    throw new HttpsError(
+      "invalid-argument",
+      "planId and featureKey are required.",
+    );
+  }
+  if (SENSITIVE_PLAN_FEATURES.has(featureKey)) {
+    if (callerRole(request) !== "teacher") {
+      throw new HttpsError(
+        "permission-denied",
+        "Teacher (Platform Owner) permission is required for this feature.",
+      );
+    }
+  } else {
+    const role = callerRole(request);
+    if (!role || !ADMIN_ROLES.has(role)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Admin or Teacher permission is required.",
+      );
+    }
+  }
+  const actorRole = callerRole(request) === "teacher" ? "teacher" : "admin";
+  const enabled = request.data?.enabled;
+  const rawValue = request.data?.value;
+  const valueType = getString(request.data?.valueType) ?? "boolean";
+
+  if (typeof enabled !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "enabled must be a boolean.",
+    );
+  }
+  if (!/^[a-z0-9]+(\.[a-z0-9_]+)+$/i.test(featureKey)) {
+    throw new HttpsError("invalid-argument", "Unsupported feature key.");
+  }
+
+  const planSnap = await db.collection("plans").doc(planId).get();
+  if (!planSnap.exists) {
+    throw new HttpsError("not-found", "Membership plan was not found.");
+  }
+
+  const value =
+    rawValue === undefined || rawValue === null ? null : rawValue;
+  if (value !== null && !["number", "string", "boolean"].includes(typeof value) &&
+    !Array.isArray(value) && typeof value !== "object") {
+    throw new HttpsError("invalid-argument", "Unsupported feature value.");
+  }
+
+  const featureSnap = await db
+    .collection("plan_features")
+    .where("plan_id", "==", planId)
+    .where("feature_key", "==", featureKey)
+    .limit(1)
+    .get();
+  const featureRef = featureSnap.empty ?
+    db.collection("plan_features").doc(`${planId}_${featureKey.replace(/\./g, "_")}`) :
+    featureSnap.docs[0].ref;
+  const previous = featureSnap.empty ? null : dataOf(featureSnap.docs[0].data());
+
+  const now = FieldValue.serverTimestamp();
+  await featureRef.set({
+    plan_id: planId,
+    feature_key: featureKey,
+    enabled,
+    // Dual write: seed scripts use `value`, entitlement readers use
+    // `feature_value`. Keep both in sync until readers are unified.
+    value,
+    feature_value: value,
+    value_type: valueType,
+    updated_at: now,
+    updated_by: actorId,
+    ...(previous ? {} : {created_at: now, created_by: actorId}),
+  }, {merge: true});
+
+  await writeAnalyticsEvent(actorId, "Update Plan Feature", planId, {
+    feature_key: featureKey,
+    previous_enabled: previous?.enabled ?? null,
+    new_enabled: enabled,
+    value,
+  }, request);
+  await db.collection("admin_audit_log").add({
+    action: "plan_feature_toggled",
+    entity: "plan_feature",
+    target_id: featureRef.id,
+    plan_id: planId,
+    feature_key: featureKey,
+    previous_enabled: previous?.enabled ?? null,
+    new_enabled: enabled,
+    previous_value: previous?.value ?? previous?.feature_value ?? null,
+    new_value: value,
+    actor_id: actorId,
+    actor_role: actorRole,
+    created_at: now,
+    timestamp: now,
+  });
+
+  return {ok: true, planId, featureKey, enabled, value};
+});
+
 export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const videoId = getString(request.data?.videoId);
@@ -2170,6 +2495,8 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
   const resource = resourceSnap.docs[0].data();
   const lectureId = getString(resource.lecture_id);
   if (!lectureId) throw new HttpsError("failed-precondition", "Video resource is not linked to a lecture.");
+  // V1 per-lecture access: explicit deny wins before any plan checks.
+  await assertLectureAccessNotDenied(userId, lectureId);
 
   const lectureSnap = await db.collection("lectures").doc(lectureId).get();
   if (!lectureSnap.exists) throw new HttpsError("not-found", "Lecture not found.");
@@ -2240,7 +2567,18 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
   const selectedQuality = requestedQuality ??
     [...allowedQualities].sort((left, right) => qualityRank(right) - qualityRank(left))[0];
 
-  if (plan.studentType === "center_student" && plan.plan.plan_key === "center_free") {
+  // Rolling watch window ("تحديد المشاهدة كل 24 ساعة"): matrix-driven
+  // on any plan via video.rolling_window.enabled/_hours, with a legacy
+  // fallback to free/24h while the matrix is unconfigured.
+  const windowPolicy = resolveRollingWindowPolicy({
+    enabledFeature: await getPlanFeature(subjectPlanId, "video.rolling_window.enabled"),
+    hoursFeature: await getPlanFeature(subjectPlanId, "video.rolling_window.hours"),
+    studentType: plan.studentType,
+    planKey: getString(subjectPlan.plan_key),
+    planId: subjectPlanId,
+  });
+
+  if (windowPolicy.enforced) {
     const windowRef = db.collection("video_watch_windows").doc(userId);
     await db.runTransaction(async (t) => {
       const windowSnap = await t.get(windowRef);
@@ -2249,14 +2587,15 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
       const decision = decideVideoWatchWindow(existingWindow, lectureId, now);
 
       if (!decision.allowed) {
-        throw new HttpsError("resource-exhausted", CENTER_FREE_WINDOW_BLOCKED_MESSAGE, {
+        throw new HttpsError("resource-exhausted", FREE_WINDOW_BLOCKED_MESSAGE, {
           windowExpiresAtMs: existingWindow.window_expires_at.toMillis(),
           activeLectureId: existingWindow.active_lecture_id,
+          windowHours: windowPolicy.hours,
         });
       }
 
       if (decision.reason === "no_window" || decision.reason === "expired") {
-        const expiresAt = Timestamp.fromMillis(now + 24 * 60 * 60 * 1000);
+        const expiresAt = Timestamp.fromMillis(now + windowPolicy.hours * 60 * 60 * 1000);
         t.set(windowRef, {
           active_lecture_id: lectureId,
           window_expires_at: expiresAt,
@@ -2368,6 +2707,8 @@ async function resolveDocumentAccess(userId: string, resourceId: string) {
 
   const lectureId = getString(resource.lecture_id);
   if (!lectureId) throw new HttpsError("failed-precondition", "Document resource is not linked to a lecture.");
+  // V1 per-lecture access: explicit deny wins before any plan checks.
+  await assertLectureAccessNotDenied(userId, lectureId);
   const lectureSnap = await db.collection("lectures").doc(lectureId).get();
   if (!lectureSnap.exists) throw new HttpsError("not-found", "Lecture not found.");
   const sectionId = getString(lectureSnap.data()?.section_id);
@@ -2461,6 +2802,8 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
   const subjectId = getString(lecture.subject_id);
   if (!subjectId) throw new HttpsError("failed-precondition", "Lecture subject is missing.");
   await requireEnabledSubjectAccess(userId, subjectId);
+  // V1 per-lecture access: explicit deny wins over subscription/plan.
+  await assertLectureAccessNotDenied(userId, lectureId);
 
   const subscriptionSnap = await db.collection("subscriptions")
     .where("student_id", "==", userId)
@@ -2473,18 +2816,21 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
   assertSubjectAccess(subjectSubscription);
 
   const subjectPlanId = getString(subjectSubscription.plan_id);
-  let publicFreePreviewSeconds: number | null = null;
+  let guestPreviewSeconds: number | null = null;
   if (subjectPlanId) {
     const subjectPlanSnap = await db.collection("plans").doc(subjectPlanId).get();
     if (subjectPlanSnap.exists) {
       const subjectPlan = dataOf(subjectPlanSnap.data());
-      if (subjectPlan.student_type === "public_student" && subjectPlan.plan_key === "public_free") {
-        // Public Free per-lecture cap: per-lecture minutes win, falling back
+      // Identity-safe Guest check: document ID + student_type. Never
+      // `plan_key == "free"` alone — plans/free shares that key.
+      if (isGuestPlan(subjectPlanId, subjectPlan)) {
+        // Guest per-lecture cap: per-lecture minutes win, falling back
         // to the plan's video.preview_duration default (FINAL_DECISIONS §11).
         const previewFeature = await getPlanFeature(subjectPlanId, "video.preview_duration");
-        publicFreePreviewSeconds = resolvePublicFreePreviewSeconds({
-          publicFreeEnabled: lecture.public_free_enabled === true,
-          lectureMinutes: typeof lecture.public_free_preview_minutes === "number" ? lecture.public_free_preview_minutes : null,
+        const previewFields = readGuestPreviewFields(lecture);
+        guestPreviewSeconds = resolveGuestPreviewSeconds({
+          guestEnabled: previewFields.guestEnabled,
+          lectureMinutes: previewFields.lectureMinutes,
           planDefaultMinutes: previewFeature ? getNumber(previewFeature.feature_value) : null,
         });
       }
@@ -2497,8 +2843,13 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     .orderBy("display_order")
     .get();
 
+  // Canonical Phase 1 contract: `guestPreview`. The legacy `publicFreePreview`
+  // key is a BOUNDED transition alias for pre-Phase-2 Flutter clients only.
+  // TODO(PHASE2): remove `publicFreePreview` once Flutter reads `guestPreview`.
+  const guestPreview = guestPreviewSeconds != null ? {previewLimitSeconds: guestPreviewSeconds} : null;
   return {
-    publicFreePreview: publicFreePreviewSeconds != null ? {previewLimitSeconds: publicFreePreviewSeconds} : null,
+    guestPreview,
+    publicFreePreview: guestPreview,
     resources: resourcesSnap.docs.map((doc) => {
       const resource = dataOf(doc.data());
       return {
@@ -3844,6 +4195,21 @@ export function isDocumentResourceType(type: any): boolean {
   return type === "pdf" || type === "attachment";
 }
 
+// V1 Individual Per-Lecture Student Access: deterministic grant identity
+// (lecture_access_grants/{lectureId_studentId}) and the explicit-deny
+// predicate shared by every protected-content callable.
+export function lectureAccessGrantId(lectureId: string, studentId: string): string {
+  return `${lectureId}_${studentId}`;
+}
+
+export function isLectureAccessDenied(grantData: unknown): boolean {
+  if (!grantData || typeof grantData !== "object") return false;
+  const grant = grantData as {allowed?: unknown; is_deleted?: unknown};
+  // Soft-deleted grants carry no override (treated as missing).
+  if (grant.is_deleted === true) return false;
+  return grant.allowed === false;
+}
+
 export function documentFeatureKeys(type: string) {
   return {
     view: `${type}.access`,
@@ -4291,6 +4657,8 @@ export const onSectionWritten = contentAuditTrigger("subject_sections");
 export const onLectureWritten = contentAuditTrigger("lectures");
 
 export const onLectureResourceWritten = contentAuditTrigger("lecture_resources");
+
+export const onLectureAccessGrantWritten = contentAuditTrigger("lecture_access_grants");
 
 export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => {
   const nowMs = Date.now();
