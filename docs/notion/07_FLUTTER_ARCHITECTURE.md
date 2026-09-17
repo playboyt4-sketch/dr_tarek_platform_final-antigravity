@@ -1,7 +1,12 @@
 # 07 Flutter Architecture
 
-Version: 1.1
+Version: 1.3
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+
+## Version History (new)
+
+- **1.3** (2026-09-14): Implementation-design detail per the approved Implementation Architecture Specification. Documents the server-issued device handle (opaque session reference), Subject context threading through content flows, Subject-partitioned DRM consumption, Max session-token integration, and explicit BLOCKED UI dependencies. No new names, measurements, copy, or components invented.
+- **1.2** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Global device-binding gate removed (login always succeeds; no global blocked screen; no global `isCurrentDeviceValid` truth); authorization resolves per Subject to Full vs Guest; claims de-scoped to identity; DRM and video-player sections rescoped per Subject with Max single-session continuity. Existing folder/class/provider names kept and marked for rescoping — no new names invented.
 
 ---
 
@@ -137,7 +142,7 @@ Riverpod's provider graph **is** the DI mechanism — no separate service locato
 
 - Firebase SDK instance providers (`firestoreProvider`, `firebaseAuthProvider`, `firebaseStorageProvider`, `firebaseMessagingProvider`)
 - Repository providers (wire `XRepositoryImpl` behind the `XRepository` interface)
-- Cross-cutting providers (current user, connectivity state, device binding state)
+- Cross-cutting providers (current user, connectivity state, per-Subject authorization tier — never a global device boolean)
 
 ---
 
@@ -209,17 +214,17 @@ Per FINAL_DECISIONS Section 2, the platform supports offline video learning with
 2. **Signed URL Fetch**: `BunnyCdnRemoteDataSource` calls Cloud Function to get a time-limited signed URL (per FINAL_DECISIONS Section 4).
 3. **Background Download**: `DownloadManager` fetches the video file to app-private storage (not external/Downloads).
 4. **AES-256 Encryption**: `DrmLocalDataSource` encrypts the file immediately after download completes using a key derived from:
-   - Device-specific binding key (stored in Secure Storage, tied to `device_binding` record)
-   - User-specific salt (from Custom Claims)
+   - Device-specific key material (stored in Secure Storage, scoped to this device's authorization for that Subject — per ADR-004)
+   - User-specific salt (from the authenticated session; Subject-specific allowance is resolved server-side, never from a single global claim)
 5. **Metadata Storage**: Encrypted file path, original filename, and encryption metadata stored in a local SQLite database (not Firestore — per FINAL_DECISIONS: "التحميلات على الجهاز فقط — مش على السحابة").
 
 ## 13.3 Decryption & Playback Flow
 
 1. **Playback Request**: Student opens a downloaded lecture offline.
-2. **Device Binding Validation**: `DrmLocalDataSource` verifies current device matches the `device_binding` record (see Section 15). If mismatch → `DrmFailure.deviceMismatch`.
-3. **Key Retrieval**: Decryption key reconstructed from Secure Storage + Custom Claims salt.
+2. **Subject-Device Authorization Check**: `DrmLocalDataSource` verifies this device's authorization for that Subject (see Section 15). If unauthorized for Full access → Guest tier (limited playback only; Guest has no protected downloads); the login itself is never affected.
+3. **Key Retrieval**: Decryption key reconstructed from Secure Storage + session-derived salt.
 4. **Streaming Decryption**: File decrypted chunk-by-chunk into a memory buffer fed to the video player (never written decrypted to disk).
-5. **Cleanup on Unbind**: When Admin unbinds a device (or subscription ends), `DrmLocalDataSource` wipes all encrypted files and keys (per FINAL_DECISIONS: "لو الاشتراك اتقفل: التحميلات تتمسح فوراً").
+5. **Cleanup on Unbind/Expiry**: When authorization for a Subject is removed (per-Subject unbind, approved reset, or that Subject's subscription ends), `DrmLocalDataSource` wipes that Subject's encrypted files and keys only — other Subjects are unaffected (per FINAL_DECISIONS v2.0: "لو الاشتراك اتقفل: التحميلات تتمسح فوراً" applies to that subscription's Subject).
 
 ## 13.4 Feature Folder — `features/offline_drm/`
 
@@ -260,7 +265,7 @@ features/offline_drm/
 - Encrypted files live in `getApplicationDocumentsDirectory()` — inaccessible to other apps (Android 10+ scoped storage, iOS sandbox).
 - Decryption keys never leave Secure Storage (`flutter_secure_storage`).
 - No decrypted file ever written to persistent storage — only in-memory stream.
-- Factory Reset = new device ID → `DrmLocalDataSource` reports `deviceMismatch` → triggers Admin re-approval flow (per FINAL_DECISIONS Section 1).
+- Factory Reset = new device identity → login still succeeds; the new identity resolves per Subject to Full (free slot on first Subject access) or Guest. Re-authorization follows the approved reset/management path on student request — never a login precondition (per ADR-004).
 
 ---
 
@@ -284,20 +289,19 @@ Firebase Auth attaches Custom Claims to ID Token
 Flutter: ID Token refreshed → claims available in Riverpod
 ```
 
-## 14.2 Custom Claims Structure
+## 14.2 Custom Claims Structure (per ADR-004 — identity only)
 
-Per FINAL_DECISIONS Section 10, Custom Claims contain:
+Per FINAL_DECISIONS v2.0 Section 10, Custom Claims contain identity/general authorization only:
 
 ```json
 {
   "role": "student | new_student | teacher | admin",
-  "student_type": "public_free | center_free | center_pro | center_max",
-  "plan_id": "plan_document_id",
-  "max_devices": 1,
-  "subscription_status": "active | frozen | expired",
+  "student_type": "public_student | center_student",
   "approved": true | false
 }
 ```
+
+Single global `plan_id` / `max_devices` / `subscription_status` values are never Subject authorization truth — a student may hold different plans per Subject. Subject subscription and Subject-Device authorization (Full vs Guest per Subject) resolve from the server-side source of truth, not from claims.
 
 ## 14.3 Claims Provider (Riverpod)
 
@@ -329,15 +333,11 @@ final isApprovedProvider = Provider<bool>((ref) {
   return claims?['approved'] == true;
 });
 
-final maxDevicesProvider = Provider<int>((ref) {
-  final claims = ref.watch(customClaimsProvider).value;
-  return (claims?['max_devices'] as int?) ?? 1;
-});
-
-final subscriptionStatusProvider = Provider<String?>((ref) {
-  final claims = ref.watch(customClaimsProvider).value;
-  return claims?['subscription_status'] as String?;
-});
+// SUPERSEDED per ADR-004: single-global `maxDevicesProvider` and
+// `subscriptionStatusProvider` cannot represent per-Subject plans and
+// allowances and must not gate content or login. Per-Subject Full vs Guest
+// tier resolves server-side per Subject (see Section 15); claims expose
+// identity only (`role`, `student_type`, `approved`).
 ```
 
 ## 14.4 Claims Refresh Strategy
@@ -369,93 +369,94 @@ Flutter-side: `ForgotPasswordUseCase` calls Cloud Function `requestPasswordReset
 
 ---
 
-# 15. Device Binding Check
+# 15. Subject-Device Authorization Check (per ADR-004 — rescoped; no new names invented)
 
-Per FINAL_DECISIONS Section 1 and Master Architecture Section 7 ("Device Binding enabled", device limit plan-based per Master Architecture v1.2), this section defines the Flutter architecture for device registration, validation, and enforcement.
+Per FINAL_DECISIONS v2.0 Section 1 and Master Architecture v2.0 Section 7.1, this section defines the Flutter architecture for device recognition and per-Subject authorization. The prior global login-gate model (bind-on-login, reject-on-mismatch, logout-on-mismatch, global blocked screen) is superseded. Existing folder/class/provider names below are kept and marked for rescoping.
 
 ## 15.1 Device Identity
 
-Each device is identified by a composite fingerprint:
-- `device_id`: `androidId` (Android) or `identifierForVendor` (iOS) — NOT `Build.FINGERPRINT` (survives factory reset).
-- `device_name`: User-friendly name (e.g., "Samsung Galaxy S23").
-- `os_version`: Android/iOS version string.
-- `app_version`: Current app version from `package_info_plus`.
+Device recognition follows 08 Development Standards (stable identification; IP information is metadata only, never the sole permanent identity). The platform identifies devices independently from the phone number. Records carry the metadata needed for later recognition and audit (type/platform, identity/fingerprint information, device metadata, IP information).
 
-Stored in Secure Storage on first launch. If missing → treat as new device.
+Stored in Secure Storage on first launch. If missing → treat as new device identity (login still succeeds; per-Subject tier resolves on Subject access).
 
-## 15.2 Registration Flow
+## 15.2 Recognition Flow (login never gated)
 
 ```
-First-time login on a new device
+Login on any device (always succeeds for a valid session)
          ↓
-Flutter: read device_id from Secure Storage
+Flutter: read local device identity from Secure Storage
          ↓
-Cloud Function: onLoginAttempt(device_id, user_id)
+Device identity registered for recognition and audit (never a login precondition)
          ↓
-Firestore: check users/{userId}/device_bindings for matching device_id
-         ↓
-┌─────────────────┬─────────────────┐
-│  Match found    │  No match       │
-│  → Allow login  │  → Check count  │
-│                 │  → If < max     │
-│                 │    → Auto-bind  │
-│                 │  → If >= max    │
-│                 │    → Block +    │
-│                 │      notify Admin│
-└─────────────────┴─────────────────┘
+Per Subject, on first actual Subject access:
+┌─────────────────────────┬──────────────────────────────┐
+│ Device authorized       │ Device not authorized        │
+│ for this Subject        │ for this Subject             │
+│ → Full access           │ → Free slot? bind on first   │
+│                         │   access : Guest/limited     │
+│                         │   (subscription unchanged)   │
+└─────────────────────────┴──────────────────────────────┘
 ```
 
-## 15.3 Validation at Runtime
+## 15.3 Evaluation at Runtime
 
-Device binding is validated at two layers:
+Authorization is evaluated per Subject, never globally:
 
-### A. Authentication Layer (Cloud Function)
-- Every `verifyPhonePassword` call includes `device_id`.
-- Cloud Function rejects login if device is not in `device_bindings` and max_devices reached.
+### A. Authentication Layer
+- Login verifies account credentials only. No device check rejects login or logs the user out.
 
 ### B. Application Layer (Flutter)
-- `DeviceBindingRepository` validates current device on app launch and periodically.
-- If validation fails (device unbound by Admin, or factory reset detected), user is logged out and shown a message: "جهازك غير مُفعّل. تواصل مع الأدمن."
+- Per-Subject tier (Full vs Guest) is resolved server-side per Subject and consumed by dashboard, subject, lecture, video, PDF, and exam surfaces.
+- There is no global `isCurrentDeviceValid` truth and no global device-blocked login screen. A Guest Subject shows its limited experience in place; other Subjects are unaffected.
 
-## 15.4 Feature Folder — `features/device_binding/`
+## 15.4 Feature Folder — `features/device_binding/` (MARKED FOR RESCOPING per ADR-004)
+
+Existing structure is retained as the starting point; responsibilities move from global binding to per-Subject authorization (existing names kept, no new names invented here):
 
 ```
 features/device_binding/
 ├── domain/
 │   ├── entities/
-│   │   └── device_binding.dart     # device_id, device_name, bound_at, last_active
+│   │   └── device_binding.dart     # RESCOPED: per-Subject authorization state, not one global binding
 │   ├── repositories/
-│   │   └── device_binding_repository.dart
+│   │   └── device_binding_repository.dart   # RESCOPED: per-Subject tier queries, not global validate
 │   └── usecases/
-│       ├── validate_current_device.dart
-│       ├── register_new_device.dart
-│       └── get_bound_devices.dart
+│       ├── validate_current_device.dart     # SUPERSEDED as global gate; rescope to per-Subject tier
+│       ├── register_new_device.dart         # RESCOPED: recognition/audit registration, never login-gating
+│       └── get_bound_devices.dart           # RESCOPED: per-Subject authorized-device views
 ├── data/
 │   ├── models/
 │   │   └── device_binding_model.dart
 │   ├── datasources/
-│   │   ├── device_binding_remote_datasource.dart   # Firestore: users/{uid}/device_bindings
+│   │   ├── device_binding_remote_datasource.dart   # RESCOPED: server-side per-Subject evaluation
 │   │   └── device_info_local_datasource.dart       # Secure Storage + device_info_plus
 │   └── repositories/
 │       └── device_binding_repository_impl.dart
 └── presentation/
     ├── providers/
-    │   └── device_binding_status_provider.dart     # Stream<bool> — isCurrentDeviceValid
+    │   └── device_binding_status_provider.dart     # SUPERSEDED as Stream<bool> global truth; rescope to per-Subject tier
     └── screens/
-        └── device_blocked_screen.dart              # shown when binding fails
+        └── device_blocked_screen.dart              # SUPERSEDED: no global blocked login screen
 ```
 
 ## 15.5 Integration with DRM (Section 13)
 
-- `DrmLocalDataSource` depends on `DeviceBindingRepository`.
-- Before decrypting any offline content, `validate_current_device` is called.
-- If device is unbound → all encrypted content is wiped immediately (per FINAL_DECISIONS: "تغيير جهاز = التحميلات ترجع من أول وجديد").
+- `DrmLocalDataSource` checks this device's authorization for the Subject being decrypted (per-Subject, not global).
+- Unauthorized-for-Full on that Subject → Guest tier (limited playback; no protected downloads); login and other Subjects unaffected.
+- Removal of a Subject's authorization wipes that Subject's encrypted content only (per FINAL_DECISIONS v2.0).
 
-## 15.6 Multi-Device Plans (Center Max)
+## 15.6 Multi-Device Plans (Center Max — per ADR-004)
 
-- `maxDevicesProvider` (from Section 14.3) returns the limit from Custom Claims.
-- `DeviceBindingRepository` enforces this limit at registration time.
-- Admin Dashboard can override `max_devices` per student; Custom Claims updated via Cloud Function.
+- Allowance comes from each Subject's own subscription (Max = 2 authorized devices for that Subject), resolved server-side — never from a single global claim.
+- Max provides device continuity with a single active playback session (see Section 16); concurrent playback on both authorized devices is not allowed.
+
+## 15.7 Implementation Consumption Notes (per the Implementation Architecture Specification; no new names invented)
+
+- **Server-issued device handle.** After login the app holds the opaque handle returned with device registration and attaches it to authorization-relevant calls as a session reference. The handle is never treated as proof of hardware and never decides anything client-side.
+- **Subject context in every content flow.** Video, PDF, download, offline, and exam paths carry the current Subject (and device handle) so tier resolution is always Subject-scoped; no flow performs client-side slot counting or caches a global verdict.
+- **DRM consumption.** The offline store is consumed as Subject-partitioned; pre-decrypt checks and wipes operate on one Subject's partition at a time.
+- **Max session integration.** The player holds the server-issued session token during Full playback, heartbeats while playing, honors server stop directives (including on takeover by the other authorized device), and resumes from the server-persisted position. Heartbeat/lease values are tuning values owned by the server.
+- **UI dependencies — BLOCKED.** The following have no Figma specification and must not be invented here: Student Profile with multiple Subject plan badges; per-Subject Guest/limited state; Guest blocked download/PDF states; any Max continuity indication; per-Subject device/reset management surfaces. See 03_UI_UX §3.11.
 
 ---
 
@@ -511,14 +512,14 @@ URL is never exposed in UI, logs, or network inspector (HTTPS only)
 
 Per FINAL_DECISIONS Section 4: "الجودة المتاحة: محددة حسب الاشتراك (من Dashboard)."
 
-| Plan | Available Qualities | Max Resolution |
+| Plan (of that Subject) | Available Qualities | Max Resolution |
 |------|---------------------|----------------|
 | Public Free | Preview only (first X minutes) | 480p |
 | Center Free | All lectures, single quality | 720p |
 | Center Pro | All lectures, multi-quality | 1080p |
 | Center Max | All lectures, multi-quality + download | 1080p |
 
-Quality availability is controlled from Dashboard (Feature Matrix) and enforced in Cloud Function, not client-side.
+Quality availability is controlled from Dashboard (Feature Matrix) and enforced server-side, not client-side. Qualities above apply at the Full tier; Guest tier receives limited playback only (per ADR-004; no minute values invented here). A Max Subject additionally provides device continuity: two authorized devices with a single active playback session — starting the same content on the second device stops the first and resumes from the saved position (mechanism not specified here).
 
 ## 16.4 Video Player Package
 
@@ -566,7 +567,7 @@ features/video_player/
 
 - Signed URLs expire after 1 hour; student never sees the raw Bunny CDN URL.
 - Screen recording is discouraged via `flutter_windowmanager` (Android: `FLAG_SECURE`) and iOS `UIScreenCapture` detection.
-- Offline videos are AES-256 encrypted and bound to device (Section 13 + 15).
+- Offline videos are AES-256 encrypted and scoped to this device's authorization for that Subject (Section 13 + 15).
 - No video URL is ever logged to Analytics or Crashlytics.
 
 ## 16.7 Integration with Offline DRM
@@ -574,7 +575,7 @@ features/video_player/
 - `VideoPlayerScreen` checks if lecture is available offline via `OfflineContentRepository` (Section 13).
 - If offline: routes playback through `DecryptForPlaybackUseCase` → feeds decrypted stream to player.
 - If online: routes through `GetSignedVideoUrlUseCase` → streams from Bunny CDN.
-- Seamless fallback: if offline file is corrupted or device binding fails, auto-fallback to online stream (if connected).
+- Seamless fallback: if offline file is corrupted, auto-fallback to online stream (if connected). If this device is Guest for the Subject, playback follows the Guest tier in both modes; login is never affected.
 
 ---
 
@@ -585,26 +586,28 @@ The four new architectural components (Sections 13–16) integrate as follows:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Authentication (Feature 01)                   │
-│  Custom Tokens → Custom Claims → userRole, maxDevices, etc.    │
+│  Custom Tokens → identity claims (role, student_type, approved) │
+│  Login always succeeds; never gated by device                  │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Device Binding (Section 15)                   │
-│  Validates device_id → gates login & gates DRM decryption       │
+│              Subject-Device Authorization (Section 15)          │
+│  Per-Subject Full vs Guest tier; Guest never mutates plan       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Offline DRM (Section 13)                      │
-│  AES-256 encrypted downloads → bound to validated device        │
-│  Wiped on unbind / subscription expiry / factory reset          │
+│  AES-256 encrypted downloads → scoped to Subject authorization  │
+│  Per-Subject wipe on unbind / expiry / approved reset           │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Video Player (Section 16)                     │
 │  Online: Signed URLs from Bunny CDN via Cloud Function          │
 │  Offline: Decrypted stream from DRM local storage               │
-│  Quality & access controlled by Custom Claims + Feature Matrix  │
+│  Quality & access: server-side per-Subject + Feature Matrix     │
+│  Max: 2 authorized devices + single active playback session     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 All four components share:
 - `core/di/` for Firebase instances and cross-cutting providers.
 - `core/errors/` for unified `Failure` types (`DrmFailure`, `DeviceBindingFailure`, `VideoFailure`, `AuthFailure`).
-- Custom Claims as the single source of truth for permissions, plan, and device limits.
+- Server-side evaluation as the source of truth for per-Subject subscription and authorization; claims carry identity only.
 
 ---
 
@@ -614,6 +617,7 @@ All four components share:
 |---------|------|---------|--------|
 | 1.0 | — | Initial draft | Base architecture document |
 | 1.1 | 2026-08-04 | Added Sections 13–17: Offline DRM, Custom Tokens, Device Binding, Video Player (Bunny CDN), Cross-Feature Integration, and Change Log | Per FINAL_DECISIONS review chat — integrating all architectural decisions into Flutter layer |
+| 1.2 | 2026-09-14 | Rescoped Sections 13–17 to Subject-Level Device Binding (ADR-004) | Login decoupled from authorization; per-Subject Full/Guest; claims de-scoped; Max single-session continuity |
 
 ---
 

@@ -2,8 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.0
+Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+
+## Version History
+
+- **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Release checklist and deliverables now describe per-Subject authorization (login succeeds; Full vs Guest per Subject) instead of login-rejection enforcement. No release history rewritten.
 
 ---
 
@@ -149,7 +153,7 @@ Must be completed before any release candidate is built.
 #### Security & Compliance
 - [ ] Security review completed (REV-002 prompt executed, no Critical/High findings).
 - [ ] DRM implementation verified (08 Development Standards Section 8 gate passed).
-- [ ] Device binding logic tested on fresh install and factory reset scenario.
+- [ ] Subject-Device Authorization tested on fresh install and factory reset scenario (login succeeds on the new device; per-Subject Full vs Guest tier resolves correctly; no login rejection).
 - [ ] Custom Claims refresh verified after Admin actions.
 - [ ] Password reset flow tested end-to-end.
 - [ ] Offline content encryption verified (AES-256, key derivation, Secure Storage).
@@ -337,8 +341,16 @@ If critical issues are detected post-release:
 - Custom Token Authentication (T-000.8)
 - Bunny CDN Signed URL Integration (T-000.9)
 - AES-256 Offline DRM (T-000.12)
-- Device Binding Enforcement (T-CF.2)
+- Subject-Device Authorization Enforcement (T-CF.2, rescoped per ADR-004 — no login rejection)
 - 7 FCM Enhancements (T-000.13)
+
+**Subject-Level Device Binding Cutover Sequence (design stage — implementation NOT complete):**
+1. New schema/index support (proposed `subject_device_authorizations` + query indexes).
+2. Server-side new-model enforcement (transactional first access, tier-checked issuance, Max sessions, reset/unbind).
+3. Flutter rescope (tier consumption, Subject-partitioned DRM, session integration).
+4. Admin/audit support (per-Subject visibility, stale-slot review, reset workflow).
+5. Controlled cutover with monitoring (Guest rates, slot contention, reset queue).
+6. No automatic migration at any stage; approved reset only when the student requests it.
 
 **Release Blocking Criteria:**
 - 03 UI & UX approved and implemented (Presentation-Final)
@@ -473,7 +485,7 @@ dr-tarek-prod    — Production
 | FCM quiet hours | Disabled | Enabled | Enabled |
 | Bunny CDN | Test library | Test library | Production library |
 | Payment logging | Mock | Test data | Real |
-| Device binding | Relaxed (2 devices) | Strict | Strict |
+| Subject-Device Authorization | Relaxed (evaluation logging only) | Strict | Strict |
 | Password reset | Auto-approve | Admin-approve | Admin-approve |
 
 ---

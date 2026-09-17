@@ -22,6 +22,13 @@ enum FailureCode {
   subscriptionInactive,
   disciplinaryDisabled,
 
+  /// Per-lecture student access has no approved backend yet: there is no
+  /// `lecture_access_grants` collection in 05 Database, no firestore.rules
+  /// clause for it, and 04 Features postpones Individual Access to V2.
+  /// The Access UI is implemented; persistence stays blocked until the
+  /// schema/architecture change is approved by the project owner.
+  schemaNotApproved,
+
   /// FINAL_DECISIONS §12: a Center Free student tried to start a DIFFERENT
   /// video while their rolling 24-hour window is still active.
   dailyVideoLimitReached,
@@ -207,7 +214,7 @@ class Failure implements Exception {
     'Too many video requests. Please retry shortly.':
         FailureCode.tooManyRequests,
     // FINAL_DECISIONS §12 sentinel from generateBunnySignedUrl
-    // (CENTER_FREE_WINDOW_BLOCKED_MESSAGE).
+    // (FREE_WINDOW_BLOCKED_MESSAGE).
     'A Center Free 24-hour video window is already active for another video.':
         FailureCode.dailyVideoLimitReached,
     'Authentication is required.': FailureCode.wrongCredentials,

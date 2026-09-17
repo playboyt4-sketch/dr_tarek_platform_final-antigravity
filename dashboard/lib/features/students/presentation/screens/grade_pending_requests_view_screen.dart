@@ -208,13 +208,16 @@ class _GradePendingRequestsViewScreenState
       for (final SubjectOption subject in gradeSubjects)
         <String, Object>{
           'subjectId': subject.id,
-          'enabled': _gradeToggles[subject.id] ?? true,
+          // No default-ON: untouched rows stay disabled unless the
+          // reviewer explicitly switched them ON (05 Database: no
+          // default-all-subjects behavior is permitted).
+          'enabled': _gradeToggles[subject.id] ?? false,
           'plan': _gradePlans[subject.id] ?? 'free',
         },
       for (final SubjectOption subject in otherSubjects)
         <String, Object>{
           'subjectId': subject.id,
-          'enabled': _otherToggles[subject.id] ?? true,
+          'enabled': _otherToggles[subject.id] ?? false,
           'plan': _otherPlans[subject.id] ?? 'free',
         },
     ];
@@ -423,6 +426,7 @@ class _GradePendingRequestsViewScreenState
                 _StudentInfoCard(
                   row: widget.row,
                   gradeLabel: _gradeLabel(_gradeKey),
+                  accent: _accent,
                 ),
                 // Review stepper bar (80, 392, 1120 wide, gap 40).
                 Positioned(
@@ -438,6 +442,7 @@ class _GradePendingRequestsViewScreenState
                         _StepButton(
                           label: steps[i].label,
                           value: steps[i].value,
+                          accent: _accent,
                           onTap: _busy ? null : steps[i].onTap,
                         ),
                       ],
@@ -622,10 +627,12 @@ class _SectionTab extends StatelessWidget {
 class _StudentInfoCard extends StatelessWidget {
   final PendingRequestRow row;
   final String gradeLabel;
+  final Color accent;
 
   const _StudentInfoCard({
     required this.row,
     required this.gradeLabel,
+    required this.accent,
   });
 
   @override
@@ -640,7 +647,7 @@ class _StudentInfoCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(9999),
           border: Border.all(
-            color: const Color(0xFFF59E0B),
+            color: accent,
             width: 1.5,
           ),
         ),
@@ -737,11 +744,13 @@ class _MetaChip extends StatelessWidget {
 class _StepButton extends StatelessWidget {
   final String label;
   final String value;
+  final Color accent;
   final VoidCallback? onTap;
 
   const _StepButton({
     required this.label,
     required this.value,
+    required this.accent,
     required this.onTap,
   });
 
@@ -754,7 +763,7 @@ class _StepButton extends StatelessWidget {
         color: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(9999),
-          side: const BorderSide(color: Color(0xFFF59E0B), width: 1.5),
+          side: BorderSide(color: accent, width: 1.5),
         ),
         child: InkWell(
           onTap: onTap,
@@ -1151,9 +1160,10 @@ Widget _subjectRow({
 }
 
 /// Overlay — Grade Subjects (930 x 416, radius 24): per-subject emerald
-/// switches (default ON) with a per-subject [ FREE | PRO | MAX ] capsule
-/// (default FREE, untappable while the switch is off). The orange Save
-/// persists toggles + plans and closes the overlay.
+/// switches (OFF unless [initialToggles] carries a persisted true) with a
+/// per-subject [ FREE | PRO | MAX ] capsule (default FREE, untappable
+/// while the switch is off). The orange Save persists toggles + plans
+/// and closes the overlay.
 Future<GradeSubjectsResult?> showGradeSubjectsDialog(
   BuildContext context, {
   required String gradeLabel,
@@ -1165,6 +1175,8 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
   final Map<String, String> plans = Map<String, String>.from(initialPlans);
   return showDialog<GradeSubjectsResult>(
     context: context,
+    // Figma overlay prototype: black 25% barrier, outside tap dismisses.
+    barrierColor: const Color(0x40000000),
     builder: (BuildContext context) {
       return StatefulBuilder(
         builder: (BuildContext context, StateSetter setState) {
@@ -1193,7 +1205,9 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
                           for (final SubjectOption subject in subjects)
                             _subjectRow(
                               title: subject.title,
-                              enabled: toggles[subject.id] ?? true,
+                              // Persisted state only: rows without an entry
+                              // open OFF / gray, never default-ON.
+                              enabled: toggles[subject.id] ?? false,
                               onChanged: (bool value) => setState(
                                 () => toggles[subject.id] = value,
                               ),
@@ -1204,7 +1218,7 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
                             ),
                         ],
                       ),
-              ),
+               ),
               const SizedBox(height: 8),
               Center(
                 child: _saveButton(
@@ -1242,6 +1256,8 @@ Future<GradeSubjectsResult?> showOtherSubjectsDialog(
   ];
   return showDialog<GradeSubjectsResult>(
     context: context,
+    // Figma overlay prototype: black 25% barrier, outside tap dismisses.
+    barrierColor: const Color(0x40000000),
     builder: (BuildContext context) {
       return StatefulBuilder(
         builder: (BuildContext context, StateSetter setState) {
@@ -1290,7 +1306,9 @@ Future<GradeSubjectsResult?> showOtherSubjectsDialog(
                         in groups[orderedKeys[g]]!)
                       _subjectRow(
                         title: subject.title,
-                        enabled: toggles[subject.id] ?? true,
+                        // Persisted state only: rows without an entry
+                        // open OFF / gray, never default-ON.
+                        enabled: toggles[subject.id] ?? false,
                         onChanged: (bool value) => setState(
                           () => toggles[subject.id] = value,
                         ),

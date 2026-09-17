@@ -3,13 +3,15 @@ import 'package:flutter/services.dart';
 
 import '../theme/app_typography.dart';
 
-/// Text field matching the Figma dashboard login input geometry:
-/// 480 x 80, corner radius 28, stroke #000000 @ 20% opacity (1.5 px,
-/// inside), fill #D9D9D9 @ 0% (transparent).
+/// Text field matching the approved Figma Dev Mode login inputs:
+/// 432 x 68, radius 28, 1 px stroke #979797, white fill, horizontal
+/// padding 24, hint Google Sans Flex Thin 100 24 px black.
 ///
-/// The [suffixIcon] slot carries the Figma icon instance (e.g. the
-/// `Smartphone` icon sits on the trailing side of the phone field in the
-/// live frame). Placeholder typography is Google Sans Flex Thin 24.
+/// [hintStyle]/[textStyle] allow callers outside the login frame to reuse
+/// this field with different typography; the login screen passes the exact
+/// Figma styles ([AppTypography.loginFieldPlaceholder] /
+/// [AppTypography.loginFieldValue]).
+///
 /// Validation messages render below the field so the Figma geometry of the
 /// input itself never changes.
 class GlassTextField extends StatefulWidget {
@@ -28,6 +30,9 @@ class GlassTextField extends StatefulWidget {
   final bool enabled;
   final Iterable<String>? autofillHints;
   final TextInputAction? textInputAction;
+  final TextStyle? hintStyle;
+  final TextStyle? textStyle;
+  final Color? borderColor;
 
   const GlassTextField({
     super.key,
@@ -46,6 +51,9 @@ class GlassTextField extends StatefulWidget {
     this.enabled = true,
     this.autofillHints,
     this.textInputAction,
+    this.hintStyle,
+    this.textStyle,
+    this.borderColor,
   });
 
   @override
@@ -53,18 +61,30 @@ class GlassTextField extends StatefulWidget {
 }
 
 class _GlassTextFieldState extends State<GlassTextField> {
-  final FocusNode _focusNode = FocusNode();
+  final FocusNode _internalFocusNode = FocusNode();
+
+  FocusNode get _effectiveFocusNode => widget.focusNode ?? _internalFocusNode;
 
   @override
   void initState() {
     super.initState();
-    _focusNode.addListener(_handleFocusChanged);
+    _effectiveFocusNode.addListener(_handleFocusChanged);
+  }
+
+  @override
+  void didUpdateWidget(GlassTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode?.removeListener(_handleFocusChanged);
+      _internalFocusNode.removeListener(_handleFocusChanged);
+      _effectiveFocusNode.addListener(_handleFocusChanged);
+    }
   }
 
   @override
   void dispose() {
-    _focusNode.removeListener(_handleFocusChanged);
-    _focusNode.dispose();
+    _effectiveFocusNode.removeListener(_handleFocusChanged);
+    _internalFocusNode.dispose();
     super.dispose();
   }
 
@@ -74,8 +94,8 @@ class _GlassTextFieldState extends State<GlassTextField> {
 
   Color get _borderColor {
     if (widget.errorText != null) return const Color(0xFFB3261E);
-    if (_focusNode.hasFocus) return AppColors.ink;
-    return AppColors.inputStroke;
+    if (_effectiveFocusNode.hasFocus) return AppColors.headingInk;
+    return widget.borderColor ?? AppColors.loginInputStroke;
   }
 
   @override
@@ -86,21 +106,21 @@ class _GlassTextFieldState extends State<GlassTextField> {
       obscured: widget.obscureText,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
-          // Reference geometry is 480 x 80; shrink proportionally when the
+          // Reference geometry is 432 x 68; shrink proportionally when the
           // surrounding card is narrower (compact viewports) so nothing is
           // clipped and the Figma composition is preserved at reference.
           final double fieldWidth =
-              constraints.maxWidth.isFinite ? constraints.maxWidth : 480;
-          final double scale =
-              (fieldWidth / 480).clamp(0.55, 1.0);
-          final double fieldHeight = 80 * scale;
-          final double fontSize = 24 * scale;
-          // The Figma field icon instance (e.g. the `Smartphone`) is a
-          // 49 px glyph; accessory controls (eye toggle) stay 24 px.
-          final bool hasGlyphIcon =
-              widget.leadingIcon is Icon || widget.suffixIcon is Icon;
-          final double iconSize = hasGlyphIcon ? 49 * scale : 24 * scale;
+              constraints.maxWidth.isFinite ? constraints.maxWidth : 432;
+          final double scale = (fieldWidth / 432).clamp(0.55, 1.0);
+          final double fieldHeight = 68 * scale;
           final double horizontalPadding = 24 * scale;
+
+          final TextStyle resolvedHint =
+              widget.hintStyle ?? AppTypography.loginFieldPlaceholder();
+          final TextStyle resolvedValue =
+              widget.textStyle ?? AppTypography.loginFieldValue();
+          final double baseHintSize = resolvedHint.fontSize ?? 24;
+          final double baseValueSize = resolvedValue.fontSize ?? 24;
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -111,8 +131,8 @@ class _GlassTextFieldState extends State<GlassTextField> {
                 height: fieldHeight,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: _borderColor, width: 1.5),
-                  color: const Color(0x00D9D9D9),
+                  border: Border.all(color: _borderColor, width: 1),
+                  color: Colors.white,
                 ),
                 padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 child: Row(
@@ -120,7 +140,7 @@ class _GlassTextFieldState extends State<GlassTextField> {
                     if (widget.leadingIcon != null)
                       Padding(
                         padding: const EdgeInsets.only(right: 12),
-                        child: _sizedIcon(widget.leadingIcon!, iconSize),
+                        child: _sizedIcon(widget.leadingIcon!),
                       ),
                     Expanded(
                       child: TextField(
@@ -134,14 +154,17 @@ class _GlassTextFieldState extends State<GlassTextField> {
                         inputFormatters: widget.inputFormatters,
                         autofillHints: widget.autofillHints,
                         textInputAction: widget.textInputAction,
-                        style: AppTypography.fieldValue(fontSize: fontSize),
-                        cursorColor: AppColors.ink,
+                        style: resolvedValue.copyWith(
+                          fontSize: baseValueSize * scale,
+                        ),
+                        cursorColor: AppColors.headingInk,
                         decoration: InputDecoration(
                           isCollapsed: true,
                           border: InputBorder.none,
                           hintText: widget.placeholder,
-                          hintStyle:
-                              AppTypography.fieldPlaceholder(fontSize: fontSize),
+                          hintStyle: resolvedHint.copyWith(
+                            fontSize: baseHintSize * scale,
+                          ),
                         ),
                       ),
                     ),
@@ -168,14 +191,18 @@ class _GlassTextFieldState extends State<GlassTextField> {
     );
   }
 
-  Widget _sizedIcon(Widget icon, double size) {
+  Widget _sizedIcon(Widget icon) {
     if (icon is Icon) {
       return Icon(
         icon.icon,
-        size: size,
-        color: icon.color,
+        size: 40,
+        color: icon.color ?? AppColors.iconInk,
       );
     }
-    return icon;
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Center(child: icon),
+    );
   }
 }

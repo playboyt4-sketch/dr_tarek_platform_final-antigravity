@@ -41,8 +41,8 @@ abstract class AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled = false,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled = false,
+    int? guestPreviewMinutes,
   });
   Future<void> updateLectureMetadata({
     required String lectureId,
@@ -50,8 +50,8 @@ abstract class AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   });
   Future<void> setLectureStatus({
     required String lectureId,
@@ -69,6 +69,28 @@ abstract class AdminContentDataSource {
   /// Counts non-archived lectures inside a section — powers the
   /// section-deletion block (Part B / 05 Database v1.9 Section 9).
   Future<int> countActiveLectures(String sectionId);
+
+  // ---- Lecture Access (V1 approved backend: lecture_access_grants) ----
+  /// Reads the existing `grade` field of a subject document (the same
+  /// field the Dashboard approval flow already depends on). Returns null
+  /// when the subject carries no grade — callers fall back to the
+  /// unfiltered student list instead of inventing a mapping.
+  Future<String?> getSubjectGrade(String subjectId);
+
+  /// Streams approved students (`users` where role == 'student').
+  /// Grade filtering/sorting happen client-side so no new composite
+  /// index is required. [gradeKey] null → all approved students.
+  Stream<List<LectureStudent>> watchStudents({String? gradeKey});
+
+  /// Live explicit per-student grants for one lecture. Missing grant =
+  /// no override (normal eligibility applies); see docs/notion/05 Database.
+  Stream<List<LectureAccessGrant>> watchLectureAccessGrants(String lectureId);
+
+  /// Persists per-lecture allow/deny grants with deterministic document
+  /// ids (`{lectureId}_{studentId}` — no duplicates by construction).
+  /// One read (existing grants of the lecture, to preserve created_*)
+  /// plus one batched write; safe to repeat.
+  Future<void> saveLectureAccess(List<LectureAccessGrant> grants);
 
   // ---- Resources ----
   Stream<List<AdminLectureResource>> watchResources(String lectureId);

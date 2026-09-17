@@ -30,8 +30,8 @@ class FakeAdminContentDataSource implements AdminContentDataSource {
     String sectionId,
     int displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled,
+    int? guestPreviewMinutes,
   })>[];
   final lectureUpdateCalls = <Map<String, dynamic>>[];
   int activeLectureCountOverride = 0;
@@ -107,16 +107,16 @@ class FakeAdminContentDataSource implements AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled = false,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled = false,
+    int? guestPreviewMinutes,
   }) async {
     lectureCreateCalls.add((
       subjectId: subjectId,
       sectionId: sectionId,
       displayOrder: displayOrder,
       publishDate: publishDate,
-      publicFreeEnabled: publicFreeEnabled,
-      publicFreePreviewMinutes: publicFreePreviewMinutes,
+      guestEnabled: guestEnabled,
+      guestPreviewMinutes: guestPreviewMinutes,
     ));
     return 'new-lecture';
   }
@@ -128,13 +128,13 @@ class FakeAdminContentDataSource implements AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   }) async {
     lectureUpdateCalls.add({
       'lectureId': lectureId,
-      'publicFreeEnabled': publicFreeEnabled,
-      'publicFreePreviewMinutes': publicFreePreviewMinutes,
+      'guestEnabled': guestEnabled,
+      'guestPreviewMinutes': guestPreviewMinutes,
     });
   }
 
@@ -153,6 +153,25 @@ class FakeAdminContentDataSource implements AdminContentDataSource {
   @override
   Future<void> reorderLectures(
       List<({String id, int displayOrder})> order) async {}
+
+  @override
+  Future<String?> getSubjectGrade(String subjectId) async => null;
+
+  @override
+  Stream<List<LectureStudent>> watchStudents({String? gradeKey}) =>
+      const Stream.empty();
+
+  final accessSaveCalls = <List<LectureAccessGrant>>[];
+
+  @override
+  Stream<List<LectureAccessGrant>> watchLectureAccessGrants(
+          String lectureId) =>
+      const Stream.empty();
+
+  @override
+  Future<void> saveLectureAccess(List<LectureAccessGrant> grants) async {
+    accessSaveCalls.add(grants);
+  }
 
   @override
   Stream<List<AdminLectureResource>> watchResources(String lectureId) =>
@@ -362,7 +381,7 @@ void main() {
       );
     });
 
-    test('createLecture forwards subject_id and Public Free fields '
+    test('createLecture forwards subject_id and Guest preview fields '
         '(callable contract + FINAL_DECISIONS §11)', () async {
       final fake = FakeAdminContentDataSource();
       final repo = _repoWithFakes(fake);
@@ -373,14 +392,14 @@ void main() {
         title: 'محاضرة',
         description: '',
         publishDate: DateTime(2026, 9, 1),
-        publicFreeEnabled: true,
-        publicFreePreviewMinutes: 5,
+        guestEnabled: true,
+        guestPreviewMinutes: 5,
       );
 
       expect(fake.lectureCreateCalls.single.subjectId, 'subject-1');
       expect(fake.lectureCreateCalls.single.displayOrder, 1); // appended
-      expect(fake.lectureCreateCalls.single.publicFreeEnabled, true);
-      expect(fake.lectureCreateCalls.single.publicFreePreviewMinutes, 5);
+      expect(fake.lectureCreateCalls.single.guestEnabled, true);
+      expect(fake.lectureCreateCalls.single.guestPreviewMinutes, 5);
     });
   });
 

@@ -11,10 +11,10 @@ abstract final class AppBreakpoints {
   static const double expanded = 1024;
 
   /// Reference Figma frame width for the dashboard login design.
-  static const double figmaFrameWidth = 1440;
+  static const double figmaFrameWidth = 1280;
 
   /// Reference Figma frame height for the dashboard login design.
-  static const double figmaFrameHeight = 1024;
+  static const double figmaFrameHeight = 800;
 }
 
 extension ResponsiveContext on BuildContext {

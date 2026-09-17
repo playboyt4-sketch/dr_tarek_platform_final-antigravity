@@ -1,10 +1,12 @@
 # 06 Firebase Architecture
 
-Version: 1.2
+Version: 1.4
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
 
 ## Changelog
 
+- **1.4** (2026-09-14): Implementation-design detail per the approved Implementation Architecture Specification. Documents the PROPOSED server-side direction: transactional first-access binding, no LRU auto-eviction, server-issued device handle, proposed callable names (explicitly labeled proposed), tier-checked artifact issuance, server-authoritative Max sessions, and the Rules trust boundary (client-provided device identity is never hardware proof; IP is metadata only).
+- **1.3** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Claims de-scoped to identity; login decoupled from device authorization; Rules strategy moved to server-side per-Subject evaluation; login-gating responsibilities marked for redesign; offline revocation rescoped per Subject. No new function, rule, or protocol invented; device-identity mechanism for Rules marked as an open implementation decision.
 - **1.2** (2026-08-25): Ratified addendum FINAL_DECISIONS §11–15. Section 5 rewritten to document the DUAL storage-provider architecture (Bunny Storage zone `dr-tarek-resources` + Firebase Storage simultaneously, per-resource `storage_provider` dispatch), the Bunny signed-URL pattern extended to PDFs/attachments/thumbnails, and the new resource callables (`generateBunnyResourceUrl`, `uploadBunnyResource`, `deleteBunnyResource`) plus the scheduled auto-publish function (`autoPublishDueLectures`, Section 6.7).
 - **1.1**: Academic-period enforcement additions.
 
@@ -64,16 +66,17 @@ Per Final Decisions Section 10, the following custom claims are set server-side 
 | Claim | Source | Used In |
 |-------|--------|---------|
 | `role` | `users.role` | Security Rules role-based access |
-| `student_type` | `users.student_type` | Plan eligibility, content gating |
-| `plan_id` | Active `subscriptions.plan_id` | Feature Matrix enforcement |
-| `max_devices` | Derived from active plan via `plan_features` | Device binding validation |
+| `student_type` | `users.student_type` | Plan eligibility |
+| `approved` | `users.approval_status` | Login gating |
 
-Claims are refreshed on every token refresh and on any subscription/plan change. Security Rules read these claims directly (zero Firestore document reads per request), per Final Decisions.
+Single global `plan_id` / `max_devices` / `subscription_status` values are never Subject authorization truth (per ADR-004): a student may hold different plans per Subject, so one claim cannot represent them. Subject subscription and Subject-Device authorization (Full vs Guest per Subject) resolve from the server-side source of truth at request time. The prior zero-read-claims gating for Subject content is superseded; affected Rules require live evaluation (see Section 4.2).
+
+Claims are refreshed on every token refresh. Identity claims above remain suitable for zero-read role resolution; Subject-specific decisions always read live state.
 
 ## 3.4 Session & Device Binding
 
 - Firebase Auth manages the session token lifecycle (FR-01.05).
-- Device Binding (FR-01.06, BR — Feature 01) is **not** a Firebase Authentication feature — it is enforced via Cloud Function (`onLoginAttempt`, Section 6.2) at login time, checking the requesting device against the user's allowed device count and registered devices, per Database.md Section 14 (Device Policy) and Final Decisions Section 1.
+- Subject-Device Authorization (FR-01.06, BR — Feature 01) is **not** a Firebase Authentication feature and **never gates login** — a valid student signs in from any device and keeps the session. Device identity is registered for recognition and audit at login time; Full vs Guest authorization is evaluated server-side per Subject on first actual Subject access, against that Subject's own subscription allowance (Free 1 / Pro 1 / Max 2; no cross-Subject effect). The prior login-time validation-and-rejection responsibility is superseded (see Section 6.2).
 
 ## 3.5 Password Reset Flow
 
@@ -82,7 +85,7 @@ Per Final Decisions Section 3:
 - Student taps "Forgot Password" in the app.
 - App sends a password-reset request (logged as Analytics Event).
 - Admin/Teacher receives an in-app notification.
-- Admin/Teacher resets the password from the Dashboard.
+- Teacher (Platform Owner) always; Admin only when explicitly granted the `password.reset` permission (grant/revoke by Teacher at any time, enforced server-side) resets the password from the Dashboard.
 - Student is notified via push notification that the password has been changed.
 - No automated email/SMS reset link in V1.
 
@@ -112,7 +115,7 @@ Security Rules are the **only** enforcement layer that cannot be bypassed by a c
 
 ### Role resolution inside Rules
 
-Per Final Decisions, Rules use **Custom Claims** (`request.auth.token.role`, `request.auth.token.student_type`, `request.auth.token.plan_id`) for zero-read role resolution. No extra Firestore document read is performed per rule evaluation.
+Per ADR-004, Rules use identity **Custom Claims** (`request.auth.token.role`, `request.auth.token.student_type`, approval status) for zero-read role resolution. Subject subscription, plan features, and Subject-Device authorization (Full vs Guest per Subject) are evaluated from live server-side state, not from single global claims — the prior zero-read gating for Subject content is superseded. If Rules must identify the requesting device and no approved device-identity mechanism exists yet, that mechanism is an **OPEN DECISION — implementation architecture required** (not invented here).
 
 ### Representative rule patterns (illustrative, not exhaustive — full rule set belongs in implementation, not this document)
 
@@ -133,7 +136,7 @@ match /lectures/{lectureId} {
 }
 ```
 
-`hasSubjectAccess()` is a Rules helper function that checks `request.auth.token.plan_id` and the Feature Matrix — implementation detail for 08 Development Standards.
+`hasSubjectAccess()` is a Rules helper function that checks live Subject Access, the Subject's own subscription and plan features, and the requesting device's Subject-Device authorization tier (Full vs Guest) — never a single global claim. Exact helper design is an implementation detail for 08 Development Standards.
 
 ### Rules must enforce (cross-referenced to PRD Business Rules)
 
@@ -141,6 +144,7 @@ match /lectures/{lectureId} {
 - BR-06/BR-07/BR-08: content access strictly follows subscription/Feature Matrix (`plan_features`), re-checked server-side via custom claims, not just hidden client-side.
 - BR-09: exam submissions become immutable after creation (`allow update: if false` once `submitted_at` exists).
 - Database.md Section 19: one active subscription per subject, `display_handle` uniqueness — enforced via Cloud Function validation at write time (Rules alone cannot easily enforce cross-document uniqueness; see Section 6.3).
+- V1 Individual Per-Lecture Access (project-owner approved): `lecture_access_grants/{lectureId_studentId}` managed by Teacher / `admin_students`- or `admin_content`-delegated Admins (centralized permission model — no new key); students have no read/write on the collection. Direct `lecture_resources` student reads additionally fail when an explicit `allowed == false` grant exists. Primary enforcement lives in Cloud Functions: `getLectureResources`, `generateBunnySignedUrl`, and document delivery (`resolveDocumentAccess` shared by `generateProtectedPdfUrl`, `generatePdfDownloadUrl`, `generateBunnyResourceUrl`) consult the grant via `assertLectureAccessNotDenied` before any plan checks — explicit deny wins; missing/`true` grants defer to the normal model. Grant writes are covered by the existing content-audit trigger (`onLectureAccessGrantWritten`).
 
 ## 4.3 Composite Indexes
 
@@ -196,9 +200,9 @@ Cloud Functions handle everything that must not run purely on the client: privil
 
 | Function | Trigger | Responsibility |
 | --- | --- | --- |
-| `verifyPhonePassword` | Callable, invoked by app at login | Verifies `phone_number` + password against Firestore; on success, mints Firebase Custom Token with claims (`role`, `student_type`, `plan_id`, `max_devices`); on failure, logs failed attempt and returns error |
-| `onLoginAttempt` | Callable, invoked by app immediately after `signInWithCustomToken()` | Validates device against user's registered devices and `max_devices` claim (Final Decisions Section 1); on first login, binds device; on mismatch, rejects and logs `Unauthorized Device Attempt` analytics event + notifies student + flags for Admin review (Feature 01, Alternative Flow); Factory Reset = new device ID = requires Admin re-approval |
-| `onStudentApproved` | Firestore trigger, `users.approval_status` → `approved` | Activates Free Plan (creates default `subscriptions` record per Database.md Section 7's Business Rule), sets custom auth claims (`role`, `student_type`, `plan_id`, `max_devices`), sends approval notification |
+| `verifyPhonePassword` | Callable, invoked by app at login | Verifies `phone_number` + password against Firestore; on success, mints Firebase Custom Token with identity claims (`role`, `student_type`, `approved`) and never rejects for device reasons; on failure, logs failed attempt and returns error |
+| `onLoginAttempt` | **MARKED FOR REDESIGN per ADR-004 (not deleted)** | Prior responsibility (login-time device validation, first-login binding, mismatch rejection, factory-reset re-approval) is superseded. Required direction: device registration/recognition for audit only (always succeeds for a valid session); per-Subject Full vs Guest authorization moves to server-side Subject-access evaluation (first actual Subject access; Free 1 / Pro 1 / Max 2 for that Subject). No new function names are introduced here |
+| `onStudentApproved` | Firestore trigger, `users.approval_status` → `approved` | Activates Free Plan (creates default `subscriptions` record per Database.md Section 7's Business Rule), sets identity custom auth claims (`role`, `student_type`, `approved`), sends approval notification |
 
 ## 6.3 Data Integrity
 
@@ -235,7 +239,18 @@ Per Final Decisions Section 4:
 
 Every business-logic Cloud Function above also writes the corresponding `analytics_events` record server-side (Database.md Section 15: "Every user action generates an Analytics Event") — this guarantees the event is logged even if the client disconnects mid-action, which a purely client-side write cannot guarantee.
 
-## 6.7 Scheduled Auto-Publish & Resource Storage Callables (NEW in v1.2)
+## 6.7 Subject-Device Authorization — Server-Side Direction (PROPOSED per the Implementation Architecture Specification; names below are recommendations, not approvals)
+
+- **First-access binding is transactional and server-side only.** The server atomically evaluates assignment → Subject's own subscription/plan → live authorization count vs allowance → creates the authorization or returns Guest. The forbidden shape — client checks slot, client decides, client writes — must never be implemented. Two devices racing for the final slot serialize deterministically (first committer Full, other Guest).
+- **No LRU auto-eviction as authorization behavior.** Slots are never silently reassigned to make room; excess and contention resolve to Guest plus Admin/reset paths.
+- **Server-issued device handle.** After registry upsert the server returns an opaque handle bound to the session for subsequent calls. The handle is a session reference, not hardware proof; client-provided identifiers remain untrusted input namespaced by the authenticated `uid`.
+- **Protected artifact issuance.** Video/PDF/download/offline-key issuance checks Subject + subscription + tier (+ Guest eligibility/consumption where applicable) on every call; Guest requests receive limited artifacts or tier-coded denials. Max Full playback additionally requires a live session token (see below).
+- **Max playback sessions (PROPOSED).** Recommended scope `playback_sessions/{student_id}_{subject_id}` (one live session per student×subject; content, active device, session token, lease/heartbeat, and position recorded). Server owns takeover via transaction; heartbeat extends the lease; stale sessions are claimable; the previous owner is stopped via directive plus enforcement on its next server contact. Heartbeat/lease values are technical tuning values, not business rules.
+- **Reset/unbind are server operations.** Approved reset revokes all active authorizations for the student with audit; per-Subject unbind revokes one; neither blocks login.
+- **Rules trust boundary.** Firestore Rules cannot trust client-provided device identity as hardware proof; Rules own static gates (session, role, assignment, subscription liveness, explicit deny, dates/prerequisites) while Functions own dynamic tier decisions. Request IP is logged as metadata/audit signal only.
+- **Proposed callable direction (not approved names):** tier/first-access resolution, student-device reset, playback begin-or-takeover plus heartbeat. Existing callables keep their names; only responsibilities change per the table in Section 6.2.
+
+## 6.8 Scheduled Auto-Publish & Resource Storage Callables (NEW in v1.2)
 
 | Function | Trigger | Responsibility |
 | --- | --- | --- |
@@ -310,10 +325,10 @@ Per Database.md Section 19 ("Offline Learning Rules") and Final Decisions Sectio
 - The app receives a silent push notification (`subscription_revoked`) and immediately deletes all encrypted offline content for that subject.
 - Progress data remains in Firestore (cloud-synced) and is not lost.
 
-## 8.4 Device Change = Fresh Downloads
-- Per Final Decisions Section 2, changing devices (including Factory Reset) treats the device as new.
-- All previous downloads are lost; the student must re-download content on the new device after Admin re-approves the device binding.
-- This is enforced by the fact that encryption keys are device-bound and never transferred.
+## 8.4 Device Change = Per-Subject Revalidation (per ADR-004)
+- A new device identity (including Factory Reset) logs in normally — login is never blocked and no re-approval is needed to sign in.
+- Offline content is revalidated per Subject against that Subject's subscription and the new device's authorization for it; content for Subjects the new device is not authorized for is unavailable to it (Guest has no protected downloads), while other Subjects' authorized-device content is unaffected.
+- Encryption keys remain device-bound and are never transferred. Durations, lease design, and key-partitioning specifics are not invented here.
 
 ---
 
@@ -323,7 +338,8 @@ Per Database.md Section 19 ("Offline Learning Rules") and Final Decisions Sectio
 - [ ] `devices.fcm_token` field needs to be formally added to 05 Database (Section 16) — flagged, not added here, to respect Database.md's ownership of schema.
 - [x] ~~Confirm Bunny CDN token-signing responsibility~~ — **Resolved**: Cloud Function (`generateSignedVideoUrl`) approved per Final Decisions (2026-08-04).
 - [ ] Confirm AES-256 key derivation strategy (device ID + Firebase UID + server-secret salt) — proposed, pending security review.
-- [ ] Confirm max device counts per plan (Free/Pro = 1, Max = 2+) — proposed per Final Decisions, pending Dashboard UI specification.
+- [ ] Per-Subject device allowances confirmed by ADR-004 (Free = 1, Pro = 1, Max = 2 for that Subject) — Dashboard UI specification for per-Subject authorization display still pending.
+- [ ] OPEN DECISION — device-identity mechanism for Rules/Functions (client-asserted identifier vs server-bound session device vs attestation): requires implementation architecture; not invented here.
 
 ---
 

@@ -240,11 +240,11 @@ class VideoResource {
   final String? thumbnailProvider;
   final Duration? duration;
 
-  /// FINAL_DECISIONS §11: non-null ONLY when the server armed the Public
-  /// Free per-lecture gate for THIS student+lecture; the value is the exact
-  /// number of seconds allowed. Zero = wall immediately.
-  final bool isPublicFreePreview;
-  final int? publicFreePreviewSeconds;
+  /// FINAL_DECISIONS §11: non-null ONLY when the server armed the Guest
+  /// per-lecture preview gate for THIS student+lecture; the value is the
+  /// exact number of seconds allowed. Zero = wall immediately.
+  final bool isGuestPreview;
+  final int? guestPreviewSeconds;
 
   const VideoResource({
     required this.id,
@@ -255,8 +255,8 @@ class VideoResource {
     this.storageProvider = 'firebase',
     this.thumbnailProvider,
     this.duration,
-    this.isPublicFreePreview = false,
-    this.publicFreePreviewSeconds,
+    this.isGuestPreview = false,
+    this.guestPreviewSeconds,
   });
 
   bool get isVideo =>
@@ -281,8 +281,8 @@ class VideoResource {
       storageProvider: map['storageProvider'] as String? ?? 'firebase',
       thumbnailProvider: map['thumbnailProvider'] as String?,
       duration: _durationFromMap(map['duration']),
-      isPublicFreePreview: false,
-      publicFreePreviewSeconds: null,
+      isGuestPreview: false,
+      guestPreviewSeconds: null,
     );
   }
 
@@ -292,14 +292,14 @@ class VideoResource {
   }
 }
 
-/// Pure policy for the per-lecture Public Free minute cap
+/// Pure policy for the per-lecture Guest preview minute cap
 /// (FINAL_DECISIONS §11). Kept side-effect-free so it is unit-testable
 /// without a video engine.
 class PreviewCapPolicy {
   /// Effective cap for the active resource; null = unlimited.
   static Duration? capFor(VideoResource? resource) {
-    if (resource == null || !resource.isPublicFreePreview) return null;
-    final seconds = resource.publicFreePreviewSeconds ?? 0;
+    if (resource == null || !resource.isGuestPreview) return null;
+    final seconds = resource.guestPreviewSeconds ?? 0;
     return seconds <= 0 ? Duration.zero : Duration(seconds: seconds);
   }
 
@@ -323,12 +323,144 @@ class ResolvedVideoSource {
   final VideoQuality selectedQuality;
   final Set<VideoQuality> allowedQualities;
 
+  /// Max Subject active-session attachment (ADR-004 follow-up). Present
+  /// ONLY when the server ran the begin-or-takeover transaction for a
+  /// 2-allowance Subject; null on Free/Pro/Guest paths, whose behavior is
+  /// unchanged. The token is runtime state, never persisted as authority.
+  final String? sessionToken;
+  final int? sessionPositionSeconds;
+  final bool sessionTakeover;
+  final int? heartbeatIntervalMs;
+
   const ResolvedVideoSource({
     required this.url,
     required this.expiresAt,
     required this.selectedQuality,
     this.allowedQualities = const {},
+    this.sessionToken,
+    this.sessionPositionSeconds,
+    this.sessionTakeover = false,
+    this.heartbeatIntervalMs,
   });
+
+  bool get hasActiveSession => sessionToken != null && sessionToken!.isNotEmpty;
+}
+
+/// Lifecycle state of one Subject-scoped playback session. Every value is
+/// a projection of the last server verdict — never decided locally.
+enum PlaybackSessionState {
+  /// No session adopted (non-Max Subject, Guest preview, or not started).
+  none,
+
+  /// Server confirmed this device owns the live session.
+  active,
+
+  /// Server reported another device took over (heartbeat/begin rejected).
+  superseded,
+
+  /// Server lease lapsed or session ended.
+  expired,
+
+  /// Session rejected for any other authorization reason.
+  invalid,
+}
+
+/// A server-owned active playback session for one Student + Subject.
+/// Tokens are opaque runtime handles: held in memory, never persisted,
+/// never generated client-side, never used across Subjects.
+@immutable
+class PlaybackSession {
+  final String subjectId;
+  final String? lectureId;
+  final String? videoId;
+  final String sessionToken;
+  final Duration position;
+  final bool takeover;
+  final DateTime? leaseExpiresAt;
+  final Duration heartbeatInterval;
+  final PlaybackSessionState state;
+
+  const PlaybackSession({
+    required this.subjectId,
+    this.lectureId,
+    this.videoId,
+    required this.sessionToken,
+    this.position = Duration.zero,
+    this.takeover = false,
+    this.leaseExpiresAt,
+    this.heartbeatInterval = const Duration(seconds: 30),
+    this.state = PlaybackSessionState.active,
+  });
+
+  PlaybackSession copyWith({
+    Duration? position,
+    bool? takeover,
+    DateTime? leaseExpiresAt,
+    Duration? heartbeatInterval,
+    PlaybackSessionState? state,
+  }) {
+    return PlaybackSession(
+      subjectId: subjectId,
+      lectureId: lectureId,
+      videoId: videoId,
+      sessionToken: sessionToken,
+      position: position ?? this.position,
+      takeover: takeover ?? this.takeover,
+      leaseExpiresAt: leaseExpiresAt ?? this.leaseExpiresAt,
+      heartbeatInterval: heartbeatInterval ?? this.heartbeatInterval,
+      state: state ?? this.state,
+    );
+  }
+
+  /// Builds a session ONLY from a server begin/takeover response payload.
+  /// Returns null when the payload carries no session (non-Max/Guest path).
+  static PlaybackSession? fromBeginPayload({
+    required String subjectId,
+    String? lectureId,
+    String? videoId,
+    required Map<String, dynamic> data,
+  }) {
+    final token = data['sessionToken'] as String?;
+    if (token == null || token.isEmpty) return null;
+    final positionSeconds = (data['positionSeconds'] as num?)?.toInt() ?? 0;
+    final leaseMs = (data['leaseExpiresAtMs'] as num?)?.toInt();
+    final beatMs = (data['heartbeatIntervalMs'] as num?)?.toInt();
+    return PlaybackSession(
+      subjectId: subjectId,
+      lectureId: lectureId,
+      videoId: videoId,
+      sessionToken: token,
+      position: Duration(seconds: positionSeconds.clamp(0, 24 * 60 * 60)),
+      takeover: data['takeover'] == true,
+      leaseExpiresAt: leaseMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(leaseMs),
+      heartbeatInterval: beatMs != null && beatMs > 0
+          ? Duration(milliseconds: beatMs)
+          : const Duration(seconds: 30),
+    );
+  }
+}
+
+/// Server heartbeat verdict. The returned position is authoritative for the
+/// session snapshot; durable progress stays with the progress repository.
+@immutable
+class HeartbeatResult {
+  final Duration position;
+  final DateTime? leaseExpiresAt;
+
+  const HeartbeatResult({required this.position, this.leaseExpiresAt});
+
+  factory HeartbeatResult.fromPayload(Map<String, dynamic> data) {
+    final seconds = (data['positionSeconds'] as num?)?.toInt() ?? 0;
+    final leaseMs = (data['leaseExpiresAtMs'] as num?)?.toInt();
+    return HeartbeatResult(
+      position: Duration(seconds: seconds.clamp(0, 24 * 60 * 60)),
+      leaseExpiresAt: leaseMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(leaseMs),
+    );
+  }
 }
 
 class ProgressMath {

@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:drtarek_dashboard/core/errors/failure.dart';
@@ -7,6 +8,7 @@ import 'package:drtarek_dashboard/features/authentication/domain/entities/dashbo
 import 'package:drtarek_dashboard/features/authentication/domain/repositories/auth_repository.dart';
 import 'package:drtarek_dashboard/features/authentication/presentation/providers/auth_providers.dart';
 import 'package:drtarek_dashboard/features/authentication/presentation/screens/dashboard_login_screen.dart';
+import 'package:drtarek_dashboard/features/authentication/presentation/widgets/password_visibility_toggle.dart';
 
 class _FakeAuthRepository implements AuthRepository {
   _FakeAuthRepository({this.result, this.error});
@@ -52,6 +54,14 @@ Future<void> _pumpScreen(
   await tester.pumpAndSettle();
 }
 
+/// Matches an [SvgPicture.asset] for the given asset path.
+Finder _svgAsset(String assetName) => find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is SvgPicture &&
+          widget.bytesLoader is SvgAssetLoader &&
+          (widget.bytesLoader as SvgAssetLoader).assetName == assetName,
+    );
+
 void main() {
   testWidgets('renders Figma composition at reference viewport',
       (WidgetTester tester) async {
@@ -65,19 +75,25 @@ void main() {
     expect(find.text('Password'), findsOneWidget);
     expect(find.text('Remember me'), findsOneWidget);
     expect(find.text('Created by Tarek el araby'), findsOneWidget);
-    expect(find.byIcon(Icons.smartphone_outlined), findsOneWidget);
+    // Figma Dev Mode trailing icons (SVG, per spec).
+    expect(_svgAsset('assets/images/Smartphone.svg'), findsOneWidget);
+    expect(_svgAsset('assets/images/Eye.svg'), findsOneWidget);
+    expect(
+      _svgAsset('assets/images/check_box_outline_blank.svg'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('password visibility toggle switches eye state',
       (WidgetTester tester) async {
     await _pumpScreen(tester);
 
-    expect(find.byIcon(Icons.visibility), findsOneWidget);
+    expect(_svgAsset('assets/images/Eye.svg'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.visibility));
+    await tester.tap(find.byType(PasswordVisibilityToggle));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+    expect(_svgAsset('assets/images/Eye off.svg'), findsOneWidget);
   });
 
   testWidgets('validation errors show safe field-level messages',
@@ -93,7 +109,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Login').last);
+    await tester.tap(find.text('login'));
     await tester.pumpAndSettle();
 
     expect(
@@ -119,7 +135,7 @@ void main() {
       find.widgetWithText(TextField, 'Password').first,
       'wrong-pass',
     );
-    await tester.tap(find.text('Login').last);
+    await tester.tap(find.text('login'));
     await tester.pumpAndSettle();
 
     expect(find.text('Incorrect phone number or password.'), findsOneWidget);
@@ -129,17 +145,14 @@ void main() {
     await _pumpScreen(tester);
 
     expect(
-      find.descendant(
-        of: find.widgetWithText(InkWell, 'Remember me'),
-        matching: find.byIcon(Icons.check_box_outline_blank),
-      ),
+      _svgAsset('assets/images/check_box_outline_blank.svg'),
       findsOneWidget,
     );
     await tester.tap(find.text('Remember me'));
     await tester.pumpAndSettle();
 
-    // After toggling, the checked Material glyph appears.
-    expect(find.byIcon(Icons.check_box), findsOneWidget);
+    // After toggling, the checked SVG glyph appears.
+    expect(_svgAsset('assets/images/check_box.svg'), findsOneWidget);
   });
 
   testWidgets('layout scrolls on short viewports without clipping the card',

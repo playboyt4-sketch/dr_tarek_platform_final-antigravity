@@ -18,9 +18,9 @@ const List<String> subscriptionPlanOrder = <String>[
 /// English nav labels matching the Figma `plans nav icons` frame.
 const Map<String, String> subscriptionPlanLabels = <String, String>{
   'guest': 'Guest',
-  'free': 'Center FREE',
-  'pro': 'Center PRO',
-  'max': 'Center MAX',
+  'free': 'FREE',
+  'pro': 'PRO',
+  'max': 'MAX',
 };
 
 /// One membership plan row (`plans` collection).

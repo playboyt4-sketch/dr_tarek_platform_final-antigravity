@@ -24,6 +24,16 @@ final videoEntitlementServiceProvider = Provider<VideoEntitlementService>((
   );
 });
 
+/// Max Subject playback-session gateway (server-owned sessions). Stateless:
+/// session state lives in the per-Subject controller/coordinator, never here.
+final playbackSessionGatewayProvider = Provider<PlaybackSessionGateway>((
+  ref,
+) {
+  return CallablePlaybackSessionGateway(
+    functions: FirebaseFunctions.instance,
+  );
+});
+
 final sharedPreferencesProvider = FutureProvider<SharedPreferences>((ref) {
   return SharedPreferences.getInstance();
 });

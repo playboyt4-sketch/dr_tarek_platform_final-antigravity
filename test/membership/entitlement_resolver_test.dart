@@ -224,7 +224,7 @@ MembershipPlan _plan() {
   return const MembershipPlan(
     id: 'plan-1',
     planName: 'Center Pro',
-    planKey: 'center_pro',
+    planKey: 'pro',
     studentType: 'center_student',
     displayOrder: 1,
     isActive: true,

@@ -1,10 +1,11 @@
 # 01 Project Vision
 
-Version: 2.0
+Version: 2.1
 Status: Approved
 
 ## Version History
 
+- **2.1** (2026-09-14): Alignment with Subject-Level Device Binding (00_MASTER_ARCHITECTURE.md v2.0 / ADR-004, FINAL_DECISIONS.md v2.0). Clarified that offline-download protection follows per-Subject device authorization; authentication is never blocked for device reasons. No implementation details added.
 - **2.0** (2026-08-04): Removed "Full Offline Learning" from Out-of-Vision (Version 1) list. Reason: FINAL_DECISIONS (2026-08-04) established offline learning with AES-256 DRM as a confirmed V1 requirement; this document is updated to remove the conflict, per Master Architecture Section 5.1 (Change Management — architectural changes require a documented reason and version increment). Full technical scope lives in FINAL_DECISIONS Section 2, 08 Development Standards Section 8, and 09 Tasks (T-000.12).
 - **1.1** and earlier: see prior revisions.
 
@@ -245,7 +246,7 @@ The following features are intentionally excluded from Version 1 to maintain foc
 | White-Label Deployment | Reserved for future commercial expansion. |
 | Advanced AI Features | Requires production data and future AI infrastructure. |
 
-**Note:** "Full Offline Learning" was previously listed here as deferred; per FINAL_DECISIONS (2026-08-04) it is now a confirmed Version 1 requirement (protected, device-bound offline downloads with AES-256 DRM). See Version History above.
+**Note:** "Full Offline Learning" was previously listed here as deferred; per FINAL_DECISIONS (2026-08-04) it is now a confirmed Version 1 requirement (protected, device-bound offline downloads with AES-256 DRM). Per ADR-004 (Master Architecture v2.0), device binding here means Subject-level authorization: downloads are usable only on devices authorized for that Subject, and login is never blocked for device reasons. See Version History above.
 
 ---
 

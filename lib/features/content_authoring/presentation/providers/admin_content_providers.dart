@@ -7,6 +7,7 @@ import '../../data/datasources/system_settings_data_source.dart';
 import '../../data/repositories/admin_content_repository_impl.dart';
 import '../../domain/entities/admin_content_entities.dart';
 import '../../domain/repositories/admin_content_repository.dart';
+import '../../domain/use_cases/lecture_access_use_cases.dart';
 import '../../domain/use_cases/lecture_use_cases.dart';
 import '../../domain/use_cases/resource_use_cases.dart';
 import '../../domain/use_cases/section_use_cases.dart';
@@ -22,6 +23,13 @@ final adminContentDataSourceProvider = Provider<AdminContentDataSource>((ref) {
 
 final systemSettingsDataSourceProvider = Provider<SystemSettingsDataSource>(
     (ref) => SystemSettingsDataSource());
+
+/// FINAL_DECISIONS §15 / Part E: the Teacher-configured platform default
+/// pre-selects the upload provider; the Admin can override per file.
+final defaultStorageProviderProvider = FutureProvider<String>((ref) async {
+  return await ref.watch(systemSettingsDataSourceProvider).defaultStorageProvider() ??
+      'firebase';
+});
 
 final adminContentRepositoryProvider = Provider<AdminContentRepository>((ref) {
   return AdminContentRepositoryImpl(
@@ -60,8 +68,8 @@ final updateLectureMetadataUseCaseProvider = Provider<UpdateLectureMetadata>(
     (ref) => UpdateLectureMetadata(ref.watch(_repo)));
 final setLecturePublishedUseCaseProvider = Provider<SetLecturePublished>(
     (ref) => SetLecturePublished(ref.watch(_repo)));
-final setLecturePublicFreeUseCaseProvider = Provider<SetLecturePublicFree>(
-    (ref) => SetLecturePublicFree(ref.watch(_repo)));
+final setLectureGuestPreviewUseCaseProvider = Provider<SetLectureGuestPreview>(
+    (ref) => SetLectureGuestPreview(ref.watch(_repo)));
 final archiveLectureUseCaseProvider =
     Provider<ArchiveLecture>((ref) => ArchiveLecture(ref.watch(_repo)));
 final reorderLecturesUseCaseProvider =
@@ -70,6 +78,16 @@ final watchArchivedLecturesUseCaseProvider = Provider<WatchArchivedLectures>(
     (ref) => WatchArchivedLectures(ref.watch(_repo)));
 final restoreLectureUseCaseProvider =
     Provider<RestoreLecture>((ref) => RestoreLecture(ref.watch(_repo)));
+
+// ---- Lecture Access (V1 approved backend: lecture_access_grants) ----
+final getSubjectGradeUseCaseProvider =
+    Provider<GetSubjectGrade>((ref) => GetSubjectGrade(ref.watch(_repo)));
+final watchStudentsUseCaseProvider =
+    Provider<WatchStudents>((ref) => WatchStudents(ref.watch(_repo)));
+final watchLectureAccessGrantsUseCaseProvider = Provider<WatchLectureAccessGrants>(
+    (ref) => WatchLectureAccessGrants(ref.watch(_repo)));
+final saveLectureAccessUseCaseProvider =
+    Provider<SaveLectureAccess>((ref) => SaveLectureAccess(ref.watch(_repo)));
 
 // ---- Resource use cases ----
 final watchResourcesUseCaseProvider =
@@ -84,6 +102,8 @@ final addExternalLinkResourceUseCaseProvider = Provider<AddExternalLinkResource>
     (ref) => AddExternalLinkResource(ref.watch(_repo)));
 final setResourceThumbnailUseCaseProvider = Provider<SetResourceThumbnail>(
     (ref) => SetResourceThumbnail(ref.watch(_repo)));
+final updateResourceUseCaseProvider =
+    Provider<UpdateResource>((ref) => UpdateResource(ref.watch(_repo)));
 final setResourceVisibilityUseCaseProvider = Provider<SetResourceVisibility>(
     (ref) => SetResourceVisibility(ref.watch(_repo)));
 final archiveResourceUseCaseProvider =
@@ -107,6 +127,19 @@ final adminSectionsProvider =
 final adminLecturesProvider =
     StreamProvider.family<List<Lecture>, String>((ref, sectionId) {
   return ref.watch(watchLecturesUseCaseProvider).execute(sectionId);
+});
+
+/// Approved students for the Lecture Access UI, optionally scoped to the
+/// subject's grade. Pure read path over existing schema.
+final lectureStudentsProvider =
+    StreamProvider.family<List<LectureStudent>, String?>((ref, gradeKey) {
+  return ref.watch(watchStudentsUseCaseProvider).execute(gradeKey: gradeKey);
+});
+
+/// Live explicit per-lecture grants. Missing grant = no override.
+final lectureAccessGrantsProvider =
+    StreamProvider.family<List<LectureAccessGrant>, String>((ref, lectureId) {
+  return ref.watch(watchLectureAccessGrantsUseCaseProvider).execute(lectureId);
 });
 
 /// Live resources list for one lecture — soft-deleted entries are filtered

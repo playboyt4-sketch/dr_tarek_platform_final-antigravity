@@ -2,8 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.0
+Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+
+## Version History
+
+- **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). `ADMIN_DEVICES` rescoped to per-Subject authorization management and the approved Device Reset model (student request → Teacher/authorized Admin acts; login never blocked; lost device alone triggers nothing). No new permission sets or audit action IDs introduced.
 
 ---
 
@@ -88,7 +92,7 @@ Admin permissions are **not binary** (Admin vs. non-Admin). Instead, the Teacher
 | Content Management | `ADMIN_CONTENT` | Create, edit, publish subjects, lectures, exams | ✅ Enabled |
 | Communication | `ADMIN_CHAT` | Reply to questions, chat with students, send notifications | ✅ Enabled |
 | Analytics (Operational) | `ADMIN_ANALYTICS` | View student progress, exam results, engagement metrics | ❌ Disabled |
-| Device Management | `ADMIN_DEVICES` | Replace student devices, view binding logs | ❌ Disabled |
+| Device Management | `ADMIN_DEVICES` | Manage per-Subject device authorization, view authorization logs, perform approved Device Reset | ❌ Disabled |
 | Payment View | `ADMIN_PAYMENTS_VIEW` | View payment logs (read-only) | ❌ Disabled |
 | System Settings (Limited) | `ADMIN_SETTINGS` | Configure non-business settings (notifications, terms) | ❌ Disabled |
 
@@ -107,8 +111,8 @@ Admin permissions are **not binary** (Admin vs. non-Admin). Instead, the Teacher
 | Assign membership plan | `ADMIN_STUDENTS` | Cannot assign plans above Admin's authority level |
 | View student profile | `ADMIN_STUDENTS` | — |
 | Edit student name/photo | `ADMIN_STUDENTS` | — |
-| Replace student device | `ADMIN_DEVICES` | Requires `ADMIN_DEVICES` permission |
-| Reset student password | ❌ Not permitted | Teacher (Platform Owner) has full authority. Admin may reset student passwords only when explicitly granted the password_reset permission by the Teacher. |
+| Manage per-Subject device authorization / perform approved Device Reset | `ADMIN_DEVICES` | Requires `ADMIN_DEVICES` permission; reset acts only on student request, never blocks login, and never follows automatically from a lost device |
+| Reset student password | `password.reset` (delegated) | Teacher (Platform Owner) has full authority. Admin only when explicitly granted `password.reset` by the Teacher; grant/revoke at any time, enforced server-side. |
 
 #### ADMIN_CONTENT — Content Management
 
@@ -160,10 +164,10 @@ Admin permissions are **not binary** (Admin vs. non-Admin). Instead, the Teacher
 
 | Action | Requires Permission | Additional Constraints |
 |--------|--------------------|------------------------|
-| View student devices | `ADMIN_DEVICES` | — |
-| Unbind/replace device | `ADMIN_DEVICES` | Logs reason for replacement |
-| View unauthorized attempt logs | `ADMIN_DEVICES` | — |
-| Approve factory reset rebind | `ADMIN_DEVICES` | — |
+| View student devices (per-Subject authorization state) | `ADMIN_DEVICES` | — |
+| Manage per-Subject authorization (authorize/unbind for a Subject) | `ADMIN_DEVICES` | Logs reason; never blocks login; no cross-Subject effect |
+| Perform approved Device Reset | `ADMIN_DEVICES` | Only on student request; clears authorization per the approved reset operation; student re-binds from scratch under Subject-level rules |
+| View Guest-tier resolution logs | `ADMIN_DEVICES` | Per-Subject Guest outcomes on authenticated sessions (never login rejections) |
 
 #### ADMIN_PAYMENTS_VIEW — Payment View (Read-Only)
 
@@ -212,7 +216,8 @@ admin_permissions (collection)
 │   ├── admin_analytics: false
 │   ├── admin_devices: false
 │   ├── admin_payments_view: false
-│   └── admin_settings: false
+│   ├── admin_settings: false
+│   └── "password.reset": false (delegated password-reset grant; legacy `password_reset` keys are migrated to this canonical key)
 └── restrictions: Array<String> (specific limitations, e.g., ["cannot_approve_center_to_public"])
 ```
 
@@ -538,9 +543,9 @@ Admin/Teacher Dashboard
 │   ├── Exam Statistics
 │   └── Security Events
 ├── Device Management
-│   ├── Bound Devices
-│   ├── Unauthorized Attempts
-│   └── Replacement Requests
+│   ├── Per-Subject Authorized Devices
+│   ├── Guest-Tier Resolutions (per Subject; never login rejections)
+│   └── Reset Requests (student-requested; approved reset only)
 ├── Audit & Compliance
 │   ├── Admin Audit Log
 │   ├── Pending Approvals Queue

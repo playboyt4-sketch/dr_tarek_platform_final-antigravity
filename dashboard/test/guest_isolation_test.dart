@@ -82,9 +82,9 @@ void main() {
       for (final String id in <String>['free', 'pro', 'max']) {
         expect(id, isNot('guest'));
       }
-      expect(subscriptionPlanLabels['free'], 'Center FREE');
-      expect(subscriptionPlanLabels['pro'], 'Center PRO');
-      expect(subscriptionPlanLabels['max'], 'Center MAX');
+      expect(subscriptionPlanLabels['free'], 'Free');
+      expect(subscriptionPlanLabels['pro'], 'Pro');
+      expect(subscriptionPlanLabels['max'], 'Max');
     });
 
     test('isolation matrix: planId + studentType jointly identify Guest', () {

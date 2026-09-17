@@ -191,9 +191,9 @@ const _planOrder = <String>['guest', 'free', 'pro', 'max'];
 
 const _planLabels = <String, String>{
   'guest': 'Guest',
-  'free': 'Center FREE',
-  'pro': 'Center PRO',
-  'max': 'Center MAX',
+  'free': 'Free',
+  'pro': 'Pro',
+  'max': 'Max',
 };
 
 /// Mirrors SENSITIVE_PLAN_FEATURES in functions/src/index.ts: Teacher-only

@@ -8,9 +8,9 @@ import 'package:drtarek_dashboard/features/subscription/presentation/screens/sub
 
 const List<SubscriptionPlan> _fakePlans = <SubscriptionPlan>[
   SubscriptionPlan(id: 'guest', label: 'Guest'),
-  SubscriptionPlan(id: 'free', label: 'Center FREE'),
-  SubscriptionPlan(id: 'pro', label: 'Center PRO'),
-  SubscriptionPlan(id: 'max', label: 'Center MAX'),
+  SubscriptionPlan(id: 'free', label: 'FREE'),
+  SubscriptionPlan(id: 'pro', label: 'PRO'),
+  SubscriptionPlan(id: 'max', label: 'MAX'),
 ];
 
 const Map<String, PlanFeatureState> _fakeMatrix = <String, PlanFeatureState>{
@@ -96,9 +96,9 @@ void main() {
       await _pumpScreen(tester, _FakeActions());
 
       expect(find.text('Guest'), findsOneWidget);
-      expect(find.text('Center FREE'), findsOneWidget);
-      expect(find.text('Center PRO'), findsOneWidget);
-      expect(find.text('Center MAX'), findsOneWidget);
+      expect(find.text('FREE'), findsOneWidget);
+      expect(find.text('PRO'), findsOneWidget);
+      expect(find.text('MAX'), findsOneWidget);
     });
 
     testWidgets('renders category pills and feature rows of selected plan',
@@ -126,11 +126,11 @@ void main() {
         find.textContaining('Guest — 2 of'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Center PRO'));
+      await tester.tap(find.text('PRO'));
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('Center PRO — 2 of'),
+        find.textContaining('PRO — 2 of'),
         findsOneWidget,
       );
     });

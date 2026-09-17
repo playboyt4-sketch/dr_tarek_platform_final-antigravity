@@ -20,7 +20,6 @@ import '../../../video_streaming/presentation/components/video_surface.dart';
 import '../../../video_streaming/presentation/controllers/video_playback_controller.dart';
 import '../../../video_streaming/presentation/providers/video_streaming_providers.dart';
 import '../../../membership/presentation/screens/membership_plans_screen.dart';
-import '../../../device_binding/presentation/providers/device_binding_provider.dart';
 import '../../../pdf_viewer/presentation/providers/pdf_viewer_providers.dart';
 import '../../data/datasources/pdf_remote_data_source.dart';
 
@@ -100,13 +99,10 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
       throw Exception('مستخدم غير مصرح له.');
     }
 
-    // 1. Validate device binding
-    final deviceBindingRepo = ref.read(deviceBindingRepositoryProvider);
-    final deviceInfo = await deviceBindingRepo.getDeviceInfo();
-    final isValidDevice = await deviceBindingRepo.validateDevice(userId: userId, deviceInfo: deviceInfo);
-    if (!isValidDevice) {
-      throw Exception('هذا الجهاز غير مصرح له للوصول للمحاضرة.');
-    }
+    // 1. Device authorization is enforced server-side per Subject (ADR-004):
+    // signed-URL issuance resolves the Full vs Guest tier, so no client
+    // global device gate exists here. A Guest device receives limited
+    // online preview and is never issued protected offline keys.
 
     // 2. Validate subscription & features
     final subscriptionAsync = ref.read(activeSubscriptionProvider((
@@ -142,22 +138,28 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
       }
     } catch (_) {}
 
-    // 3. Load resource key and file from offline cache first (if offline, or if cached)
+    // 3. Load resource key and file from this Subject's offline partition
+    // first (if offline, or if cached). Without a Subject there is no
+    // partition to read, so offline is skipped (fail closed).
     final drmRepo = await ref.read(drmRepositoryProvider.future);
-    final hasLocal = await drmRepo.hasEncryptedFile(resourceId: widget.resourceId);
-    
-    if (hasLocal) {
+    final offlineSubjectId = widget.subjectId;
+    final hasLocal = offlineSubjectId == null
+        ? false
+        : await drmRepo.hasEncryptedFile(subjectId: offlineSubjectId, resourceId: widget.resourceId);
+
+    final offlineSubject = offlineSubjectId;
+    if (hasLocal && offlineSubject != null) {
       // Revalidate pdf.offline entitlement
       final offlineFeature = features.where((f) => f.featureKey == 'pdf.offline').firstOrNull;
       final downloadFeature = features.where((f) => f.featureKey == 'pdf.download').firstOrNull;
       final canOffline = offlineFeature != null && offlineFeature.enabled && downloadFeature != null && downloadFeature.enabled;
-      
+
       if (!canOffline) {
-        // Entitlement revoked -> purge local cache immediately
-        await drmRepo.deleteEncryptedFile(resourceId: widget.resourceId);
+        // Entitlement revoked -> purge this Subject's local cache immediately
+        await drmRepo.deleteEncryptedFile(subjectId: offlineSubject, resourceId: widget.resourceId);
       } else {
         // Valid entitlement -> decrypt in memory
-        final bytes = await drmRepo.getDecryptedFile(resourceId: widget.resourceId, userId: userId);
+        final bytes = await drmRepo.getDecryptedFile(subjectId: offlineSubject, resourceId: widget.resourceId, userId: userId);
         if (bytes != null) {
           final tempPath = await _writeDecryptedToTemp(bytes);
           _isOfflineEnabled = true;
@@ -262,8 +264,8 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
     final drmRepo = await ref.read(drmRepositoryProvider.future);
 
     if (!enabled) {
-      // Disabling offline mode: purge local cache
-      await drmRepo.deleteEncryptedFile(resourceId: widget.resourceId);
+      // Disabling offline mode: purge this Subject's local cache
+      await drmRepo.deleteEncryptedFile(subjectId: subjectId, resourceId: widget.resourceId);
       setState(() => _isOfflineEnabled = false);
       _showToast('تم إزالة الملف من الذاكرة المحلية.');
       return;
@@ -296,8 +298,8 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
       return;
     }
 
-    // Check maximum offline limit
-    final list = await drmRepo.listEncryptedResources();
+    // Check maximum offline limit within this Subject's partition
+    final list = await drmRepo.listEncryptedResources(subjectId: subjectId);
     if (_offlineMaxLimit != null && list.length >= _offlineMaxLimit!) {
       _showToast('لقد وصلت للحد الأقصى للملفات المحملة ($_offlineMaxLimit ملفات).');
       return;
@@ -328,6 +330,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
 
       final expiresAt = subscription.endDate ?? DateTime.now().add(const Duration(days: 30));
       await drmRepo.saveEncryptedFile(
+        subjectId: subjectId,
         resourceId: widget.resourceId,
         plaintextBytes: bytes,
         userId: userId,

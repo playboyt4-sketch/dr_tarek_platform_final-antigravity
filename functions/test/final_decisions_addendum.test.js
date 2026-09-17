@@ -5,13 +5,13 @@
  * the existing node test convention in this repo.
  */
 const assert = require("assert");
-const {resolvePublicFreePreviewSeconds, pickDueLectures} = require("../lib/index.js");
+const {resolveGuestPreviewSeconds, pickDueLectures} = require("../lib/index.js");
 
 function testPreviewPolicy() {
   // Gate not armed → not applicable.
   assert.strictEqual(
-    resolvePublicFreePreviewSeconds({
-      publicFreeEnabled: false,
+    resolveGuestPreviewSeconds({
+      guestEnabled: false,
       lectureMinutes: 10,
       planDefaultMinutes: 5,
     }),
@@ -21,8 +21,8 @@ function testPreviewPolicy() {
 
   // Per-lecture minutes win over the plan default.
   assert.strictEqual(
-    resolvePublicFreePreviewSeconds({
-      publicFreeEnabled: true,
+    resolveGuestPreviewSeconds({
+      guestEnabled: true,
       lectureMinutes: 7,
       planDefaultMinutes: 3,
     }),
@@ -32,8 +32,8 @@ function testPreviewPolicy() {
 
   // Null lecture minutes fall back to the plan default.
   assert.strictEqual(
-    resolvePublicFreePreviewSeconds({
-      publicFreeEnabled: true,
+    resolveGuestPreviewSeconds({
+      guestEnabled: true,
       lectureMinutes: null,
       planDefaultMinutes: 12,
     }),
@@ -43,8 +43,8 @@ function testPreviewPolicy() {
 
   // Neither source set → zero cap (immediate upgrade wall, never unlimited).
   assert.strictEqual(
-    resolvePublicFreePreviewSeconds({
-      publicFreeEnabled: true,
+    resolveGuestPreviewSeconds({
+      guestEnabled: true,
       lectureMinutes: null,
       planDefaultMinutes: null,
     }),

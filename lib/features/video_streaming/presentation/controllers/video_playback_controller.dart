@@ -9,6 +9,7 @@ import '../../../subject_navigation/domain/entities/subject_learning_entities.da
 import '../../data/repositories/playback_repository.dart';
 import '../../data/services/video_source_resolver.dart';
 import '../../domain/entities/playback_entities.dart';
+import '../../domain/services/playback_session_coordinator.dart';
 
 class VideoPlaybackController extends ChangeNotifier {
   final String userId;
@@ -20,6 +21,16 @@ class VideoPlaybackController extends ChangeNotifier {
   /// FINAL_DECISIONS §12: self-read of the caller's rolling 24-hour window
   /// (null in tests / when unavailable — all consumers degrade gracefully).
   final WatchWindowGateway? watchWindowGateway;
+
+  /// Max Subject session gateway (null = sessions disabled; every consumer
+  /// degrades to the legacy path). Never decides authorization — the server
+  /// response alone determines Full vs Guest and session ownership.
+  final PlaybackSessionGateway? sessionGateway;
+
+  /// Local device identity supplier for session calls. Defaults to the
+  /// shared resolver used by URL issuance so both paths address the same
+  /// device. Identity material only, never proof.
+  final Future<String> Function()? deviceIdProvider;
 
   List<LectureSummary> episodes;
   String lectureId;
@@ -75,6 +86,18 @@ class VideoPlaybackController extends ChangeNotifier {
   final Map<String, ResolvedVideoSource> _prefetchedSources = {};
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
+  /// Active Max session runtime (ADR-004 follow-up). Held per controller
+  /// instance — the controller itself is already Subject-scoped, so no
+  /// session state can leak across Subjects. Null on Free/Pro/Guest paths.
+  PlaybackSessionCoordinator? _sessionCoordinator;
+
+  /// Set when the server ends our session (takeover/expiry/revocation).
+  /// While set, playback stays stopped; only explicit user intent
+  /// ([play]) may request a new begin, which the server alone decides.
+  /// BLOCKED (Figma): no dedicated takeover-interruption visual state
+  /// exists — behavior routes to the existing generic error state below.
+  bool _sessionInvalidated = false;
+
   VideoPlaybackController({
     required this.userId,
     required this.subjectId,
@@ -84,6 +107,8 @@ class VideoPlaybackController extends ChangeNotifier {
     required this.episodes,
     required LectureSummary episode,
     this.watchWindowGateway,
+    this.sessionGateway,
+    this.deviceIdProvider,
   }) : lectureId = episode.id,
        sectionId = episode.sectionId ?? '',
        episodeTitle = episode.title,
@@ -264,6 +289,14 @@ class VideoPlaybackController extends ChangeNotifier {
     }
   }
 
+  /// Drops any adopted session (episode switch, quality reload, retry).
+  /// Stops its heartbeat; resuming requires a fresh server verdict.
+  void _dropSession() {
+    _sessionCoordinator?.dispose();
+    _sessionCoordinator = null;
+    _sessionInvalidated = false;
+  }
+
   Future<void> _loadEngine({
     required int operation,
     Duration? positionToRestore,
@@ -273,6 +306,7 @@ class VideoPlaybackController extends ChangeNotifier {
     if (resource == null) {
       throw const VideoSourceException('مصدر الفيديو غير متاح.');
     }
+    _dropSession();
     _prefetchedSources.removeWhere((_, source) =>
         source.expiresAt.difference(DateTime.now()) <
         const Duration(seconds: 30));
@@ -291,6 +325,42 @@ class VideoPlaybackController extends ChangeNotifier {
     _sourceExpiresAt = source.expiresAt;
     if (_disposed || operation != _operationId) return;
 
+    // Max session adoption (ADR-004 follow-up): only when the server
+    // attached a session (2-allowance Subject, Full tier) and this is not
+    // a Guest preview. The server position below overrides any stale
+    // local restore point — it was just computed from persisted progress.
+    PlaybackSession? adoptedSession;
+    if (source.hasActiveSession &&
+        _previewCap == null &&
+        sessionGateway != null) {
+      final deviceId = await resolveLocalDeviceId(
+        override: deviceIdProvider,
+      );
+      if (_disposed || operation != _operationId) return;
+      final coordinator = PlaybackSessionCoordinator(
+        gateway: sessionGateway!,
+        studentId: userId,
+        subjectId: subjectId,
+        deviceId: deviceId,
+      );
+      adoptedSession = PlaybackSession(
+        subjectId: subjectId,
+        lectureId: lectureId,
+        videoId: resource.bunnyVideoId,
+        sessionToken: source.sessionToken!,
+        position: Duration(
+          seconds: (source.sessionPositionSeconds ?? 0).clamp(0, 24 * 60 * 60),
+        ),
+        takeover: source.sessionTakeover,
+        heartbeatInterval: source.heartbeatIntervalMs != null &&
+                source.heartbeatIntervalMs! > 0
+            ? Duration(milliseconds: source.heartbeatIntervalMs!)
+            : const Duration(seconds: 30),
+      );
+      coordinator.adopt(adoptedSession);
+      _sessionCoordinator = coordinator;
+    }
+
     final previous = _engine;
     previous?.removeListener(_onEngineUpdate);
     _engine = null;
@@ -304,16 +374,81 @@ class VideoPlaybackController extends ChangeNotifier {
       await next.dispose();
       return;
     }
-    if (positionToRestore != null && positionToRestore > Duration.zero) {
+    final effectiveRestore = adoptedSession != null
+        ? adoptedSession.position
+        : positionToRestore;
+    if (effectiveRestore != null && effectiveRestore > Duration.zero) {
       await next.seekTo(
-        ProgressMath.clampPosition(positionToRestore, next.value.duration),
+        ProgressMath.clampPosition(effectiveRestore, next.value.duration),
       );
     }
     playbackStatus = PlayerPlaybackStatus.ready;
     errorMessage = null;
     _notify();
+    final coordinator = _sessionCoordinator;
+    if (coordinator != null) {
+      coordinator.startHeartbeat(
+        positionProvider: () => position,
+        onInvalidated: () => _onSessionInvalidated(),
+      );
+      // Fail fast on stale (e.g. prefetched) tokens instead of waiting
+      // for the first interval tick.
+      unawaited(coordinator.beatNow());
+    }
     if (autoplay) await play();
     unawaited(prefetchNextEpisode());
+  }
+
+  /// Server ended our session (takeover by the other authorized device,
+  /// expiry, or revocation). Stop protected playback immediately, keep the
+  /// latest local position, and stay stopped: no silent rebind, no retry
+  /// loop. Only explicit user intent ([play]) may request a new begin.
+  Future<void> _onSessionInvalidated() async {
+    if (_disposed) return;
+    _sessionInvalidated = true;
+    final engine = _engine;
+    if (engine != null && engine.value.isPlaying) {
+      await engine.pause();
+    }
+    await _persistProgress(forceCloud: true);
+    playbackStatus = PlayerPlaybackStatus.error;
+    // Existing generic error state (no invented copy/layout).
+    // BLOCKED (Figma): dedicated takeover-interruption visual state.
+    errorMessage = 'حدث خطأ أثناء تشغيل الفيديو. يمكنك إعادة المحاولة.';
+    _notify();
+  }
+
+  /// Explicit user-intent re-begin after invalidation. Returns true when
+  /// the server grants a fresh session (which may itself take over the
+  /// other device — symmetric by design).
+  Future<bool> _beginAfterInvalidation() async {
+    final coordinator = _sessionCoordinator;
+    final resource = _resource;
+    if (coordinator == null || resource == null) return false;
+    try {
+      final session = await coordinator.begin(
+        lectureId: lectureId,
+        videoId: resource.bunnyVideoId,
+      );
+      _sessionInvalidated = false;
+      errorMessage = null;
+      await _engine?.seekTo(
+        ProgressMath.clampPosition(
+          session.position,
+          _engine?.value.duration ?? session.position,
+        ),
+      );
+      coordinator.startHeartbeat(
+        positionProvider: () => position,
+        onInvalidated: () => _onSessionInvalidated(),
+      );
+      _notify();
+      return true;
+    } on PlaybackSessionInvalidatedException {
+      return false;
+    } on PlaybackSessionTransportException {
+      return false;
+    }
   }
 
   String _sourceCacheKey(String episodeId, VideoQuality quality) =>
@@ -355,6 +490,7 @@ class VideoPlaybackController extends ChangeNotifier {
     if (value.hasError) {
       playbackStatus = PlayerPlaybackStatus.error;
       errorMessage = 'حدث خطأ أثناء تشغيل الفيديو. يمكنك إعادة المحاولة.';
+      _sessionCoordinator?.stopHeartbeat();
       _notify();
       return;
     }
@@ -371,6 +507,7 @@ class VideoPlaybackController extends ChangeNotifier {
     } else if (value.position >= value.duration &&
         value.duration > Duration.zero) {
       playbackStatus = PlayerPlaybackStatus.completed;
+      _sessionCoordinator?.stopHeartbeat();
       if (!showNextEpisodePrompt) {
         showNextEpisodePrompt = true;
         unawaited(_persistProgress(forceCloud: true));
@@ -451,6 +588,12 @@ class VideoPlaybackController extends ChangeNotifier {
   }
 
   Future<void> play() async {
+    if (_sessionInvalidated) {
+      // Explicit user intent after a server invalidation: one begin
+      // attempt, decided by the server alone. Failure stays stopped.
+      final rebegun = await _beginAfterInvalidation();
+      if (!rebegun || _disposed) return;
+    }
     final engine = _engine;
     if (_disposed ||
         engine == null ||
@@ -576,6 +719,7 @@ class VideoPlaybackController extends ChangeNotifier {
     String? newSectionId,
   }) async {
     if (_disposed || episode.id == lectureId) return;
+    _dropSession();
     _prefetchedSources.clear();
     final operation = ++_operationId;
     final shouldPlay = isPlaying;
@@ -723,6 +867,13 @@ class VideoPlaybackController extends ChangeNotifier {
         state == AppLifecycleState.hidden) {
       await _persistProgress(forceCloud: true);
       if (isPlaying) await _engine?.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      // Reconnection/foreground: validate the server session before any
+      // continuation. A rejection runs the standard invalidation path.
+      final coordinator = _sessionCoordinator;
+      if (coordinator != null && coordinator.hasLiveSession && !_disposed) {
+        unawaited(coordinator.beatNow());
+      }
     }
   }
 
@@ -775,6 +926,7 @@ class VideoPlaybackController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     unawaited(_persistProgress(forceCloud: true));
+    _dropSession();
     _disposed = true;
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;

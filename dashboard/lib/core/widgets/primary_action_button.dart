@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_typography.dart';
 
-/// Primary action button matching the Figma dashboard login button:
-/// 424 x 50, corner radius 28, fill #000000, centered label.
+/// Primary action button matching the approved Figma Dev Mode login CTA:
+/// 345 x 56, full capsule (radius 9999), fill royal blue #1D4ED8 with a
+/// 1 px white @ 30% border, label Google Sans Flex Regular 400 20 px white.
+/// Loading state shows a centered 24 px white circular progress indicator.
 class PrimaryActionButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -27,14 +29,14 @@ class PrimaryActionButton extends StatelessWidget {
       enabled: enabled,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
-          // Reference geometry is 424 x 50; never exceed the available
+          // Reference geometry is 345 x 56; never exceed the available
           // width on compact viewports.
           final double width = constraints.maxWidth.isFinite
-              ? constraints.maxWidth.clamp(0.0, 424)
-              : 424;
+              ? constraints.maxWidth.clamp(0.0, 345)
+              : 345;
           return SizedBox(
             width: width,
-            height: 50,
+            height: 56,
             child: ElevatedButton(
               onPressed: enabled ? onPressed : null,
               style: ElevatedButton.styleFrom(
@@ -46,7 +48,10 @@ class PrimaryActionButton extends StatelessWidget {
                 elevation: 0,
                 padding: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(28),
+                  borderRadius: BorderRadius.circular(9999),
+                  side: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.30),
+                  ),
                 ),
               ),
               child: isLoading
@@ -58,7 +63,7 @@ class PrimaryActionButton extends StatelessWidget {
                         color: Colors.white,
                       ),
                     )
-                  : Text(label, style: AppTypography.buttonLabel()),
+                  : Text(label, style: AppTypography.loginButtonLabel()),
             ),
           );
         },

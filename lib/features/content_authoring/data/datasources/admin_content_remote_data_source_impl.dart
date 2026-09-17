@@ -7,6 +7,23 @@ import '../../../lecture/domain/entities/lecture_resource.dart'
 import '../../domain/entities/admin_content_entities.dart';
 import 'admin_content_data_source.dart';
 
+/// Phase 1 Guest preview field mapping (FINAL_DECISIONS §11).
+/// Canonical keys first (`guest_enabled` / `guest_preview_minutes`);
+/// bounded fallback to legacy `public_free_*` keys for lecture documents
+/// not yet covered by the data migration.
+/// TODO(PHASE2C): drop the legacy keys once Dashboard + migration cover all docs.
+({bool guestEnabled, int? guestPreviewMinutes}) guestPreviewFromLectureMap(
+    Map<String, dynamic> data) {
+  return (
+    guestEnabled: (data['guest_enabled'] as bool?) ??
+        (data['public_free_enabled'] as bool?) ??
+        false,
+    guestPreviewMinutes: ((data['guest_preview_minutes'] as num?) ??
+            (data['public_free_preview_minutes'] as num?))
+        ?.toInt(),
+  );
+}
+
 /// Firestore access for staff content authoring.
 /// All writes land on collections governed by firestore.rules staff clauses;
 /// file bytes move through ResourceStorageGateway implementations
@@ -199,6 +216,7 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
 
   Lecture _lectureFrom(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data();
+    final preview = guestPreviewFromLectureMap(data);
     return Lecture(
       id: doc.id,
       sectionId: data['section_id'] as String? ?? '',
@@ -211,9 +229,8 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         'archived' => LectureStatus.archived,
         _ => LectureStatus.draft,
       },
-      publicFreeEnabled: data['public_free_enabled'] as bool? ?? false,
-      publicFreePreviewMinutes:
-          (data['public_free_preview_minutes'] as num?)?.toInt(),
+      guestEnabled: preview.guestEnabled,
+      guestPreviewMinutes: preview.guestPreviewMinutes,
     );
   }
 
@@ -225,8 +242,8 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled = false,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled = false,
+    int? guestPreviewMinutes,
   }) async {
     final ref = firestore.collection('lectures').doc();
     await ref.set({
@@ -241,9 +258,9 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
           publishDate == null ? null : Timestamp.fromDate(publishDate),
       'status': 'draft',
       'is_deleted': false,
-      // FINAL_DECISIONS §11 per-lecture Public Free control.
-      'public_free_enabled': publicFreeEnabled,
-      'public_free_preview_minutes': publicFreePreviewMinutes,
+      // FINAL_DECISIONS §11 per-lecture Guest preview control.
+      'guest_enabled': guestEnabled,
+      'guest_preview_minutes': guestPreviewMinutes,
       ..._createStamp,
     });
     return ref.id;
@@ -256,17 +273,17 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   }) async {
     await firestore.collection('lectures').doc(lectureId).update({
       'title': title,
       'description': description,
       'display_order': displayOrder,
       if (publishDate != null) 'publish_date': Timestamp.fromDate(publishDate),
-      // FINAL_DECISIONS §11 per-lecture Public Free control.
-      'public_free_enabled': ?publicFreeEnabled,
-      'public_free_preview_minutes': ?publicFreePreviewMinutes,
+      // FINAL_DECISIONS §11 per-lecture Guest preview control.
+      'guest_enabled': ?guestEnabled,
+      'guest_preview_minutes': ?guestPreviewMinutes,
       'updated_at': FieldValue.serverTimestamp(),
       'updated_by': _actorId,
     });
@@ -333,6 +350,103 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
           'updated_by': _actorId,
         },
       );
+    }
+    await batch.commit();
+  }
+
+  // ---- Lecture Access (V1 approved backend: lecture_access_grants) ----
+  @override
+  Future<String?> getSubjectGrade(String subjectId) async {
+    final doc =
+        await firestore.collection('subjects').doc(subjectId).get();
+    final grade = doc.data()?['grade'] as String?;
+    return (grade == null || grade.isEmpty) ? null : grade;
+  }
+
+  @override
+  Stream<List<LectureStudent>> watchStudents({String? gradeKey}) {
+    // Single-equality query (no composite index needed); grade scoping
+    // and name ordering are applied client-side below.
+    return firestore
+        .collection('users')
+        .where('role', isEqualTo: 'student')
+        .snapshots()
+        .map((snap) {
+      final students = <LectureStudent>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final grade = data['grade'] as String?;
+        if (gradeKey != null && grade != gradeKey) continue;
+        students.add(LectureStudent(
+          id: doc.id,
+          name: ((data['full_name'] as String?)?.trim().isEmpty ?? true)
+              ? doc.id
+              : (data['full_name'] as String).trim(),
+          grade: grade,
+        ));
+      }
+      students.sort((a, b) => a.name.compareTo(b.name));
+      return students;
+    });
+  }
+
+  @override
+  Stream<List<LectureAccessGrant>> watchLectureAccessGrants(
+      String lectureId) {
+    return firestore
+        .collection('lecture_access_grants')
+        .where('lecture_id', isEqualTo: lectureId)
+        .snapshots()
+        .map((snap) => snap.docs
+            // Soft-deleted grants carry no override (treated as missing,
+            // mirroring server enforcement).
+            .where((doc) => doc.data()['is_deleted'] != true)
+            .map((doc) {
+              final data = doc.data();
+              return LectureAccessGrant(
+                lectureId:
+                    (data['lecture_id'] as String?) ?? lectureId,
+                studentId: (data['student_id'] as String?) ?? '',
+                allowed: data['allowed'] as bool? ?? true,
+                isDeleted: data['is_deleted'] as bool? ?? false,
+                deletedAt: (data['deleted_at'] as Timestamp?)?.toDate(),
+                deletedBy: data['deleted_by'] as String?,
+              );
+            }).toList());
+  }
+
+  @override
+  Future<void> saveLectureAccess(List<LectureAccessGrant> grants) async {
+    if (grants.isEmpty) return;
+    final lectureId = grants.first.lectureId;
+    // One read: preserve created_* on existing grants so repeats and
+    // updates never reset creation audit info.
+    final existing = await firestore
+        .collection('lecture_access_grants')
+        .where('lecture_id', isEqualTo: lectureId)
+        .get();
+    final createdAtById = <String, Object?>{};
+    final createdByById = <String, Object?>{};
+    for (final doc in existing.docs) {
+      createdAtById[doc.id] = doc.data()['created_at'];
+      createdByById[doc.id] = doc.data()['created_by'];
+    }
+    // One batch: deterministic ids make duplicates structurally
+    // impossible and the save repeat-safe.
+    final batch = firestore.batch();
+    for (final grant in grants) {
+      final id = lectureAccessGrantDocId(grant.lectureId, grant.studentId);
+      final ref = firestore.collection('lecture_access_grants').doc(id);
+      final write = lectureAccessGrantWrite(
+        grant: grant,
+        existingCreatedAt: createdAtById[id],
+        existingCreatedBy: createdByById[id],
+        hadExistingDoc: createdAtById.containsKey(id),
+        actorId: _actorId,
+        serverTimestamp: FieldValue.serverTimestamp(),
+      );
+      batch.set(ref, write.fields,
+          write.isNew ? null : SetOptions(merge: true));
     }
     await batch.commit();
   }
@@ -440,8 +554,7 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
   }
 }
 
-/// Dual-provider wire value per FINAL_DECISIONS §15 / 05 Database v1.9:
-/// pdf/attachment documents always carry storage_provider; video stays
+/// Dual-provider wire value per FINAL_DECISIONS §15 / 05 Database v1.9:/// pdf/attachment documents always carry storage_provider; video stays
 /// implicitly Bunny with NO field; thumbnails carry their own key.
 String? _storageProviderWire(AdminLectureResource r) {
   final isFileBacked = r.resourceType == LectureResourceType.pdf ||
@@ -480,4 +593,46 @@ Map<String, dynamic> adminResourceFields(AdminLectureResource r) {
     'visibility': r.isVisible,
     'is_deleted': r.isDeleted,
   };
+}
+
+/// One batched grant write: document fields plus whether the target is
+/// new (full set) or existing (merge, preserving created_*).
+typedef LectureAccessGrantWrite = ({
+  Map<String, Object?> fields,
+  bool isNew,
+});
+
+/// Pure field mapping for `lecture_access_grants` documents (audit
+/// convention: created_at/by set once, updated_at/by on every write;
+/// soft-delete audit fields included for consistency — clients always
+/// write active state, revocation is `allowed: false`, never a delete).
+/// Extracted pure so the merge/audit behavior is unit-testable without
+/// Firestore; [serverTimestamp] is injected by the caller.
+LectureAccessGrantWrite lectureAccessGrantWrite({
+  required LectureAccessGrant grant,
+  required Object? existingCreatedAt,
+  required Object? existingCreatedBy,
+  required bool hadExistingDoc,
+  required String actorId,
+  required Object serverTimestamp,
+}) {
+  final Map<String, Object?> fields = {
+    'lecture_id': grant.lectureId,
+    'student_id': grant.studentId,
+    'allowed': grant.allowed,
+    'updated_at': serverTimestamp,
+    'updated_by': actorId,
+    // Clients never soft-delete: revocation is allowed=false.
+    'is_deleted': false,
+    'deleted_at': null,
+    'deleted_by': null,
+  };
+  if (hadExistingDoc) {
+    fields['created_at'] = existingCreatedAt ?? serverTimestamp;
+    fields['created_by'] = existingCreatedBy ?? actorId;
+    return (fields: fields, isNew: false);
+  }
+  fields['created_at'] = serverTimestamp;
+  fields['created_by'] = actorId;
+  return (fields: fields, isNew: true);
 }

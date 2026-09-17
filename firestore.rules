@@ -72,9 +72,11 @@ service cloud.firestore {
     }
 
     function canResetPassword() {
+      // Canonical key is `password.reset`; legacy `password_reset` is
+      // honored transitionally until lazy migration converges all docs.
       return isTeacher()
-        || activeAdminPermission('password_reset')
-        || activeAdminPermission('password.reset');
+        || activeAdminPermission('password.reset')
+        || activeAdminPermission('password_reset');
     }
 
     function canManageAcademicTerms() {
@@ -106,6 +108,26 @@ service cloud.firestore {
         && assignment.data.is_deleted == false
         && assignment.data.subscription_expires_at > request.time
         && entitlementName in assignment.data.entitlements;
+    }
+
+    // V1 Individual Per-Lecture Student Access (project-owner approved).
+    // Explicit per-student deny override: a grant document
+    // lecture_access_grants/{lectureId_studentId} with allowed == false
+    // denies the lecture even when plan/subject checks would pass.
+    // Missing grant (or allowed == true) defers to the normal model.
+    function lectureAccessGrantId(lectureId, userId) {
+      return lectureId + '_' + userId;
+    }
+
+    function isLectureDenied(userId, lectureId) {
+      return lectureId is string && lectureId.size() > 0
+        && exists(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId)))
+        && get(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId))).data.allowed == false
+        && get(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId))).data.get('is_deleted', false) != true;
+    }
+
+    function canManageLectureAccess() {
+      return isTeacher() || canManageStudents() || canManageContent();
     }
 
     // User profiles are readable only after password_hash has been migrated
@@ -154,8 +176,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Device Registry (ADR-004): recognition/audit metadata only. No rule
+    // compares a client-provided device identifier as proof of hardware;
+    // dynamic device-tier decisions live server-side in Cloud Functions.
     match /devices/{deviceId} {
       allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
+        || canManageDevices();
+      allow create, update, delete: if false;
+    }
+
+    // Subject-Device Authorization (ADR-004): server-written only.
+    // Students read their own rows; staff manage visibility via existing
+    // device-management delegation. No client tier marker is introduced.
+    match /subject_device_authorizations/{authorizationId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+        || canManageDevices();
+      allow create, update, delete: if false;
+    }
+
+    // Max Playback Sessions (ADR-004 follow-up): server-written only.
+    // Session authority lives in Cloud Functions; clients hold opaque
+    // tokens, never session state. No client session writes are allowed.
+    match /playback_sessions/{sessionId} {
+      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canManageDevices();
       allow create, update, delete: if false;
     }
@@ -192,7 +235,12 @@ service cloud.firestore {
       allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
         || canManageContent()
         || isTeacher();
-      allow write: if false;
+      allow create: if canManageContent()
+        && request.resource.data.get('is_deleted', false) == false
+        && request.resource.data.get('title', '') is string;
+      allow update: if canManageContent()
+        && request.resource.data.get('is_deleted', false) == false;
+      allow delete: if false;
     }
 
     match /subject_sections/{sectionId} {
@@ -215,11 +263,39 @@ service cloud.firestore {
     }
 
     match /lecture_resources/{resourceId} {
-      allow get, list: if (resource == null ? false : (isApprovedContent(resource.data) && hasSubjectAccess(request.auth.uid, resource.data.get('subject_id', 'missing-subject'))))
+      allow get, list: if (resource == null ? false : (isApprovedContent(resource.data) && hasSubjectAccess(request.auth.uid, resource.data.get('subject_id', 'missing-subject')) && !isLectureDenied(request.auth.uid, resource.data.get('lecture_id', ''))))
         || canManageContent()
         || isTeacher();
       allow create: if canManageContent();
       allow update: if canManageContent();
+      allow delete: if false;
+    }
+
+    // V1 Individual Per-Lecture Student Access grants.
+    // Staff manage via the centralized permission model (teacher,
+    // student-management, or content-management delegation) — no new
+    // permission key. Students have NO access here: enforcement is
+    // server-side (Cloud Functions + the lecture_resources gate above),
+    // so the collection is never client-readable for students.
+    // Soft-delete audit fields are part of the approved schema for
+    // architectural consistency; clients always write the active state
+    // (revocation is allowed=false, never a delete — delete stays denied).
+    match /lecture_access_grants/{grantId} {
+      allow get, list: if canManageLectureAccess();
+      allow create: if canManageLectureAccess()
+        && request.resource.data.lecture_id is string
+        && request.resource.data.student_id is string
+        && request.resource.data.allowed is bool
+        && request.resource.data.is_deleted == false
+        && (request.resource.data.lecture_id + '_' + request.resource.data.student_id) == grantId;
+      allow update: if canManageLectureAccess()
+        && request.resource.data.lecture_id is string
+        && request.resource.data.student_id is string
+        && request.resource.data.allowed is bool
+        && request.resource.data.is_deleted == false
+        && (request.resource.data.lecture_id + '_' + request.resource.data.student_id) == grantId
+        && request.resource.data.lecture_id == resource.data.lecture_id
+        && request.resource.data.student_id == resource.data.student_id;
       allow delete: if false;
     }
 
@@ -388,7 +464,33 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Student-level payment ledger (payment_logs): staff read-only
+    // visibility; all writes go exclusively through the Teacher-only
+    // payment callables (onPaymentLogged, correctPaymentLog,
+    // setStudentFinancialAccount via Admin SDK), never direct clients.
     match /payment_logs/{paymentId} {
+      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow write: if false;
+    }
+
+    // Student financial accounts (student-level finance): staff read-only
+    // visibility for the Dashboard ledger; all writes go exclusively
+    // through the Teacher-only setStudentFinancialAccount callable
+    // (Admin SDK), never direct clients.
+    match /student_financial_accounts/{studentId} {
+      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow write: if false;
+    }
+
+    // Manual per-Student x Subject pricing reference
+    // (student_subject_pricing_database_change_authority.md): staff
+    // read-only visibility for the Dashboard Payments Subjects table,
+    // reusing the existing Payments read authorization
+    // (canViewPayments / canManagePayments); all writes go exclusively
+    // through the Teacher-only setStudentSubjectPricing callable
+    // (Admin SDK), never direct clients. No subject-level payment
+    // authorization is introduced here.
+    match /student_subject_pricing/{pricingId} {
       allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
       allow write: if false;
     }
@@ -422,9 +524,14 @@ service cloud.firestore {
 
     match /password_reset_requests/{requestId} {
       allow get, list: if isTeacher() || canManageStudents() || canResetPassword();
-      allow create: if (isTeacher() || (isStudent() && request.resource.data.student_id == request.auth.uid))
+      // Student self-request (08 §9.2) or staff with reset authority.
+      // Canonical create schema: student_id, phone_number, status,
+      // requested_at, created_at (server callable writes both timestamps).
+      allow create: if (isTeacher() || canResetPassword() || (isStudent() && request.resource.data.student_id == request.auth.uid))
         && request.resource.data.status == 'pending'
-        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'status', 'requested_at']);
+        && request.resource.data.student_id is string
+        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'phone_number', 'status', 'requested_at', 'created_at'])
+        && (!('phone_number' in request.resource.data) || request.resource.data.phone_number is string);
       allow update, delete: if false;
     }
 

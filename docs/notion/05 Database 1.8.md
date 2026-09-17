@@ -2,11 +2,13 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.8
+Version: 1.10
 Status: Proposed — Pending Teacher Database Change Approval
 
 ## Version History
 
+- **1.10** (2026-09-14, proposed): Implementation-design detail for Subject-Level Device Binding per the approved Implementation Architecture Specification. Documents the PROPOSED `subject_device_authorizations` relationship (fields, deterministic ID, query/index patterns, reset/unbind, audit) and the PROPOSED `playback_sessions` scope — all clearly labeled as recommendations pending approval. Approval status unchanged: Version 1.7 remains the approved baseline; nothing here is marked Approved.
+- **1.9** (2026-09-14, proposed): Conceptual alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Separates the account-level Device Registry from per-Subject authorization; deprecates global authorization semantics of existing device fields; requires a new Subject-Device Authorization relationship whose final storage shape is an explicit schema decision pending approval. No new collection, field, deterministic ID, soft-delete strategy, or index is finalized here. Version 1.7 remains the approved baseline.
 - **1.8** (2026-08-15, proposed): Feature 14 Membership + Independent Subject Access + updated approval/access rules. Version 1.7 remains preserved as the approved baseline.
 - **1.7** (2026-08-10): Formally added `devices.fcm_token` to the `devices` collection schema to support the approved Firebase Cloud Messaging token-storage decision.
 - **1.6** (2026-08-04): Added `grade` field to `users` (Section on `users` collection) to support the approved Figma registration flow — student self-selects their Grade (الفرقة) at signup. This is a new, distinct field from `subjects.current_term` / `system_settings.current_term` ("Academic Year/Term"), which remains admin-only scheduling metadata and is unaffected by this change (Section 10 and 23 rules on hiding Academic Year/Term from students still apply). Added corresponding per-grade color tokens reference to 11 Assets.
@@ -345,17 +347,17 @@ Supports
 
 ---
 
-# 14. Device Policy
+# 14. Device Policy (per ADR-004; conceptual — storage design pending, see Section 16)
 
-- Device Limit Is Plan-Based (default 1 device; 2+ for Center Max — see `plan_features`)
-- Device Binding Enabled
-- Device Replacement Requires Admin Approval
+- Device Allowance Is Plan-Based Per Subject (Free = 1, Pro = 1, Max = 2 authorized devices for that Subject — see `plan_features`; each Subject consumes its own subscription's allowance; no cross-Subject authorization)
+- Subject-Level Device Binding Enabled (authorization on first actual Subject access; login never rejected; Guest tier never mutates the subscription)
+- Per-Subject Authorization Management and Approved Device Reset Require Teacher / Authorized Admin Action on Student Request (ordinary logout is not a reset; a lost device alone triggers nothing)
 
 ---
 
 # 15. Analytics Policy
 
-Every user action generates an Analytics Event. This includes membership operations (upgrade, downgrade, freeze, resume, and Student Type conversion) and unauthorized device attempts. Gift Membership is removed from the current business flow and does not generate a current-version Gift event.
+Every user action generates an Analytics Event. This includes membership operations (upgrade, downgrade, freeze, resume, and Student Type conversion) and per-Subject authorization outcomes (Full vs Guest-tier resolutions, authorizations, unbinds, approved resets — never login rejections). Gift Membership is removed from the current business flow and does not generate a current-version Gift event.
 
 ---
 
@@ -378,30 +380,38 @@ Contains
 | grade | String | Student's self-selected academic grade/year (الفرقة), e.g. `grade_one` / `grade_two` / `grade_three` / `grade_four`. Set once at registration; not editable by the student afterward. Distinct from `subjects.current_term` / `system_settings.current_term` ("Academic Year/Term"), which is unrelated content-scheduling metadata and remains admin-only (Section 10, 23). The set of valid grades is configurable, not hardcoded, per Master Architecture Section 5. |
 | approval_status | String | Registration approval workflow status |
 | account_status | String | Active / suspended / disabled |
-| current_device_id | String | Reference to `devices` |
+| current_device_id | String | DEPRECATED as authorization truth (per ADR-004). A single account-level device pointer cannot represent per-Subject authorization. Retained in this proposal only for registry/migration reference pending the implementation design; must never gate content or login. |
 | password_last_changed_at | Timestamp | |
 
 ---
 
 ## devices
 
-Stores registered devices.
+Stores known devices (account-level Device Registry per ADR-004 — identification, metadata, and audit; never a login gate).
 
 Contains
 
 | Field | Type | Description |
 | --- | --- | --- |
 | user_id | String | Reference to the owning `users` document. |
-| device_id | String | Stable device identifier used by Device Binding. |
+| device_id | String | Stable device identifier used for device recognition. |
 | device_name | String \| null | Human-readable device name when available. |
 | platform | String | Device platform / operating system family. |
 | os_version | String \| null | Operating-system version when available. |
 | app_version | String \| null | Installed application version when available. |
 | last_login | Timestamp \| null | Last successful login timestamp for the device. |
-| active_device | Boolean | Whether the device is currently authorized/active. |
+| active_device | Boolean | DEPRECATED as authorization truth (per ADR-004). A global active flag cannot express "authorized for Subject C but Guest for Subject A". Retained in this proposal only pending the implementation design; must never gate content or login. |
 | fcm_token | String \| null | Current Firebase Cloud Messaging token for this device; updated on token refresh and used for push notification delivery. |
 
-The `fcm_token` field is stored per device, not per user, because one user may have multiple authorized devices under the plan-based Device Binding policy.
+The `fcm_token` field is stored per device, not per user, because one account may be seen from multiple devices under the Subject-level authorization policy. Registry records additionally support device metadata needed for later identification and audit (device type/platform, identity/fingerprint information, IP information); IP information is metadata only and never the sole permanent device identity.
+
+> PROPOSED Subject-Device Authorization relationship (RECOMMENDED TECHNICAL DESIGN — pending approval; Version 1.7 baseline unaffected). A first-class relationship keyed by Student + Subject + Device records which devices hold Full access to which Subjects (allowances Free 1 / Pro 1 / Max 2 for that Subject, each from its own subscription; binding on first actual Subject access via a server-side transaction; Guest is a computed outcome — no record is created for Guest, so Guest can never mutate the subscription). Proposed collection: `subject_device_authorizations` (top-level, not a subcollection — it is queried independently by student, by subject, and by device). Proposed deterministic document ID: `{student_id}_{subject_id}_{device_hash}` (idempotent first-access writes; safe retries).
+>
+> Proposed fields (snake_case, `*_at` timestamps, full audit quartet, soft-delete flags per existing conventions): `student_id`, `subject_id`, `device_hash`, `device_ref` (registry join for audit; never re-queried for decisions), `plan_key_at_bind` (audit snapshot only; live allowance always re-read), `status` (`active` / `revoked`, revoked rows retained for history), `authorized_at`, `authorized_via` (`first_access` / `admin_grant` / `reset_rebind`), `last_used_at` (stale-slot evidence), `revoked_at` / `revoked_by` / `revoke_reason` (`reset` / `admin_unbind` / `subscription_ended` / `downgrade_admin`).
+>
+> Proposed query/index patterns (to be declared in `firestore.indexes.json` at implementation): slot check `(student_id, subject_id, status)`; student overview `(student_id, status)`; Admin per-Subject view `(subject_id, status)`; reset/unbind by device `(student_id, device_hash, status)`; stale-slot review ordered by `last_used_at` within the above scopes.
+>
+> Reset/unbind (per approved model): the approved Device Reset revokes all active authorizations for the student (reason `reset`; login stays allowed; rebinding restarts via first-access); per-Subject unbind revokes one record (reason `admin_unbind`); subscription end is observed live at evaluation time (records retained, reason `subscription_ended` where recorded). Audit: every mutation writes an `analytics_events` record and, for staff actions, an `admin_audit_log` entry (actor, role, target, previous→new state, basis, reason, server timestamps). No automatic migration of old account-level bindings into this relationship is defined.
 
 ---
 
@@ -417,6 +427,7 @@ Contains
 - Current Term
 - Visibility
 - Status
+- Grade (`grade`, e.g. `grade_one` — de-facto field already read by the Dashboard approval flow and the Lecture Access student list; ratified here, not newly introduced)
 
 ---
 
@@ -756,7 +767,7 @@ Contains
 ---
 
 
-**Note on max_devices:** The maximum number of devices allowed per student is controlled through `plan_features` (Feature Matrix) rather than a hardcoded field on `plans`. The Cloud Function `onLoginAttempt` reads this value from the active plan's features to enforce device binding limits. Default values: Free/Pro plans = 1 device, Center Max plan = 2+ devices (configurable from Dashboard).
+**Note on max_devices (per ADR-004):** The maximum number of authorized devices is controlled through `plan_features` (Feature Matrix) rather than a hardcoded field on `plans`, and is consumed per Subject from that Subject's own subscription plan — never as one global account allowance and never as a login gate. Default allowances: Free = 1, Pro = 1, Max = 2 authorized devices for that Subject. The prior login-time account enforcement is superseded.
 
 ## plan_features
 
@@ -864,6 +875,39 @@ Constraint: one deterministic, non-deleted assignment per (student, subject) pai
 
 ---
 
+## lecture_access_grants
+
+Stores the V1 Individual Per-Lecture Student Access decision for one student and one lecture (project-owner approved for V1; lifts the 04 Features V2 postponement for Individual Access only — Group Access remains V2).
+
+Document ID
+
+```text
+{lecture_id}_{student_id}
+```
+
+Deterministic: the same lecture/student pair can never produce two documents. No duplicated stored `id` field.
+
+Contains
+
+| Field | Type | Description |
+| --- | --- | --- |
+| lecture_id | String | Reference to `lectures` |
+| student_id | String | Reference to `users` |
+| allowed | Boolean | Explicit override: `false` denies the lecture even when plan/subject checks would pass; `true` permits it subject to all other mandatory requirements |
+| created_at | Timestamp | Common audit field |
+| updated_at | Timestamp | Common audit field |
+| created_by | String | Creating actor (staff uid) |
+| updated_by | String | Last updating actor (staff uid) |
+| is_deleted | Boolean | Soft-delete flag (always `false` from clients; revocation is `allowed: false`, never a delete) |
+| deleted_at | Timestamp \| null | Soft-delete timestamp (server-side lifecycle only) |
+| deleted_by | String \| null | Soft-delete actor (server-side lifecycle only) |
+
+No `delete` from clients (denied by Security Rules): revocation is represented by writing `allowed: false`. The soft-delete fields exist for architectural consistency and future lifecycle requirements. A soft-deleted grant (server-side only) carries no override and is treated as missing by enforcement.
+
+Fallback: a missing grant document means NO override — the student follows the existing lecture eligibility model (subject access, subscription, publication, availability). An explicit `allowed: true` grant never bypasses authentication, subscription, publication, availability, or security requirements.
+
+---
+
 ## trial_campaigns
 
 Stores trial campaigns.
@@ -943,7 +987,7 @@ Open Notification
 
 Open Chat
 
-Unauthorized Device Attempt
+Unauthorized Device Attempt (per-Subject Guest-tier resolution on an authenticated session; never a login rejection — per ADR-004)
 ```
 
 Contains
@@ -1104,6 +1148,7 @@ lectures
  ├── lecture_resources
  ├── timeline_quizzes
  ├── lecture_progress
+ ├── lecture_access_grants
  ├── notes
  ├── student_questions
  └── bookmarks
@@ -1135,7 +1180,7 @@ chat_rooms
 - Every collection uses Soft Delete.
 - Every document contains Audit Fields.
 - `users.display_handle`, when set, must be unique across all users.
-- Device limit per student is plan-based (default 1 device; 2+ for Center Max, per `plan_features`).
+- Device allowance is plan-based per Subject (Free = 1, Pro = 1, Max = 2 authorized devices for that Subject, per `plan_features`); no single global allowance; a higher plan on one Subject never raises another Subject's allowance.
 - One active subscription per subject.
 - Subject Access is an independent gate and is evaluated before Subscription, Active Plan, and `plan_features`.
 - Missing or disabled Subject Access denies access and prevents first-open Free Plan activation.
@@ -1273,14 +1318,14 @@ subject_id + is_deleted + enabled
 - Manage Sections (system and custom)
 - Manage Membership Plans
 - Manage Payments
-- Manage Devices
+- Manage Per-Subject Device Authorization and Approved Device Reset
 - Answer Student Questions
 - View Analytics
 - Send Notifications
 
 ## Student
 
-- Access Approved Subjects only after Subject Access, Subscription, Active Plan, and `plan_features` checks pass.
+- Access Approved Subjects only after Subject Access, Subscription, Active Plan, and `plan_features` checks pass, at the Full or Guest tier resolved from this device's Subject-Device authorization for that Subject.
 - Cannot modify Subject Access or Student Type.
 - Watch Allowed Content (per Feature Matrix)
 - Submit Exams

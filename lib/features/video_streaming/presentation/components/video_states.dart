@@ -116,7 +116,7 @@ class VideoResumePrompt extends StatelessWidget {
 }
 
 /// FINAL_DECISIONS §11/§12: full-screen upgrade wall. Shown either when
-/// the Public Free per-lecture minute cap is reached (§11) or when a Center
+/// the Guest per-lecture minute cap is reached (§11) or when a Center
 /// Free student tries to start a DIFFERENT video inside their rolling
 /// 24-hour window (§12 — [controller.dailyWindowBlocked]). Purely
 /// presentational; both gates are computed/enforced server-side.
@@ -160,7 +160,7 @@ class VideoUpgradePrompt extends StatelessWidget {
             Text(
               controller.dailyWindowBlocked
                   ? 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.'
-                  : controller.resource?.isPublicFreePreview == true
+                  : controller.resource?.isGuestPreview == true
                       ? 'انتهت الدقائق المجانية المسموح بها لهذه المحاضرة.'
                       : 'هذا المحتوى متاح لمشتركي الباقة المدفوعة.',
               textAlign: TextAlign.center,

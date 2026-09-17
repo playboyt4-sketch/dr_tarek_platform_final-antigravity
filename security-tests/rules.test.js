@@ -103,6 +103,63 @@ async function seed() {
       is_deleted: false,
       subject_id: 'subject-1',
     });
+    await db.doc('lectures/grant-lecture').set({
+      status: 'published',
+      is_deleted: false,
+      subject_id: 'subject-1',
+    });
+    await db.doc('lecture_resources/grant-res').set({
+      status: 'published',
+      is_deleted: false,
+      subject_id: 'subject-1',
+      lecture_id: 'grant-lecture',
+      resource_type: 'pdf',
+      title: 'Denied PDF',
+    });
+    await db.doc('lecture_resources/grant-res-allowed').set({
+      status: 'published',
+      is_deleted: false,
+      subject_id: 'subject-1',
+      lecture_id: 'grant-lecture',
+      resource_type: 'pdf',
+      title: 'Allowed PDF',
+    });
+    // V1 per-lecture access: explicit deny for student-safe, explicit
+    // allow for student-allowed on the same lecture.
+    await db.doc('lecture_access_grants/grant-lecture_student-safe').set({
+      lecture_id: 'grant-lecture',
+      student_id: 'student-safe',
+      allowed: false,
+      is_deleted: false,
+      created_at: new Date(),
+      created_by: 'teacher-1',
+      updated_at: new Date(),
+      updated_by: 'teacher-1',
+    });
+    await db.doc('users/student-allowed').set({
+      id: 'student-allowed',
+      full_name: 'Student Allowed',
+      role: 'student',
+      approval_status: 'approved',
+      account_status: 'active',
+      is_deleted: false,
+    });
+    await db.doc('subject_access_assignments/student-allowed_subject-1').set({
+      student_id: 'student-allowed',
+      subject_id: 'subject-1',
+      is_deleted: false,
+      enabled: true,
+    });
+    await db.doc('lecture_access_grants/grant-lecture_student-allowed').set({
+      lecture_id: 'grant-lecture',
+      student_id: 'student-allowed',
+      allowed: true,
+      is_deleted: false,
+      created_at: new Date(),
+      created_by: 'teacher-1',
+      updated_at: new Date(),
+      updated_by: 'teacher-1',
+    });
     await db.doc('lectures/draft').set({
       status: 'draft',
       is_deleted: false,
@@ -141,6 +198,11 @@ async function seed() {
       is_deleted: false,
       enabled: true,
     });
+    await db.doc('security_events/seeded-event').set({
+      user_id: 'student-safe',
+      event_type: 'screenshot',
+      severity: 'medium',
+    });
   });
 }
 
@@ -161,6 +223,14 @@ async function run() {
 
     await assertFails(dbFor('anonymous').collection('users').doc('student-safe').get());
     await assertSucceeds(dbFor('student-safe', {role: 'student', approved: true}).collection('users').doc('student-safe').get());
+    // T-CF.13: security_events are server-only. No client may create,
+    // modify, or delete them; staff with device/analytics visibility may read.
+    await assertFails(dbFor('student-safe', {role: 'student', approved: true}).collection('security_events').add({user_id: 'student-safe', event_type: 'screenshot'}));
+    await assertFails(dbFor('anonymous').collection('security_events').add({user_id: 'x', event_type: 'emulator'}));
+    await assertFails(dbFor('student-safe', {role: 'student', approved: true}).collection('security_events').doc('seeded-event').update({severity: 'low'}));
+    await assertFails(dbFor('student-safe', {role: 'student', approved: true}).collection('security_events').doc('seeded-event').delete());
+    await assertFails(dbFor('teacher-1', {role: 'teacher'}).collection('security_events').add({user_id: 'teacher-1', event_type: 'screenshot'}));
+    await assertSucceeds(dbFor('teacher-1', {role: 'teacher'}).collection('security_events').doc('seeded-event').get());
     await assertFails(dbFor('student-secret', {role: 'student', approved: true}).collection('users').doc('student-secret').get());
 
     await assertFails(
@@ -244,6 +314,145 @@ async function run() {
     await assertSucceeds(
       dbFor('teacher-1', {role: 'teacher', approved: true})
         .collection('lectures').doc('draft').get(),
+    );
+
+    // V1 Individual Per-Lecture Student Access (approved backend).
+    // 8. Students cannot read the grants collection (not even own record —
+    //    enforcement is server-side through callables + the resource gate).
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').get(),
+    );
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_access_grants').get(),
+    );
+    // 8. Students cannot modify any grant.
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').update({allowed: true}),
+    );
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-safe',
+          allowed: true,
+        }),
+    );
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').delete(),
+    );
+    // 6. Denied student cannot obtain protected lecture resources even
+    //    though the lecture is published and the subject allows them.
+    await assertFails(
+      dbFor('student-safe', {role: 'student', approved: true})
+        .collection('lecture_resources').doc('grant-res').get(),
+    );
+    // 7. Allowed student still passes the mandatory checks.
+    await assertSucceeds(
+      dbFor('student-allowed', {role: 'student', approved: true})
+        .collection('lecture_resources').doc('grant-res-allowed').get(),
+    );
+    // 10. Teacher / authorized Admins manage grants through the
+    // centralized permission model (admin_students or admin_content).
+    await assertSucceeds(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').get(),
+    );
+    await assertSucceeds(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-new').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-new',
+          allowed: true,
+          is_deleted: false,
+        }),
+    );
+    // Soft-delete audit state: clients always write the active state.
+    await assertFails(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-new').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-new',
+          allowed: true,
+          is_deleted: true,
+        }),
+    );
+    // Deterministic identity is enforced: id must equal lecture_student.
+    await assertFails(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('wrong-id').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-new',
+          allowed: true,
+          is_deleted: false,
+        }),
+    );
+    // Identity fields are immutable on update.
+    await assertFails(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').update({
+          lecture_id: 'other-lecture',
+          student_id: 'student-safe',
+          allowed: true,
+          is_deleted: false,
+        }),
+    );
+    // Client-side soft-delete is rejected (revocation is allowed=false).
+    await assertFails(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').update({
+          allowed: false,
+          is_deleted: true,
+        }),
+    );
+    // Grants are never hard-deleted.
+    await assertFails(
+      dbFor('teacher-1', {role: 'teacher', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').delete(),
+    );
+    await assertSucceeds(
+      dbFor('admin-with-students', {role: 'admin', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-admin').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-admin',
+          allowed: false,
+          is_deleted: false,
+        }),
+    );
+    await assertSucceeds(
+      dbFor('admin-with-content', {role: 'admin', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-admin').get(),
+    );
+    await assertFails(
+      dbFor('admin-with-chat', {role: 'admin', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-safe').get(),
+    );
+    await assertFails(
+      dbFor('admin-with-chat', {role: 'admin', approved: true})
+        .collection('lecture_access_grants')
+        .doc('grant-lecture_student-x').set({
+          lecture_id: 'grant-lecture',
+          student_id: 'student-x',
+          allowed: true,
+          is_deleted: false,
+        }),
     );
 
     await assertFails(
@@ -1043,19 +1252,20 @@ async function run() {
       .put(Buffer.from('pdf-data'), {contentType: 'application/pdf'}));
 
     // ---- FINAL_DECISIONS addendum (§11–15) rule coverage ---------------
-    // Part C: lectures gain public_free_* fields. The existing staff update
+    // Part C: lectures gain guest preview fields (Phase 1 canonical schema:
+    // guest_enabled / guest_preview_minutes). The existing staff update
     // path must accept them; students must still be unable to write ANY
     // lecture field, including the new ones.
     await assertSucceeds(teacherDb3.collection('lectures').doc('lec-student-vis')
-      .update({public_free_enabled: true, public_free_preview_minutes: 5}));
+      .update({guest_enabled: true, guest_preview_minutes: 5}));
     await assertSucceeds(teacherDb3.collection('lectures').doc('lec-student-vis')
-      .update({public_free_enabled: false, public_free_preview_minutes: null}));
+      .update({guest_enabled: false, guest_preview_minutes: null}));
     await assertFails(studentDb.collection('lectures').doc('lec-student-vis')
-      .update({public_free_enabled: true}));
+      .update({guest_enabled: true}));
     await assertFails(unsubscribedStudent.collection('lectures').doc('lec-student-vis')
-      .set({public_free_enabled: true, title: 'forged'}));
-    // Students can never READ a draft even when it is public-free enabled.
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-pf-draft').set({
+      .set({guest_enabled: true, title: 'forged'}));
+    // Students can never READ a draft even when it is guest-preview enabled.
+    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-guest-draft').set({
       subject_id: 'subject-1',
       section_id: 'sec-custom',
       title: 'مسودة مجانية',
@@ -1064,10 +1274,10 @@ async function run() {
       publish_date: null,
       status: 'draft',
       is_deleted: false,
-      public_free_enabled: true,
-      public_free_preview_minutes: 5,
+      guest_enabled: true,
+      guest_preview_minutes: 5,
     }));
-    await assertFails(studentDb.collection('lectures').doc('lec-pf-draft').get());
+    await assertFails(studentDb.collection('lectures').doc('lec-guest-draft').get());
 
     // Part B: archived lectures stay invisible to students; staff keep
     // full read access for the Archive screen.

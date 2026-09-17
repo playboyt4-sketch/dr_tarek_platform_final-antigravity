@@ -67,6 +67,46 @@ class AdminSection {
   }
 }
 
+/// Student row for the per-lecture Access UI. Read from the existing
+/// `users` collection (`full_name` + `grade` are approved schema fields);
+/// no new collection is introduced here.
+class LectureStudent {
+  final String id;
+  final String name;
+  final String? grade;
+
+  const LectureStudent({
+    required this.id,
+    required this.name,
+    this.grade,
+  });
+}
+/// Staged per-lecture allow/deny decision, persisted to
+/// `lecture_access_grants/{lectureId_studentId}` (deterministic id —
+/// duplicates are structurally impossible). Missing grant = no override.
+/// Revocation is represented by `allowed: false`; the soft-delete audit
+/// fields exist for architectural consistency (client delete stays
+/// prohibited — revocation never deletes the document).
+class LectureAccessGrant {
+  final String lectureId;
+  final String studentId;
+  final bool allowed;
+
+  /// Soft-delete audit state. Managed server-side only; clients always
+  /// write `false`/null (enforced by Security Rules).
+  final bool isDeleted;
+  final DateTime? deletedAt;
+  final String? deletedBy;
+
+  const LectureAccessGrant({
+    required this.lectureId,
+    required this.studentId,
+    required this.allowed,
+    this.isDeleted = false,
+    this.deletedAt,
+    this.deletedBy,
+  });
+}
 /// Read model for the Archive view: an archived lecture with its
 /// soft-delete metadata and origin context ("archived-from which subject").
 /// Kept separate from the shared student-facing [Lecture] aggregate so the
@@ -181,3 +221,23 @@ class AdminLectureResource {
     );
   }
 }
+
+/// Deterministic grant document id: `lecture_access_grants` uses
+/// `{lectureId}_{studentId}` so the same pair can never produce two
+/// documents (repeat-safe saves by construction).
+String lectureAccessGrantDocId(String lectureId, String studentId) =>
+    '${lectureId}_$studentId';
+
+/// Displayed/saved default for one student: an explicit staged toggle
+/// wins, then the stored grant, otherwise ON — meaning "no override",
+/// i.e. the student follows normal lecture eligibility. Default ON is
+/// behavior-preserving: nothing is denied until the Teacher acts.
+bool resolveEffectiveAccess({bool? staged, bool? grantAllowed}) =>
+    staged ?? grantAllowed ?? true;
+
+/// Backend fallback predicate (mirrors the Cloud Functions + Rules
+/// enforcement): only an explicit stored `allowed == false` denies.
+/// Missing grant (null) or `allowed == true` defers to the normal
+/// eligibility model.
+bool isLectureAccessDeniedByGrant(bool? grantAllowed) =>
+    grantAllowed == false;

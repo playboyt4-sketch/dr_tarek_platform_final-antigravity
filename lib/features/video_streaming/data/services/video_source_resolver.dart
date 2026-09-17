@@ -75,11 +75,44 @@ Map<String, dynamic>? guestPreviewFromResponse(Map<String, dynamic> data) {
   return null;
 }
 
-class VideoSourceResolver implements VideoSourceGateway {
-  static const _deviceIdKey = 'video_device_id';
-  static const _secureStorage = FlutterSecureStorage();
-  static const _uuid = Uuid();
+/// Shared local device-identity resolution (stable hardware id when
+/// available, generated install id otherwise, cached in Secure Storage).
+/// Identity material only — never authorization proof.
+Future<String> resolveLocalDeviceId({
+  Future<String> Function()? override,
+  FlutterSecureStorage? secureStorage,
+}) async {
+  const deviceIdKey = 'video_device_id';
+  final storage = secureStorage ?? const FlutterSecureStorage();
+  if (override != null) return override();
+  final existing = await storage.read(key: deviceIdKey);
+  if (existing != null && existing.isNotEmpty) return existing;
 
+  String? hardwareId;
+  try {
+    final plugin = DeviceInfoPlugin();
+    if (Platform.isAndroid) {
+      hardwareId = (await plugin.androidInfo).id;
+    } else if (Platform.isIOS) {
+      hardwareId = (await plugin.iosInfo).identifierForVendor;
+    }
+  } catch (_) {}
+
+  String created;
+  if (hardwareId != null && hardwareId.isNotEmpty) {
+    // Deterministically generate a UUIDv5, then force the version nibble to '4'
+    // so it passes strict backend UUIDv4 regex checks.
+    final v5 = const Uuid().v5(Namespace.url.value, hardwareId);
+    created = v5.replaceRange(14, 15, '4');
+  } else {
+    created = const Uuid().v4();
+  }
+
+  await storage.write(key: deviceIdKey, value: created);
+  return created;
+}
+
+class VideoSourceResolver implements VideoSourceGateway {
   final FirebaseFunctions functions;
   final Future<String> Function()? deviceIdProvider;
 
@@ -143,10 +176,20 @@ class VideoSourceResolver implements VideoSourceGateway {
       }
       final selected = VideoQuality.fromBackend(data['quality'] as String?);
       final expiresAt = _dateFromEpoch(data['expiresAt']);
+      final sessionToken = data['sessionToken'] as String?;
+      final sessionPosition =
+          (data['positionSeconds'] as num?)?.toInt();
+      final heartbeatMs = (data['heartbeatIntervalMs'] as num?)?.toInt();
       return ResolvedVideoSource(
         url: Uri.parse(rawUrl),
         expiresAt: expiresAt,
         selectedQuality: selected,
+        sessionToken: (sessionToken != null && sessionToken.isNotEmpty)
+            ? sessionToken
+            : null,
+        sessionPositionSeconds: sessionPosition,
+        sessionTakeover: data['takeover'] == true,
+        heartbeatIntervalMs: heartbeatMs,
       );
     } on FirebaseFunctionsException catch (error) {
       throw classifyVideoSourceError(error.code, error.message, error.details);
@@ -158,35 +201,8 @@ class VideoSourceResolver implements VideoSourceGateway {
     }
   }
 
-  Future<String> _deviceId() async {
-    final custom = deviceIdProvider;
-    if (custom != null) return custom();
-    final existing = await _secureStorage.read(key: _deviceIdKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-
-    String? hardwareId;
-    try {
-      final plugin = DeviceInfoPlugin();
-      if (Platform.isAndroid) {
-        hardwareId = (await plugin.androidInfo).id;
-      } else if (Platform.isIOS) {
-        hardwareId = (await plugin.iosInfo).identifierForVendor;
-      }
-    } catch (_) {}
-
-    String created;
-    if (hardwareId != null && hardwareId.isNotEmpty) {
-      // Deterministically generate a UUIDv5, then force the version nibble to '4' 
-      // so it passes strict backend UUIDv4 regex checks.
-      final v5 = _uuid.v5(Namespace.url.value, hardwareId);
-      created = v5.replaceRange(14, 15, '4');
-    } else {
-      created = _uuid.v4();
-    }
-    
-    await _secureStorage.write(key: _deviceIdKey, value: created);
-    return created;
-  }
+  Future<String> _deviceId() =>
+      resolveLocalDeviceId(override: deviceIdProvider);
 
   DateTime _dateFromEpoch(Object? value) {
     final seconds = value is num ? value.toInt() : 0;
@@ -203,6 +219,137 @@ class VideoSourceException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Terminal session failure: the server no longer recognizes this device as
+/// the session owner (takeover, expiry, revocation). Never retried
+/// automatically — continuation requires explicit user intent (a new begin,
+/// which the server alone decides).
+class PlaybackSessionInvalidatedException implements Exception {
+  final String message;
+
+  const PlaybackSessionInvalidatedException([this.message = '']);
+}
+
+/// Transport-level failure (deadline, unavailable): safe to retry on a
+/// bounded schedule. Never treated as invalidation.
+class PlaybackSessionTransportException implements Exception {
+  final String message;
+
+  const PlaybackSessionTransportException([this.message = '']);
+}
+
+/// Data-layer contract for Max Subject playback sessions. All Firebase
+/// callable access stays here; widgets and the controller never call
+/// Functions directly. `subjectId` is mandatory on every operation and is
+/// never inferred from global state.
+abstract interface class PlaybackSessionGateway {
+  Future<PlaybackSession> begin({
+    required String studentId,
+    required String subjectId,
+    required String deviceId,
+    String? lectureId,
+    String? videoId,
+  });
+
+  Future<HeartbeatResult> heartbeat({
+    required String studentId,
+    required String subjectId,
+    required String deviceId,
+    required String sessionToken,
+    required Duration position,
+  });
+}
+
+class CallablePlaybackSessionGateway implements PlaybackSessionGateway {
+  final FirebaseFunctions functions;
+  final Future<String> Function()? deviceIdProvider;
+
+  const CallablePlaybackSessionGateway({
+    required this.functions,
+    this.deviceIdProvider,
+  });
+
+  Future<String> deviceId() =>
+      resolveLocalDeviceId(override: deviceIdProvider);
+
+  @override
+  Future<PlaybackSession> begin({
+    required String studentId,
+    required String subjectId,
+    required String deviceId,
+    String? lectureId,
+    String? videoId,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'studentId': studentId,
+        'subjectId': subjectId,
+        'deviceId': deviceId,
+      };
+      if (lectureId != null) payload['lectureId'] = lectureId;
+      if (videoId != null) payload['videoId'] = videoId;
+      final response = await functions
+          .httpsCallable('beginOrTakeoverPlayback')
+          .call(payload);
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final session = PlaybackSession.fromBeginPayload(
+        subjectId: subjectId,
+        lectureId: lectureId,
+        videoId: videoId,
+        data: data,
+      );
+      if (session == null) {
+        throw const PlaybackSessionInvalidatedException();
+      }
+      return session;
+    } on FirebaseFunctionsException catch (error) {
+      throw _mapSessionError(error);
+    }
+  }
+
+  @override
+  Future<HeartbeatResult> heartbeat({
+    required String studentId,
+    required String subjectId,
+    required String deviceId,
+    required String sessionToken,
+    required Duration position,
+  }) async {
+    try {
+      final response = await functions
+          .httpsCallable('heartbeatPlayback')
+          .call({
+        'studentId': studentId,
+        'subjectId': subjectId,
+        'deviceId': deviceId,
+        'sessionToken': sessionToken,
+        'positionSeconds': position.inSeconds,
+      });
+      final data = Map<String, dynamic>.from(response.data as Map);
+      return HeartbeatResult.fromPayload(data);
+    } on FirebaseFunctionsException catch (error) {
+      throw _mapSessionError(error);
+    }
+  }
+
+  Exception _mapSessionError(FirebaseFunctionsException error) =>
+      mapSessionGatewayError(error.code, error.message);
+}
+
+/// Pure mapping of session-callable failures. Terminal authorization
+/// verdicts invalidate; everything else is a retriable transport fault.
+/// Top-level and side-effect-free so it is unit-testable.
+Exception mapSessionGatewayError(String code, String? message) {
+  switch (code) {
+    case 'permission-denied':
+    case 'unauthenticated':
+    case 'not-found':
+    case 'failed-precondition':
+      return PlaybackSessionInvalidatedException(message ?? '');
+    default:
+      return PlaybackSessionTransportException(message ?? '');
+  }
 }
 
 /// FINAL_DECISIONS §12: generateBunnySignedUrl refused to start a different

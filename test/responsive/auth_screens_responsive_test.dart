@@ -110,7 +110,7 @@ void main() {
         );
 
         expect(tester.takeException(), isNull);
-        expect(find.text('Get started'), findsOneWidget);
+        expect(find.text('Get Start'), findsOneWidget);
       });
     }
   });

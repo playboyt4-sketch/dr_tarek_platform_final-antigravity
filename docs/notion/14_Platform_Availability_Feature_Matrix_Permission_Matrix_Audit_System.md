@@ -2,8 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.0
+Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+
+## Version History
+
+- **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Device Matrix rows now describe per-Subject allowances (Free 1 / Pro 1 / Max 2, no cross-Subject leakage); ABAC claims de-scoped to identity; device admin/audit rows rescoped to per-Subject authorization and the approved reset model. No new permission or audit-event IDs introduced.
 
 ---
 
@@ -37,7 +41,7 @@ This document is the single source of truth for access control across the platfo
 | Feature | Android | iOS | Web | Platform-Specific Notes |
 |---------|---------|-----|-----|------------------------|
 | Authentication (Custom Tokens) | ✅ | ✅ | ✅ | Web uses Firebase Auth JS SDK |
-| Device Binding | ✅ | ✅ | ⚠️ Limited | Web: session-based, no hardware ID |
+| Subject-Device Authorization | ✅ | ✅ | ⚠️ Limited | Web: session-based, no hardware ID; login never rejected on any platform (per ADR-004) |
 | Video Player | ✅ | ✅ | ✅ | Web: HTML5 video with signed URL |
 | Offline Video Download | ✅ | ✅ | ❌ | Web: streaming only |
 | PDF Viewer | ✅ | ✅ | ✅ | Web: browser PDF viewer fallback |
@@ -171,9 +175,9 @@ This document is the single source of truth for access control across the platfo
 
 | Feature Key | Description | Default Public Free | Default Center Free | Default Center Pro | Default Center Max |
 |-------------|-------------|---------------------|---------------------|--------------------|--------------------|
-| `device.max_count` | Max active devices | 1 | 1 | 1 | 2 |
+| `device.max_count` | Max authorized devices for that Subject (per-Subject allowance; no cross-Subject leakage; higher plan on one Subject never raises another) | 1 | 1 | 1 | 2 |
 | `device.replace` | Self-service device replacement | ❌ | ❌ | ❌ | ❌ |
-| `device.factory_reset` | Factory reset handling | Admin approval | Admin approval | Admin approval | Admin approval |
+| `device.factory_reset` | Factory reset handling | Approved reset only; login never blocked | Approved reset only; login never blocked | Approved reset only; login never blocked | Approved reset only; login never blocked |
 | `security.score` | View security score | ❌ | ✅ | ✅ | ✅ |
 | `offline.mode` | Offline learning mode | ❌ | ❌ | ❌ | ✅ |
 | `offline.encryption` | AES-256 DRM | N/A | N/A | N/A | ✅ |
@@ -185,7 +189,7 @@ This document is the single source of truth for access control across the platfo
 | `profile.edit_name` | Edit full name | ✅ | ✅ | ✅ | ✅ |
 | `profile.edit_photo` | Edit profile photo | ✅ | ✅ | ✅ | ✅ |
 | `profile.change_password` | Change password | ✅ | ✅ | ✅ | ✅ |
-| `profile.view_device` | View device info | ✅ | ✅ | ✅ | ✅ |
+| `profile.view_device` | View device info (per-Subject authorization state; plan badge follows the current Subject) | ✅ | ✅ | ✅ | ✅ |
 | `profile.view_membership` | View membership details | ✅ | ✅ | ✅ | ✅ |
 | `profile.display_handle` | Set public handle | ❌ | ❌ | ✅ | ✅ |
 
@@ -239,7 +243,7 @@ Collection: `plan_feature_audit_logs` (new collection, to be added to 05 Databas
 The platform uses **Role-Based Access Control (RBAC)** with **Attribute-Based Access Control (ABAC)** extensions:
 
 - **RBAC:** Primary control via `users.role` (new_student, student, admin, teacher).
-- **ABAC:** Secondary control via Custom Claims (`student_type`, `plan_id`, `max_devices`, `approved`) and Feature Matrix.
+- **ABAC:** Secondary control via identity Custom Claims (`student_type`, `approved`, `role`) and Feature Matrix. Single global `plan_id` / `max_devices` / `subscription_status` values are never Subject authorization truth; per-Subject subscription and authorization resolve server-side (per ADR-004).
 - **Resource-level:** Tertiary control via Firestore document ownership and relationships.
 
 ## 4.2 Action Permission Matrix
@@ -288,8 +292,8 @@ The platform uses **Role-Based Access Control (RBAC)** with **Attribute-Based Ac
 | Activate student | ✅ | ✅ | |
 | Change student type | ✅ | ✅ | Public ↔ Center |
 | Assign membership plan | ✅ | ✅ | |
-| Reset student password | ❌ | ✅ | Teacher (Platform Owner) has full authority. Admin may reset student passwords only when explicitly granted the password_reset permission by the Teacher. |
-| Replace student device | ✅ | ✅ | |
+| Reset student password | ❌ | ✅ | Teacher (Platform Owner) has full authority. Admin may reset student passwords only when explicitly granted the `password.reset` permission by the Teacher; grant/revoke at any time, enforced server-side. |
+| Replace student device | ✅ | ✅ | Per-Subject authorization management and the approved Device Reset only (student request → Teacher/authorized Admin acts; login never blocked; no self-service replacement) |
 | View student progress | ✅ | ✅ | |
 | View student analytics | ✅ | ✅ | |
 | **Content Management** |
@@ -372,7 +376,7 @@ Layer 3: Cloud Functions
 
 Layer 4: Firestore Security Rules
   → Enforced by Firebase, cannot be bypassed
-  → Uses Custom Claims for zero-read validation
+  → Uses identity Custom Claims for zero-read role validation; per-Subject subscription and authorization evaluated from live state (per ADR-004)
   → The ONLY true security boundary
 
 Layer 5: Firebase Storage Rules
@@ -410,6 +414,8 @@ Layer 6: Bunny CDN
 | Device bound | `devices` + `analytics_events` | Cloud Function | 2 years |
 | Device unbound | `devices` + `analytics_events` | Cloud Function | 2 years |
 | Unauthorized device attempt | `analytics_events` | Cloud Function | 2 years |
+
+> Alignment note (per ADR-004): "Device bound/unbound" above are per-Subject authorization lifecycle events (first actual Subject access, per-Subject unbind, approved reset). "Unauthorized device attempt" is a per-Subject Guest-tier resolution on an authenticated session — never a login rejection. No new event IDs are introduced here.
 | Security violation detected | `security_events` (new) | Client + Server | 3 years |
 
 ### Administrative Events
@@ -422,6 +428,8 @@ Layer 6: Bunny CDN
 | Student type changed | `analytics_events` | Cloud Function | 2 years |
 | Membership plan changed | `analytics_events` + `plan_feature_audit_logs` | Cloud Function | 2 years |
 | Device replaced | `analytics_events` | Cloud Function | 2 years |
+
+> Alignment note (per ADR-004): device replacement means the approved Device Reset / per-Subject authorization management described above — never a precondition for login.
 | Content published | `analytics_events` | Cloud Function | 2 years |
 | Content deleted (soft) | `analytics_events` | Cloud Function | 2 years |
 | Exam graded | `analytics_events` | Cloud Function | 2 years |

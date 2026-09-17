@@ -3,8 +3,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/localization/locale_controller.dart';
+import '../core/routing/app_router.dart';
 import '../core/theme/app_theme.dart';
-import '../features/authentication/presentation/screens/splash_screen.dart';
 import '../l10n/generated/app_localizations.dart';
 
 class DrTarekPlatformApp extends ConsumerWidget {
@@ -14,7 +14,7 @@ class DrTarekPlatformApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final locale = ref.watch(localeControllerProvider);
 
-    return MaterialApp(
+    return MaterialApp.router(
       onGenerateTitle: (context) => AppLocalizations.of(context).appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
@@ -37,7 +37,7 @@ class DrTarekPlatformApp extends ConsumerWidget {
         child: child ?? const SizedBox.shrink(),
       ),
 
-      home: const SplashScreen(),
+      routerConfig: appRouter,
     );
   }
 }

@@ -1,10 +1,11 @@
 # 04_FEATURES
 
-Version: 1.4
+Version: 2.0
 Status: Approved
 
 ## Version History
 
+- **2.0** (2026-09-14): Major alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Feature 01 rewritten (login always succeeds; authorization per Student + Subject + Device on first Subject access; Guest tier); content-protection, video, PDF, exam, membership, and profile sections rescoped to per-Subject Full vs Guest; Max defined as 2 authorized devices + single active playback session. No minute values, UI copy, or implementation details invented.
 - **1.4** (2026-08-04): Rewrote Registration Main Flow and Business Rules to match the approved Figma onboarding sequence (Student Type → Full Name → Phone Number → Photo → Grade selection → Password), replacing the earlier "phone number and password only" flow. Added self-selected `grade` (Frqa) as a new student-owned attribute, distinct from the existing admin-only "Academic Year/Term" (subject-scheduling metadata), which is unchanged. See 05 Database v1.6 for the new field and 11 Assets for the per-grade color tokens.
 - **1.3** and earlier: see prior revisions.
 
@@ -12,7 +13,7 @@ Status: Approved
 
 ## Purpose
 
-Provide a secure registration and authentication process while enforcing manual approval, single-device access, and role-based permissions.
+Provide a secure registration and authentication process while enforcing manual approval, Subject-level device authorization, and role-based permissions (per ADR-004).
 
 ---
 
@@ -79,10 +80,9 @@ Per the approved Figma onboarding flow (2026-08-04):
 
 ### First Login
 
-1. The student logs in using the registered phone number and password.
-2. The current device is registered as the student’s primary device.
-3. The device becomes the only authorized device.
-4. The student is redirected to the Student Dashboard.
+1. The student logs in using the registered phone number and password, from any valid device. Device authorization never rejects login.
+2. No device is bound at login. Device authorization is established separately per Subject on first actual access to that Subject.
+3. The student is redirected to the Student Dashboard, where each accessible Subject reflects its own subscription and the current device's Full vs Guest tier for that Subject.
 
 ---
 
@@ -107,13 +107,13 @@ Per the approved Figma onboarding flow (2026-08-04):
 
 - Login is rejected.
 
-### Login From Another Device
+### Login From Another Device (per ADR-004 — login always succeeds)
 
-1. The login request is rejected.
-2. The previously registered device remains active.
-3. An Analytics event is created.
-4. A warning notification is sent to the student.
-5. A security alert becomes available to the Admin for review.
+1. The login request succeeds. There is no login rejection for device reasons and no logout of other devices.
+2. Previously authorized devices keep their per-Subject authorizations; the new device is recorded for identification and audit.
+3. For each Subject, the current device resolves to Full access (if authorized, or if a free authorization slot is claimed on first actual Subject access) or Guest/limited access (if no slot is available). Guest never mutates the subscription.
+4. An Analytics event is created for the per-Subject authorization outcome.
+5. A Guest-tier notice becomes available to the student inside the affected Subject, and per-Subject authorization activity is available to the Admin for review.
 
 ---
 
@@ -124,12 +124,11 @@ Per the approved Figma onboarding flow (2026-08-04):
 - Every newly registered user is created as **New Student**.
 - Platform access is prohibited until manual approval.
 - Approval automatically activates the Free Plan.
-- The first successful login permanently binds the account to the current device.
-- The number of devices allowed is determined by the student's membership plan (default 1 device; see "Device Limits per Plan" below for the full table).
-- Students cannot change their registered device.
-- Only Admin and Teacher may replace the registered device.
-- Login attempts from unauthorized devices are rejected.
-- Every successful and failed login attempt generates an Analytics event.
+- No login binds the account. Authorization is established per Subject on first actual access to that Subject, evaluated as Student + Subject + Device (see "Device Allowances per Subject" below).
+- The number of authorized devices is determined by each Subject's own subscription plan (Free = 1, Pro = 1, Max = 2 authorized devices for that Subject). A device authorized for one Subject is not automatically authorized for another. A higher plan on one Subject never raises another Subject's allowance.
+- Students cannot authorize devices themselves beyond the automatic first-access binding within the free slot; per-Subject unbinding and the approved Device Reset are performed by the Teacher or an authorized Admin on student request. Ordinary logout is not a reset, and a lost device alone triggers nothing automatically.
+- Login attempts are never rejected for device reasons. An unauthorized device keeps its login and receives Guest/limited access for that Subject only.
+- Every successful and failed login attempt generates an Analytics event, as does every per-Subject authorization outcome (Full vs Guest).
 - Security actions are administrative decisions and are never applied automatically.
 
 ---
@@ -143,15 +142,15 @@ Per the approved Figma onboarding flow (2026-08-04):
 
 ### Student
 
-- Login from the authorized device only.
-- Access features allowed by the assigned membership plan.
+- Login from any valid device.
+- Access features allowed by each Subject's own membership plan, at the Full or Guest tier determined by this device's authorization for that Subject.
 
 ### Admin
 
 - Review registration requests.
 - Approve or reject students.
-- Replace registered devices.
-- Review unauthorized device attempts.
+- Manage per-Subject device authorization and perform the approved Device Reset (on student request; never blocks login).
+- Review per-Subject authorization activity and Guest-tier resolutions.
 
 ### Teacher
 
@@ -163,8 +162,8 @@ Per the approved Figma onboarding flow (2026-08-04):
 
 - The student account is approved.
 - The Free Plan is activated automatically.
-- The first device is successfully bound.
-- Login succeeds only from the authorized device.
+- Login succeeds from any valid device.
+- Per-Subject authorization resolves correctly (Full vs Guest) on first Subject access.
 - The correct permissions are loaded.
 - The student is redirected to the Student Dashboard.
 
@@ -926,8 +925,8 @@ Protection includes:
 - Dynamic forensic watermark.
 - Encrypted video streaming.
 - Secure offline storage.
-- Device binding validation.
-- Membership validation.
+- Subject-Device authorization check for that Subject (Full vs Guest tier; Guest receives limited playback only and never loses its login).
+- Membership validation (per-Subject subscription).
 
 ---
 
@@ -956,8 +955,9 @@ When supported by the operating system, security events may include:
 - Rooted device.
 - Jailbroken device.
 - Emulator detection.
-- Unauthorized device.
 - Other security violations.
+
+> Note (per ADR-004): an unauthorized device for a Subject is not a login security violation — the login stays valid and the device receives Guest/limited access for that Subject. Per-Subject Guest-tier resolutions are analytics, not punishable security events.
 
 Each detected event is processed according to the configured security policy.
 
@@ -1258,8 +1258,8 @@ Protection includes:
 - Screen recording detection where supported.
 - Dynamic forensic watermark.
 - Secure encrypted storage.
-- Device binding validation.
-- Membership validation.
+- Subject-Device authorization check for that Subject (Full vs Guest tier; Guest has no protected downloads or protected PDFs and never loses its login).
+- Membership validation (per-Subject subscription).
 
 Each detected violation is recorded as an independent Security Event (see Feature 05 — Security Score), not as general reading analytics.
 
@@ -1570,14 +1570,15 @@ Restoring access may include:
 
 Administrators may manage lecture access at multiple levels.
 
-> TODO (Version 2): Group Access and per-lecture Individual Access grants below depend on Student Groups and Lecture Access Grants, both postponed to Version 2. For Version 1, lecture access is governed by Membership, Subject Subscription, and the other availability rules in this document (Available From/Until, Prerequisites).
-> 
+> V1 amendment (project-owner approved): per-lecture Individual Access grants are a V1 requirement, backed by the `lecture_access_grants` collection (05 Database). Group Access remains postponed to Version 2 (depends on Student Groups). For lectures without an explicit grant, access is governed by Membership, Subject Subscription, and the other availability rules in this document (Available From/Until, Prerequisites).
 
 ### Global Access
 
 Available for all eligible students.
 
 ### Group Access
+
+> Postponed to Version 2 (depends on Student Groups).
 
 Available only for selected groups.
 
@@ -1590,7 +1591,11 @@ Examples:
 
 ### Individual Access
 
-Available only for selected students.
+V1: per-lecture allow/deny overrides stored as `lecture_access_grants/{lectureId_studentId}` with an `allowed` boolean plus audit fields (05 Database).
+
+- `allowed == false` denies the lecture even when the plan/subscription would allow it.
+- `allowed == true` (or no grant) defers to the normal eligibility model — never a bypass of authentication, subscription, publication, availability, or security requirements.
+- Enforcement is server-side: `getLectureResources`, video signed-URL generation, and PDF/attachment delivery consult the grant before releasing protected content; Firestore Rules additionally gate direct `lecture_resources` reads (06 Firebase Architecture).
 
 Administrators may:
 
@@ -1600,7 +1605,7 @@ Administrators may:
 - Remove all selections.
 - Perform bulk operations.
 
-Changes are applied immediately.
+Changes are applied on explicit Save (one batched write per lecture; repeat-safe).
 
 ---
 
@@ -1821,7 +1826,7 @@ Supported security options include:
 - Full Screen Mode.
 - Screenshot Prevention where supported.
 - Screen Recording Detection where supported.
-- Device Validation.
+- Subject-Device authorization check for that Subject (exam access follows the device's Full vs Guest tier for the Subject; never a login rejection).
 - Time Enforcement.
 - Question Randomization.
 - Answer Randomization.
@@ -2155,7 +2160,7 @@ Export availability depends on membership permissions.
 
 Notes are synchronized with the student’s account.
 
-Changing the authorized device does not affect saved notes.
+Per-Subject authorization changes and the approved Device Reset do not affect saved notes.
 
 ---
 
@@ -3171,8 +3176,8 @@ Examples include:
 Examples include:
 
 - New Login
-- Unauthorized Device Attempt
-- Device Changed
+- Guest-Tier Resolution on a Subject (unauthorized device keeps its login; receives limited access for that Subject)
+- Device Authorization Changed (per-Subject authorization or approved reset)
 - Security Warning
 - Suspicious Activity
 
@@ -3589,18 +3594,22 @@ Provides the highest available learning capabilities according to Feature Matrix
 
 ---
 
-### Device Limits per Plan
+### Device Allowances per Subject (per ADR-004)
 
-The platform enforces device binding limits based on the assigned membership plan:
+The platform enforces device authorization allowances per Subject, based on that Subject's own subscription plan. There is no global device allowance for the account:
 
-| Plan | Max Devices | Configurable |
-|------|-------------|--------------|
-| Public Free | 1 | No |
-| Center Free | 1 | No |
-| Center Pro | 1 | No |
-| Center Max | 2+ | Yes (from Dashboard) |
+| Plan (of that Subject) | Authorized Devices for that Subject |
+|------|-------------|
+| Public Free | 1 |
+| Center Free | 1 |
+| Center Pro | 1 |
+| Center Max | 2 |
 
-Device limits are enforced via the Feature Matrix (`plan_features`) and validated at login time by the `onLoginAttempt` Cloud Function. Changing the limit for Center Max requires Teacher (Platform Owner) approval.
+Allowances are consumed from each Subject's own subscription. A device authorized for one Subject is not automatically authorized for another, and a higher plan on one Subject never raises another Subject's allowance. Authorization is established on first actual access to the Subject, never at login; login is never rejected for device reasons. An unauthorized device keeps its login and receives Guest/limited access for that Subject only, without mutating the subscription.
+
+### Max — Two Authorized Devices + Single Active Playback (per ADR-004)
+
+Max provides device continuity, not concurrent playback. For a Max Subject with two authorized devices: if the same content is playing on one authorized device and the student starts that content on the other authorized device, playback on the first device stops, playback on the second device starts, and the second device continues from the saved resume position. The reverse works identically. Only one active playback session for the same Subject/content is allowed at a time. The session mechanism is not specified in this document.
 
 ---
 
@@ -3854,8 +3863,8 @@ Editable fields are fully configurable.
 Students cannot modify:
 
 - Phone Number
-- Registered Device
-- Membership Plan
+- Per-Subject device authorization
+- Membership Plan (per Subject)
 - Account Status
 
 Only Admin and Teacher may modify restricted information.
@@ -3864,9 +3873,9 @@ Only Admin and Teacher may modify restricted information.
 
 ### Membership Information
 
-The profile displays:
+The profile displays, per Subject:
 
-- Current Membership
+- That Subject's plan badge (Free / Pro / Max — reflecting the currently selected Subject's actual subscription; never one global plan)
 - Membership Expiration (when applicable)
 - Available Features
 
@@ -3874,12 +3883,12 @@ The profile displays:
 
 ### Device Information
 
-Students may view:
+Students may view, per Subject:
 
-- Current Authorized Device
-- Device Registration Date
+- Authorized devices for that Subject
+- Each authorization's registration date and Full vs Guest tier for the current device
 
-Students cannot replace or remove the registered device.
+Students cannot replace or remove authorized devices themselves. Per-Subject unbinding and the approved Device Reset are performed by the Teacher or an authorized Admin on student request; login is never blocked.
 
 ---
 
@@ -3935,7 +3944,7 @@ No capability is hardcoded to any membership plan.
 - View student profile.
 - Edit restricted information.
 - Reset student password.
-- Replace registered device.
+- Manage per-Subject device authorization and perform the approved Device Reset.
 
 ### Teacher
 
@@ -3947,6 +3956,6 @@ No capability is hardcoded to any membership plan.
 
 - Students can manage permitted profile information.
 - Restricted fields remain protected.
-- Membership information is displayed correctly.
-- Device information is displayed accurately.
+- Per-Subject membership badges are displayed correctly.
+- Per-Subject device authorization state is displayed accurately.
 - All profile changes are validated and saved successfully.

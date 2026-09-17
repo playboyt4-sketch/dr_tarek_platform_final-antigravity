@@ -108,11 +108,29 @@ void main() {
 
       await container.read(loginControllerProvider.notifier).submit(
             phoneNumber: '01001234567',
-            password: 'wrong',
+            password: 'wrong-pass',
           );
 
       final state = container.read(loginControllerProvider) as LoginFailure;
       expect(state.failure.code, FailureCode.wrongCredentials);
+    });
+
+    test('short password fails validation without calling backend', () async {
+      final repo = _FakeAuthRepository((_, _) => _staffSession());
+      final container = ProviderContainer(
+        overrides: [authRepositoryProvider.overrideWithValue(repo)],
+      );
+      addTearDown(container.dispose);
+
+      await container.read(loginControllerProvider.notifier).submit(
+            phoneNumber: '01001234567',
+            password: '12345',
+          );
+
+      final state = container.read(loginControllerProvider) as LoginFailure;
+      expect(state.passwordError, isNotNull);
+      expect(state.failure.code, FailureCode.validation);
+      expect(repo.loginCalls, 0);
     });
 
     test('non-staff session is signed out and rejected', () async {

@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.0
+Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved". Covers Feature 01 (Authentication & Registration) only — remaining features are documented as they are delivered in Figma.
 
 ## Version History
 
+- **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Replaced the "Login-from-Another-Device error" state with the approved model (login always succeeds; per-Subject Full vs Guest tier) and recorded conceptual UX requirements for per-Subject plan badges and Guest limitations. No visual specifications invented — Figma remains the visual source of truth.
 - **1.0** (2026-08-04): Initial document. Transcribes the approved Figma onboarding flow (Student Type → Welcome → Full Name → Phone Number → Photo → Grade → Password → Application Under Review → Login → Dashboard placeholder) into a formal screen-by-screen specification, cross-referenced to 04 Features v1.4, 05 Database v1.6, and 11 Assets. Per Master Architecture Section 14 ("Never invent business rules... Never infer missing requirements"), only screens actually present in the supplied Figma are documented here; all other features remain `⛔ Blocked` pending their own Figma delivery (see 09 Tasks Section 3).
 
 ---
@@ -146,9 +147,17 @@ Cross-reference: 04 Features Section "Feature 01 — Authentication & Registrati
 | **Layout** | Illustration panel (waving character) → headline "Welcome back!" → phone number field (icon-prefixed) → password field (icon-prefixed, visibility toggle) → "Forget password?" link → primary button. |
 | **Fields** | `phone number`, `Password`. |
 | **Primary Action** | "Login" → Screen 3.10 (Dashboard) on success. |
-| **States** | Default, Focused, Invalid Credentials error, Waiting-for-Approval error, Rejected-Account error, Disabled-Account error, Login-from-Another-Device error (see 04 Features Alternative Flow). |
+| **States** | Default, Focused, Invalid Credentials error, Waiting-for-Approval error, Rejected-Account error, Disabled-Account error (see 04 Features Alternative Flow). Per ADR-004 there is no "Login-from-Another-Device" rejection state — a valid student logs in from any device; device authorization resolves per Subject to Full vs Guest/limited access after login. |
 | **Secondary Action** | "Forget password?" → triggers 08 Development Standards Section 9 flow (admin-triggered password reset) — no screen for this flow has been supplied yet; flag as pending Figma. |
-| **Business Rule Ref** | 04 Features, First Login + Alternative Flow (all five rejection cases). |
+| **Business Rule Ref** | 04 Features, First Login + Alternative Flow (account-level rejection cases only; device-related behavior per ADR-004). |
+
+## 3.11 Subject-Level Device Binding — Conceptual UX Requirements (per ADR-004, FINAL_DECISIONS.md v2.0)
+
+No Figma screens for these requirements have been supplied yet; the following are conceptual requirements only. Final visual specification requires Figma — nothing here authorizes invented layouts, minute values, or copy.
+
+- The Student Profile conceptually supports multiple Subjects, each with its own plan badge (Free / Pro / Max). The displayed plan context follows the currently selected Subject. The student is never described as having one global plan.
+- Guest is an access tier, not a subscription plan. A Guest Subject experience is limited (limited video viewing, no protected downloads or PDFs, no full premium access, per FINAL_DECISIONS.md v2.0 Section 17). Exact limits and wording are not defined here.
+- There is no global device-blocked login screen. Login succeeds from any device; per-Subject authorization determines the Full vs Guest experience inside each Subject.
 
 ## 3.10 Screen: Dashboard (Placeholder Only)
 

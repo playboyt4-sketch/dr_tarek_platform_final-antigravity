@@ -1,10 +1,11 @@
 # 02 Product Requirements (PRD)
 
-Version: 1.3
+Version: 1.4
 Status: Approved
 
 ## Version History
 
+- **1.4** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Authentication is account-level and never rejected for device reasons; authorization is per Student + Subject + Device with Full vs Guest tiers; identity claims de-scoped from Subject-specific authorization; no single global plan. See FR-01.02a, FR-01.06, NFR-05.
 - **1.3** (2026-08-04): Partially removed "Offline Features" from Out of Scope (Version 1) — Offline Videos and Offline PDF Library are now Version 1 requirements; Offline Examinations and Offline Synchronization remain out of scope (not covered by FINAL_DECISIONS). Updated Future Infrastructure / NFR-18 accordingly. Reason: FINAL_DECISIONS (2026-08-04) confirmed downloaded-content offline learning (AES-256 DRM, device-bound downloads) as a Version 1 requirement — this document previously contradicted both FINAL_DECISIONS and 04 Features (which already fully specifies Offline Mode/Playback/Reading as V1 functionality). Aligned per Master Architecture Section 5.1 (Change Management) and Section 11.1 (conflict resolution). See also 01 Project Vision v2.0.
 - **1.2** and earlier: see prior revisions.
 
@@ -713,7 +714,7 @@ Version 1 focuses on delivering a stable, secure, maintainable, and production-r
 - Logout
 - Forgot Password
 - Session Management
-- Device Binding
+- Subject-Level Device Binding (per ADR-004; never rejects login)
 - Authentication State Persistence
 
 ## Objectives
@@ -977,7 +978,7 @@ Version 1 focuses on delivering a stable, secure, maintainable, and production-r
 - Authentication Security
 - Authorization
 - Permission Validation
-- Device Binding
+- Subject-Level Device Binding (Full vs Guest per Subject; never login rejection)
 - Protected Educational Content
 - Secure File Access
 - Audit Logging
@@ -1276,9 +1277,10 @@ The authentication flow shall include:
 2. The application calls the `verifyPhonePassword` Cloud Function.
 3. The Cloud Function verifies credentials against the `users` collection in Firestore.
 4. On successful verification, the Cloud Function mints a Firebase Custom Token via the Admin SDK.
-5. The Custom Token includes the following claims: `role`, `student_type`, `plan_id`, `max_devices`, `approved`.
-6. The application signs in using `signInWithCustomToken()`.
+5. The Custom Token includes identity claims only: `role`, `student_type`, `approved`. Single global `plan_id` / `max_devices` / `subscription_status` values are never Subject authorization truth (per ADR-004).
+6. The application signs in using `signInWithCustomToken()`. A valid student signs in from any device; device authorization never rejects login and never causes logout.
 7. Firebase Auth manages the session token lifecycle.
+8. Subject subscription and Subject-Device authorization (Full vs Guest per Subject) are resolved from the server-side source of truth on first actual access to each Subject, not at login. There is no single global plan for the student; each Subject carries its own subscription.
 
 ---
 
@@ -1300,9 +1302,9 @@ The system shall maintain authenticated sessions until logout or expiration.
 
 ---
 
-## FR-01.06 Device Binding
+## FR-01.06 Subject-Level Device Binding (per ADR-004)
 
-The system shall support device binding according to platform security policies.
+The system shall support Subject-level device authorization: authentication is account-level (phone number; no `student_number` identity; list serials are display-only); any valid device may log in and login is never rejected for device reasons; authorization is evaluated per Student + Subject + Device on first actual Subject access (Free = 1, Pro = 1, Max = 2 authorized devices for that Subject; no cross-Subject authorization; higher plan on one Subject never raises another Subject's allowance); an unauthorized device keeps its login and receives Guest/limited access for that Subject only (limited video viewing, no protected downloads/PDFs/resources, no full premium access) without mutating the subscription; Max additionally provides a single active playback session with device-switch continuity from the saved resume position.
 
 ---
 
@@ -1629,7 +1631,7 @@ The platform shall provide:
 - Protected educational content.
 - Secure communication.
 - Secure file storage.
-- Device binding support.
+- Subject-level device authorization support (Full vs Guest per Subject; server-side; never login rejection).
 - Audit logging.
 
 ---
@@ -2942,7 +2944,7 @@ The platform shall reduce these risks through:
 
 - Secure authentication.
 - Role-Based Access Control.
-- Device Binding.
+- Subject-Level Device Binding.
 - Audit Logs.
 - Content Protection.
 - Automated Backups.

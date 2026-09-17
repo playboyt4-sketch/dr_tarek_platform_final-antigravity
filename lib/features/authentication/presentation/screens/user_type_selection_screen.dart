@@ -1,250 +1,232 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/responsive/responsive.dart';
-import '../../../../core/theme/design_tokens.dart';
-import 'login_screen.dart';
-import 'new_student_welcome_screen.dart';
-import 'teacher_admin_selection_screen.dart';
+import '../../../../core/routing/app_routes.dart';
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_typography.dart';
+import '../widgets/brand_signature_logo.dart';
 
-/// Design constants — copied from `User_Type_Selection.md`. Spacing/size/
-/// font values are raw design-pixels; consumed via `context.rs()` for horizontal spacing
-/// and `context.rsFont()` for typography, `context.rsV()` for vertical spacing.
-abstract final class _UserTypeSelectionDesign {
-  // ---- Page ----
-  static const topGap = 24.0;
 
-  // ---- Title "I am a" (title/large) ----
-  static const titleColor = AppColors.darkText;
-  static const titleToSubtitleGap = 8.0;
-
-  // ---- Subtitle (body/regular) ----
-  static const subtitleColor = AppColors.mediumGray;
-  static const subtitleToCardsGap = 24.0;
-
-  // ---- Cards (shared) ----
-  static const cardRadius = 16.0;
-  static const cardGap = 16.0;
-  static const cardHeight = 260.0; // Design height from reference
-  static const cardTitleColor = AppColors.canvas;
-
-  // ---- New Student card ----
-  static const newStudentBg = AppColors.grade1Canvas; // #F59E0B
-  static const newStudentLabel = 'طالب جديد';
-  static const newStudentAsset = 'assets/images/new_student.png';
-
-  // ---- Current Student card ----
-  static const currentStudentBg = AppColors.grade4Canvas; // #DC2626
-  static const currentStudentLabel = 'طالب حالي';
-  static const currentStudentAsset = 'assets/images/current_student.png';
-
-  // ---- Footer ----
-  static const footerTopGap = 16.0;
-  static const signatureFontSize = 128.0; // measured from the transition video
-  static const yearLabel = '2026-2027';
-  static const yearColor = AppColors.mediumGray;
-  static const yearToIconGap = 8.0;
-  static const adminIconSize = 40.0;
-  static const bottomGap = 8.0;
-}
-
+/// Screen 3.1 — User Type Selection (`I am a` gateway).
+///
+/// Figma reference frame: 393 x 852, background `#FFFCF7`. All vertical
+/// positions below are Figma frame offsets implemented through the
+/// project's responsive system ([ResponsiveContext.rs]/[rsV]/[rsFont]):
+/// identical to Figma at the reference size, proportionally preserved
+/// elsewhere. Design-px constants below are Figma numbers, not invented
+/// formulas.
+///
+/// Frame map (y): title 72 (h~35) → subtitle 115 (h20) → new-student card
+/// 145 (345x260, r28) → current-student card 421 (345x260, r28) → logo
+/// frame 689 (full-bleed, Hero `brand_logo_signature`, 128 — same size as
+/// Splash so the flight interpolates position only) → academic year 767
+/// → admin gate 788 (40x40 circle) → bottom margin 24.
+///
+/// The footer (logo/year/admin) is a fixed-height [Stack] because Figma
+/// overlaps them by design (year at logo+78, admin at logo+99). The page
+/// scrolls ([ClampingScrollPhysics]) only when OS insets or smaller
+/// viewports overflow the reference composition — at 393x852 it rests
+/// exactly on the Figma geometry.
 class UserTypeSelectionScreen extends StatelessWidget {
   const UserTypeSelectionScreen({super.key});
 
+
   @override
   Widget build(BuildContext context) {
-    return ResponsiveScreen(
-      backgroundColor: AppColors.canvas,
-      child: Column(
-        children: [
-          SizedBox(height: context.rsV(_UserTypeSelectionDesign.topGap)),
-          Text(
-            'I am a',
-            textAlign: TextAlign.center,
-            style: AppTypography.titleLarge(
-              context,
-              color: _UserTypeSelectionDesign.titleColor,
-            ),
-          ),
-          SizedBox(
-            height: context.rsV(_UserTypeSelectionDesign.titleToSubtitleGap),
-          ),
-          Text(
-            'Select one that applies to you',
-            textAlign: TextAlign.center,
-            style: AppTypography.bodyRegular(
-              context,
-              color: _UserTypeSelectionDesign.subtitleColor,
-            ),
-          ),
-          SizedBox(
-            height: context.rsV(_UserTypeSelectionDesign.subtitleToCardsGap),
-          ),
-          SizedBox(
-            height: context.rsV(_UserTypeSelectionDesign.cardHeight),
-            child: _UserTypeCard(
-              label: _UserTypeSelectionDesign.newStudentLabel,
-              backgroundColor: _UserTypeSelectionDesign.newStudentBg,
-              assetImage: _UserTypeSelectionDesign.newStudentAsset,
-              onTap: () => Navigator.of(context).push(
-                PageRouteBuilder(
-                  transitionDuration: const Duration(milliseconds: 300),
-                  pageBuilder: (context, animation, secondaryAnimation) =>
-                      const NewStudentWelcomeScreen(),
-                  transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) =>
-                          SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
-                            ),
-                            child: child,
-                          ),
-                ),
+    // Figma title top (72) measured from the screen top; the OS status-bar
+    // inset is respected without shifting the reference composition.
+    final topPad = math.max(
+      MediaQuery.paddingOf(context).top,
+      context.rsV(72),
+    );
+    final bottomPad = math.max(
+      MediaQuery.paddingOf(context).bottom,
+      context.rsV(24),
+    );
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFFFFCF7),
+      body: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        padding: EdgeInsets.only(top: topPad, bottom: bottomPad),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: context.rs(24)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Header (Figma y72).
+                  Text(
+                    'I am a',
+                    textAlign: TextAlign.center,
+                    style: AppTypography.titleLarge(context),
+                  ),
+                  SizedBox(height: context.rsV(8)),
+
+                  // Subtitle (Figma y115).
+                  Text(
+                    'Select one that applies to you',
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodyRegular(
+                      context,
+                      color: AppColors.mediumGray,
+                    ),
+                  ),
+                  SizedBox(height: context.rsV(10)),
+
+                  // Card 1: New Student (Figma 24,145 345x260 r28 #F59E0B).
+                  _buildCard(
+                    context: context,
+                    bgColor: const Color(0xFFF59E0B),
+                    title: 'طالب جديد',
+                    titleColor: const Color(0xFF111827),
+                    imagePath: 'assets/images/new_student photo.png',
+                    onTap: () =>
+                        context.pushNamed(AppRoutes.newStudentWelcome),
+                  ),
+                  SizedBox(height: context.rsV(16)),
+
+                  // Card 2: Current Student (Figma 24,421 345x260 r28).
+                  _buildCard(
+                    context: context,
+                    bgColor: const Color(0xFFDC2626),
+                    title: 'طالب حالي',
+                    titleColor: const Color(0xFFFFFCF7),
+                    imagePath: 'assets/images/current student photo.png',
+                    onTap: () => context.pushNamed(AppRoutes.login),
+                  ),
+                  SizedBox(height: context.rsV(8)),
+                ],
               ),
             ),
-          ),
-          SizedBox(height: context.rsV(_UserTypeSelectionDesign.cardGap)),
-          SizedBox(
-            height: context.rsV(_UserTypeSelectionDesign.cardHeight),
-            child: _UserTypeCard(
-              label: _UserTypeSelectionDesign.currentStudentLabel,
-              backgroundColor: _UserTypeSelectionDesign.currentStudentBg,
-              assetImage: _UserTypeSelectionDesign.currentStudentAsset,
-              onTap: () => Navigator.of(context).push(
-                PageRouteBuilder(
-                  transitionDuration: const Duration(milliseconds: 300),
-                  pageBuilder: (context, animation, secondaryAnimation) =>
-                      const LoginScreen(),
-                  transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) =>
-                          SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
-                            ),
-                            child: child,
-                          ),
-                ),
+
+            // Footer (logo frame y689; year/admin placed from MEASURED ink
+            // geometry, not the 95px nominal frame: the Gardenia 128 line
+            // box sits ~9px lower than Figma's tight frame layout (raster
+            // probe: app swash reaches +89 in the year column vs Figma +80),
+            // so year = 78 + 9 + 1 AA safety, admin keeps Figma's 5px gap
+            // to the year bottom. Logo box/position untouched (Hero intact).
+            SizedBox(
+              width: double.infinity,
+              height: context.rsV(149),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Brand signature (Figma x0 y689 w393; Hero destination,
+                  // same 128 design size as Splash: position-only flight).
+                  const Positioned(
+                    top: -24,
+                    left: 0,
+                    right: 0,
+                    child: Hero(
+                      tag: 'brand_logo_signature',
+                      child: BrandSignatureLogo(designPx: 128),
+                    ),
+                  ),
+
+                  // Academic year (Figma x4 w393 h16; top clears visible ink).
+                  Positioned(
+                    top: context.rsV(72),
+                    left: 0,
+                    right: 0,
+                    child: Text(
+                      '2026-2027',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.captionSmall(context),
+                    ),
+                  ),
+
+                  // Admin gate (Figma x177 40x40; the SVG asset already
+                  // contains the 1px #E5E7EB circle, so no extra border).
+                  Positioned(
+                    top: context.rsV(97),
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: () => context.pushNamed(
+                          AppRoutes.teacherAdminSelection,
+                        ),
+                        behavior: HitTestBehavior.opaque,
+                        child: SvgPicture.asset(
+                          'assets/images/teacher & admin icone.svg',
+                          width: 40,
+                          height: 40,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          SizedBox(height: context.rsV(_UserTypeSelectionDesign.footerTopGap)),
-          Hero(
-            tag: 'brand_logo_signature',
-            child: Material(
-              color: Colors.transparent,
-              child: Text(
-                'Tarek el araby',
-                textAlign: TextAlign.center,
-                style: AppTypography.signature(
-                  context,
-                  designPx: _UserTypeSelectionDesign.signatureFontSize,
-                  color: AppColors.black,
-                ),
-              ),
-            ),
-          ),
-          Text(
-            _UserTypeSelectionDesign.yearLabel,
-            style: AppTypography.captionSmall(
-              context,
-              color: _UserTypeSelectionDesign.yearColor,
-            ),
-          ),
-          SizedBox(
-            height: context.rsV(_UserTypeSelectionDesign.yearToIconGap),
-          ),
-          InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const TeacherAdminSelectionScreen(),
-              ),
-            ),
-            child: Padding(
-              padding: EdgeInsets.all(context.rs(4)),
-              child: ResponsiveImage(
-                assetPath: 'assets/images/teacher_admin_icon.png',
-                designWidth: _UserTypeSelectionDesign.adminIconSize,
-                designHeight: _UserTypeSelectionDesign.adminIconSize,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) => Icon(
-                  Icons.person_outline,
-                  size: context.rs(_UserTypeSelectionDesign.adminIconSize - 8),
-                  color: AppColors.darkText,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(height: context.rsV(_UserTypeSelectionDesign.bottomGap)),
-        ],
+          ],
+        ),
       ),
     );
   }
-}
 
-class _UserTypeCard extends StatelessWidget {
-  const _UserTypeCard({
-    required this.label,
-    required this.backgroundColor,
-    required this.assetImage,
-    required this.onTap,
-  });
 
-  final String label;
-  final Color backgroundColor;
-  final String assetImage;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(
-      context.rs(_UserTypeSelectionDesign.cardRadius),
-    );
-
-    return ClipRRect(
-      borderRadius: radius,
+  /// Figma selection card: 345 wide (capped, centered), 260 tall, r28.
+  /// Image composition and navigation behavior are preserved as-is.
+  Widget _buildCard({
+    required BuildContext context,
+    required Color bgColor,
+    required String title,
+    required Color titleColor,
+    required String imagePath,
+    required VoidCallback onTap,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 345),
       child: Material(
-        color: backgroundColor,
+        color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Positioned.fill(
-                child: ResponsiveImage(
-                  assetPath: assetImage,
-                  designWidth: 345,
-                  designHeight: 260,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const SizedBox.shrink(),
-                ),
-              ),
-              Positioned(
-                left: context.rs(20),
-                top: context.rsV(20),
-                child: Text(
-                  label,
-                  style: AppTypography.titleMedium(
-                    context,
-                    color: _UserTypeSelectionDesign.cardTitleColor,
-                  ).copyWith(
-                    fontWeight: FontWeight.w700,
+          borderRadius: BorderRadius.circular(context.rs(28)),
+          child: Container(
+            width: double.infinity,
+            height: context.rsV(260),
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(context.rs(28)),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Image.asset(
+                    imagePath,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.bottomRight,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const SizedBox(),
                   ),
                 ),
-              ),
-            ],
+                Positioned(
+                  left: context.rs(16),
+                  top: context.rsV(24),
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: context.rs(12),
+                      vertical: context.rsV(6),
+                    ),
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.titleMedium(
+                        context,
+                        color: titleColor,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

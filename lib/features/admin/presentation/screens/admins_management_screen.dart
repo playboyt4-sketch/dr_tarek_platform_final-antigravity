@@ -22,7 +22,7 @@ class AdminsManagementScreen extends ConsumerWidget {
 
   static const permissionKeys = <({String key, String label})>[
     (key: 'admin_students', label: 'إدارة الطلاب'),
-    (key: 'password_reset', label: 'إعادة تعيين كلمة المرور'),
+    (key: 'password.reset', label: 'إعادة تعيين كلمة المرور'),
     (key: 'admin_devices', label: 'إدارة وتغيير الأجهزة'),
     (key: 'admin_content', label: 'إدارة المحتوى والمحاضرات'),
     (key: 'admin_academic_terms', label: 'إدارة الفترات الدراسية'),

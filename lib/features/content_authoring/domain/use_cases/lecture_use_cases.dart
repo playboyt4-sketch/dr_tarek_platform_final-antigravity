@@ -23,8 +23,8 @@ class CreateLecture {
     required String description,
     int? displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled = false,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled = false,
+    int? guestPreviewMinutes,
   }) =>
       repository.createLecture(
         subjectId: subjectId,
@@ -33,8 +33,8 @@ class CreateLecture {
         description: description,
         displayOrder: displayOrder,
         publishDate: publishDate,
-        publicFreeEnabled: publicFreeEnabled,
-        publicFreePreviewMinutes: publicFreePreviewMinutes,
+        guestEnabled: guestEnabled,
+        guestPreviewMinutes: guestPreviewMinutes,
       );
 }
 
@@ -48,8 +48,8 @@ class UpdateLectureMetadata {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   }) =>
       repository.updateLectureMetadata(
         lectureId: lectureId,
@@ -57,17 +57,17 @@ class UpdateLectureMetadata {
         description: description,
         displayOrder: displayOrder,
         publishDate: publishDate,
-        publicFreeEnabled: publicFreeEnabled,
-        publicFreePreviewMinutes: publicFreePreviewMinutes,
+        guestEnabled: guestEnabled,
+        guestPreviewMinutes: guestPreviewMinutes,
       );
 }
 
-/// FINAL_DECISIONS §11: per-lecture Public Free availability toggle with
+/// FINAL_DECISIONS §11: per-lecture Guest preview availability toggle with
 /// an independent minute cap. [minutes] null keeps/clears the override so
 /// the plan default applies.
-class SetLecturePublicFree {
+class SetLectureGuestPreview {
   final AdminContentRepository repository;
-  const SetLecturePublicFree(this.repository);
+  const SetLectureGuestPreview(this.repository);
 
   Future<void> execute({
     required String lectureId,
@@ -84,8 +84,8 @@ class SetLecturePublicFree {
         description: description,
         displayOrder: displayOrder,
         publishDate: publishDate,
-        publicFreeEnabled: enabled,
-        publicFreePreviewMinutes: minutes,
+        guestEnabled: enabled,
+        guestPreviewMinutes: minutes,
       );
 }
 

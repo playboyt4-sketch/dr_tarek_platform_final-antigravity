@@ -17,6 +17,7 @@ import 'plan_quality_matrix_screen.dart';
 import 'platform_features_screen.dart';
 import 'students_management_screen.dart';
 import 'subjects_management_screen.dart';
+import 'subscription_plans_screen.dart';
 import '../../../academic_periods/presentation/screens/academic_periods_screen.dart';
 
 class AdminHomeScreen extends ConsumerWidget {
@@ -99,6 +100,17 @@ class AdminHomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 10),
           AppButton(
+            label: 'الاشتراكات والخطط',
+            icon: Icons.card_membership_outlined,
+            variant: AppButtonVariant.outlined,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SubscriptionPlansScreen(user: user),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          AppButton(
             label: 'إدارة جودات الفيديو',
             icon: Icons.high_quality_outlined,
             variant: AppButtonVariant.outlined,
@@ -128,7 +140,7 @@ class AdminHomeScreen extends ConsumerWidget {
               variant: AppButtonVariant.outlined,
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => AdminsManagementScreen(user: user),
+                  builder: (_) => const AdminsManagementScreen(),
                 ),
               ),
             ),
@@ -378,7 +390,7 @@ class _StudentApprovalDialog extends StatefulWidget {
 }
 
 class _StudentApprovalDialogState extends State<_StudentApprovalDialog> {
-  String studentType = 'public_student';
+  String studentType = 'guest';
   bool loadingSubjects = true;
   bool submitting = false;
   String? errorMessage;
@@ -439,8 +451,8 @@ class _StudentApprovalDialogState extends State<_StudentApprovalDialog> {
                       ),
                       items: const [
                         DropdownMenuItem(
-                          value: 'public_student',
-                          child: Text('Public Student'),
+                          value: 'guest',
+                          child: Text('Guest'),
                         ),
                         DropdownMenuItem(
                           value: 'center_student',

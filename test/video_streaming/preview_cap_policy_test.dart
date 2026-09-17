@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dr_tarek_platform/features/video_streaming/domain/entities/playback_entities.dart';
 
-/// FINAL_DECISIONS §11: per-lecture Public Free preview cap policy.
+/// FINAL_DECISIONS §11: per-lecture Guest preview cap policy.
 void main() {
   group('PreviewCapPolicy — cap resolution', () {
     test('no cap when the gate is not armed (normal subscriber)', () {
@@ -21,8 +21,8 @@ void main() {
         title: 't',
         resourceType: 'video',
         bunnyVideoId: 'b1',
-        isPublicFreePreview: true,
-        publicFreePreviewSeconds: 0,
+        isGuestPreview: true,
+        guestPreviewSeconds: 0,
       );
       expect(PreviewCapPolicy.capFor(resource), Duration.zero);
     });
@@ -33,8 +33,8 @@ void main() {
         title: 't',
         resourceType: 'video',
         bunnyVideoId: 'b1',
-        isPublicFreePreview: true,
-        publicFreePreviewSeconds: 300,
+        isGuestPreview: true,
+        guestPreviewSeconds: 300,
       );
       expect(PreviewCapPolicy.capFor(resource), const Duration(minutes: 5));
     });
@@ -73,7 +73,7 @@ void main() {
         () {
       const resource = VideoResource(id: 'r', title: 't', resourceType: 'pdf');
       expect(resource.storageProvider, 'firebase');
-      expect(resource.isPublicFreePreview, isFalse);
+      expect(resource.isGuestPreview, isFalse);
     });
   });
 }

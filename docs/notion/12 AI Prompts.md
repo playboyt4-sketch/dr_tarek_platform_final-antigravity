@@ -2,8 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.0
+Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+
+## Version History
+
+- **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Updated the review checklist and analytics prompt so they no longer encode login-rejection or global-claim device authorization. No unrelated prompts rewritten.
 
 ---
 
@@ -245,13 +249,14 @@ CONTEXT: Read:
 TASK: Generate Security Rules for the following collections: {list collections}.
 
 Requirements:
-- Use Custom Claims for zero-read role resolution (request.auth.token.*).
+- Use identity Custom Claims for zero-read role resolution (request.auth.token.role, student_type, approved).
+- Resolve per-Subject subscription and Subject-Device authorization (Full vs Guest) from live server-side state, never from single global claims (per ADR-004).
 - Enforce all business rules from 02 PRD and 04 Features.
 - Prevent unauthorized reads, writes, and deletes.
 - Handle soft delete (is_deleted field) correctly.
 
 CONSTRAINTS:
-- No extra Firestore document reads per rule evaluation.
+- Zero-read evaluation applies to identity/role resolution only; Subject-specific decisions always read live state.
 - Rules must be readable and commented.
 - Test against emulator before deployment.
 - Cross-document uniqueness constraints (e.g., display_handle) must be enforced via Cloud Function, not Rules alone.
@@ -293,7 +298,7 @@ Use this checklist from 08 Development Standards Section 10:
 - [ ] No hardcoded strings for user-facing text
 - [ ] Naming matches Section 2
 - [ ] New Firestore reads covered by Security Rule
-- [ ] Device Binding logic uses max_devices from Custom Claims
+- [ ] Subject-Device Authorization uses the server-side source of truth per Subject (never a single global claim); login is never rejected for device reasons (per ADR-004)
 - [ ] DRM code passes the gate in Section 8 (if applicable)
 - [ ] Password reset flow uses correct collection
 
@@ -543,7 +548,7 @@ Metrics to compute:
 4. Exam participation and pass rate
 5. Feature adoption (bookmarks, notes, chat)
 6. Retention cohorts (Day 1, Day 7, Day 30)
-7. Device binding events (unauthorized attempts, replacements)
+7. Subject-Device Authorization events (per-Subject Guest-tier resolutions, authorizations, replacements, resets — never login rejections)
 
 Insights to provide:
 1. Top 3 positive trends

@@ -13,13 +13,13 @@ class Lecture {
   final DateTime? publishDate;
   final LectureStatus status;
 
-  /// FINAL_DECISIONS §11: per-lecture Public Free availability. Defaults
+  /// FINAL_DECISIONS §11: per-lecture Guest preview availability. Defaults
   /// preserve every existing constructor call site.
-  final bool publicFreeEnabled;
+  final bool guestEnabled;
 
-  /// Minutes allowed for THIS lecture for Public Free students
+  /// Minutes allowed for THIS lecture for Guest students
   /// (independent per lecture); null = fall back to the plan default.
-  final int? publicFreePreviewMinutes;
+  final int? guestPreviewMinutes;
 
   const Lecture({
     required this.id,
@@ -29,7 +29,7 @@ class Lecture {
     required this.displayOrder,
     required this.publishDate,
     required this.status,
-    this.publicFreeEnabled = false,
-    this.publicFreePreviewMinutes,
+    this.guestEnabled = false,
+    this.guestPreviewMinutes,
   });
 }

@@ -100,4 +100,62 @@ abstract final class AppTypography {
     color: color,
     height: 1.0,
   );
+
+  /// EXPERIMENTAL brand-signature style (design experiment — NOT an
+  /// approved design-system token, do NOT copy into `design system.md`
+  /// without project-owner approval).
+  ///
+  /// Sizes the signature from the *available parent width* (already minus
+  /// gutters) via [BrandSignatureResponsive], NOT from the viewport and
+  /// NOT from the generic form/list [contentMaxWidth]. Pair with a
+  /// single-line, overflow-safe wrapper (e.g. `FittedBox.scaleDown` purely
+  /// as final overflow safety).
+  static TextStyle brandSignatureFromAvailableWidth(
+    double availableWidth, {
+    Color color = AppColors.black,
+  }) => TextStyle(
+    fontFamily: AppFontFamilies.signature,
+    fontSize: BrandSignatureResponsive.resolveFontSize(availableWidth),
+    fontWeight: FontWeight.w400,
+    color: color,
+    height: 1.0,
+  );
+}
+
+/// EXPERIMENTAL responsive sizing for the brand signature (design
+/// experiment — NOT an approved design-system token).
+///
+/// Maps the available parent content width to a signature font size:
+///
+/// ```text
+/// availableWidth → preferred size → clamp(128, preferred, 192)
+/// ```
+///
+/// - Monotonic non-decreasing in [availableWidth]: more meaningful space
+///   never yields a smaller font.
+/// - Constraint-driven: takes the parent's available width, never the
+///   viewport. Contains no `width / 393`, no `height / 852`, and no
+///   phone/tablet/web branches.
+/// - Bounded: never below the pre-existing 128 design-px baseline, never
+///   above the experimental 192 maximum, so large screens cannot grow the
+///   signature indefinitely.
+abstract final class BrandSignatureResponsive {
+  /// EXPERIMENTAL minimum — the pre-existing 128 design-px baseline.
+  static const minFontSize = 128.0;
+
+  /// EXPERIMENTAL maximum for large tablets/web.
+  static const maxFontSize = 192.0;
+
+  /// Reference content width (393 design canvas minus 2x24 design gutter =
+  /// 345) per baseline font px. A fixed design-derived constant, NOT a
+  /// runtime viewport ratio: at the reference width the preferred size
+  /// resolves back to ~baseline (345 / 2.695 = 128).
+  static const _contentWidthPerFontPx = 345.0 / 128.0;
+
+  /// Resolves the signature font size for [availableWidth] logical px.
+  static double resolveFontSize(double availableWidth) =>
+      (availableWidth / _contentWidthPerFontPx).clamp(
+        minFontSize,
+        maxFontSize,
+      );
 }

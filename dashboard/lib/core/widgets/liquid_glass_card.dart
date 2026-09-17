@@ -1,14 +1,16 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
-/// Reproduction of the Figma `Liquid Glass - Notification - Light` surface
-/// used by the dashboard login card, verified against the live frame
-/// (452:397): corner radius 20, opaque white fill, a soft ambient drop
-/// shadow (black @25%, offset 0/8, blur 48) and three hairline #DBDBDB
-/// shadows tracing the card edge (spread 0.5 / -0.75 at x offsets).
+/// Liquid-glass login card matching the approved Figma Dev Mode frame
+/// (`#login frame`, 1280 x 800 reference):
+/// 480 x 452, radius 28, white @ 70% (Colors.white.withValues(alpha: 0.70)),
+/// backdrop blur sigmaX/Y 20, 1.5 px inside stroke #E5E7EB, shadow
+/// black 0x1E000000 (offset 0/12, blur 30).
 ///
-/// The Figma `GLASS` backdrop effect and its two inset #282828 hairlines
-/// sit behind an opaque white fill, so they are imperceptible and are
-/// intentionally omitted here.
+/// [width]/[height] default to the Figma geometry. [height] may stay null
+/// so validation messages can expand the card without clipping; the base
+/// composition (exact inner gaps in the login screen) still sums to 452.
 class LiquidGlassCard extends StatelessWidget {
   final double width;
   final double? height;
@@ -16,43 +18,41 @@ class LiquidGlassCard extends StatelessWidget {
 
   const LiquidGlassCard({
     super.key,
-    required this.width,
+    this.width = 480,
     this.height,
     required this.child,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      height: height,
-      decoration: const BoxDecoration(
-        borderRadius: BorderRadius.all(Radius.circular(20)),
-        color: Colors.white,
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Color(0x40000000),
-            offset: Offset(0, 8),
-            blurRadius: 48,
+    return ClipRRect(
+      borderRadius: const BorderRadius.all(Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.all(Radius.circular(28)),
+            color: Colors.white.withValues(alpha: 0.70),
+            border: const Border.fromBorderSide(
+              BorderSide(
+                color: Color(0xFFE5E7EB),
+                width: 1.5,
+                strokeAlign: BorderSide.strokeAlignInside,
+              ),
+            ),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x1E000000),
+                offset: Offset(0, 12),
+                blurRadius: 30,
+              ),
+            ],
           ),
-          BoxShadow(
-            color: Color(0xFFDBDBDB),
-            offset: Offset.zero,
-            spreadRadius: 0.5,
-          ),
-          BoxShadow(
-            color: Color(0xFFDBDBDB),
-            offset: Offset(-1.25, 0),
-            spreadRadius: -0.75,
-          ),
-          BoxShadow(
-            color: Color(0xFFDBDBDB),
-            offset: Offset(1.25, 0),
-            spreadRadius: -0.75,
-          ),
-        ],
+          child: child,
+        ),
       ),
-      child: child,
     );
   }
 }

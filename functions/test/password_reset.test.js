@@ -17,7 +17,16 @@ const adminMock = {
           return { exists: true, data: () => docData };
         },
         update: async () => {},
-        set: async () => {}
+        // Honor {merge:true} so permission-key migration is observable;
+        // update() stays a no-op so shared fixtures (req-1) remain pending.
+        set: async (data, options) => {
+          const key = `${collPath}/${docId}`;
+          if (options && options.merge && dbMockData[key] !== undefined) {
+            dbMockData[key] = {...dbMockData[key], ...data};
+          } else {
+            dbMockData[key] = data;
+          }
+        }
       }),
       add: async () => {}
     })
@@ -84,14 +93,22 @@ async function run() {
     }
   }
 
-  // Set up mock DB data
+  // Set up mock DB data (canonical key is `password.reset`).
   dbMockData["admin_permissions/admin_with_reset"] = {
     is_active: true,
-    permissions: { "password_reset": true }
+    permissions: { "password.reset": true }
   };
   dbMockData["admin_permissions/admin_without_reset"] = {
     is_active: true,
-    permissions: { "password_reset": false }
+    permissions: { "password.reset": false }
+  };
+  dbMockData["admin_permissions/admin_legacy"] = {
+    is_active: true,
+    permissions: { "password_reset": true }
+  };
+  dbMockData["admin_permissions/admin_revoke"] = {
+    is_active: true,
+    permissions: { "password.reset": true }
   };
   dbMockData["password_reset_requests/req-1"] = {
     status: "pending",
@@ -106,13 +123,24 @@ async function run() {
   await checkFail("Student -> DENIED", { uid: "s1", token: { role: "student" } }, requestData);
   await checkFail("Unauthenticated -> DENIED", null, requestData);
 
+  // Legacy `password_reset` grant is honored once and migrated.
+  await checkPass("Admin with legacy key -> PASS (migrated)", { uid: "admin_legacy", token: { role: "admin" } }, requestData);
+  assert.equal(dbMockData["admin_permissions/admin_legacy"].permissions["password.reset"], true);
+  assert.equal(dbMockData["admin_permissions/admin_legacy"].permissions["password_reset"], false);
+  console.log("ok - Legacy key migrated to password.reset");
+
+  // Revoked grant is denied even though it previously passed.
+  await checkPass("Admin before revoke -> PASS", { uid: "admin_revoke", token: { role: "admin" } }, requestData);
+  dbMockData["admin_permissions/admin_revoke"].permissions["password.reset"] = false;
+  await checkFail("Admin after revoke -> DENIED", { uid: "admin_revoke", token: { role: "admin" } }, requestData);
+
   test.cleanup();
 
   if (process.exitCode === 1) {
     console.error("password_reset tests FAILED");
     process.exit(1);
   }
-  console.log(`password_reset.test: PASS - All ${passed}/5 checks passed.`);
+  console.log(`password_reset.test: PASS - All ${passed} checks passed.`);
 }
 
 run();

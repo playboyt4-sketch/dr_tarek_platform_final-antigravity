@@ -318,7 +318,7 @@ class _SubscriptionFeatureMatrixScreenState
                     ),
                     const SizedBox(height: 32),
 
-                    // 5. Device & Security
+                    // 5. Devices & Security
                     _buildCategoryContainer(
                       key: _sectionKeys['device_security']!,
                       children: [
@@ -862,85 +862,134 @@ class _SubscriptionFeatureMatrixScreenState
     );
   }
 
+  // Figma plan selector: 692x48 outer, 1px #979797 inside stroke,
+  // radius 28, four 168x40 items (Guest / FREE / PRO / MAX).
+  // Selected = filled appearance only — NEVER a check icon (no ChoiceChip,
+  // no Icons.check* anywhere in this component).
   Widget _buildPlanSelectorTabs() {
-    final plans = [
+    const plans = [
       {'key': 'guest', 'label': 'Guest'},
-      {'key': 'free', 'label': 'Center FREE'},
-      {'key': 'pro', 'label': 'Center PRO'},
-      {'key': 'max', 'label': 'Center MAX'},
+      {'key': 'free', 'label': 'FREE'},
+      {'key': 'pro', 'label': 'PRO'},
+      {'key': 'max', 'label': 'MAX'},
     ];
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: plans.map((p) {
-        final isSelected = _activePlan == p['key'];
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: ChoiceChip(
-            label: Text(p['label']!),
-            selected: isSelected,
-            selectedColor: const Color(0xFF111827),
-            backgroundColor: Colors.white,
-            labelStyle: TextStyle(
-              color: isSelected ? Colors.white : const Color(0xFF111827),
-              fontWeight: FontWeight.w500,
-            ),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(9999)),
-            onSelected: (val) {
-              if (val) setState(() => _activePlan = p['key']!);
-            },
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 692),
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFF979797), width: 1),
           ),
-        );
-      }).toList(),
+          child: Row(
+            children: plans.map((p) {
+              final isSelected = _activePlan == p['key'];
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _activePlan = p['key']!),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    height: 40,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? const Color(0xFF111827)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      p['label']!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        fontSize: 14,
+                        letterSpacing: 0,
+                        color: isSelected
+                            ? Colors.white
+                            : const Color(0xFF111827),
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ),
     );
   }
 
+  // Figma feature navigation: 1120x48 outer, 1px #979797 inside stroke,
+  // items 40 high, active item filled (Video & Media by default).
+  // Horizontally scrolls on narrow screens so desktop proportions hold
+  // without overflow; no icons in this component.
   Widget _buildCategoryAnchorTabs() {
-    final categories = [
+    const categories = [
       {'key': 'video_media', 'label': 'Video & Media'},
       {'key': 'pdf_docs', 'label': 'Pdf & documents'},
       {'key': 'learning_assessment', 'label': 'Learning & Assessment'},
       {'key': 'productivity', 'label': 'Productivity'},
-      {'key': 'device_security', 'label': 'Device & Security'},
+      {'key': 'device_security', 'label': 'Devices & Security'},
       {'key': 'profile_account', 'label': 'Profile & Account'},
     ];
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(9999),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: categories.map((cat) {
-          final isSelected = _activeCategory == cat['key'];
-          return GestureDetector(
-            onTap: () => _scrollToSection(cat['key']!),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? const Color(0xFF111827)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(9999),
-              ),
-              child: Text(
-                cat['label']!,
-                style: TextStyle(
-                  color: isSelected
-                      ? Colors.white
-                      : const Color(0xFF4B5563),
-                  fontSize: 14,
-                  fontWeight:
-                      isSelected ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1120),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Container(
+            height: 48,
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFFFF),
+              borderRadius: BorderRadius.circular(24),
+              border:
+                  Border.all(color: const Color(0xFF979797), width: 1),
             ),
-          );
-        }).toList(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: categories.map((cat) {
+                final isSelected = _activeCategory == cat['key'];
+                return GestureDetector(
+                  onTap: () => _scrollToSection(cat['key']!),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    height: 40,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? const Color(0xFF111827)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      cat['label']!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        color: isSelected
+                            ? Colors.white
+                            : const Color(0xFF4B5563),
+                        fontSize: 14,
+                        letterSpacing: 0,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
       ),
     );
   }

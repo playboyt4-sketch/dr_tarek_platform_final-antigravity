@@ -51,8 +51,8 @@ abstract class AdminContentRepository {
     required String description,
     int? displayOrder, // null -> appended after the last lecture
     DateTime? publishDate,
-    bool publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled,
+    int? guestPreviewMinutes,
   });
 
   Future<void> updateLectureMetadata({
@@ -61,8 +61,8 @@ abstract class AdminContentRepository {
     required String description,
     required int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   });
 
   Future<void> setLecturePublished({
@@ -75,6 +75,20 @@ abstract class AdminContentRepository {
   Future<void> archiveLecture(String lectureId);
 
   Future<void> reorderLectures(List<Lecture> orderedLectures);
+
+  // ---- Lecture Access (V1 approved backend: lecture_access_grants) ----
+  /// Grade context of a subject for the Access UI (existing `grade`
+  /// field; null when absent — never invented).
+  Future<String?> getSubjectGrade(String subjectId);
+
+  /// Approved students for the Access UI, optionally scoped to a grade.
+  Stream<List<LectureStudent>> watchStudents({String? gradeKey});
+
+  /// Live explicit grants for one lecture (missing grant = no override).
+  Stream<List<LectureAccessGrant>> watchLectureAccessGrants(String lectureId);
+
+  /// Persists grants with deterministic ids; repeat-safe, no duplicates.
+  Future<void> saveLectureAccess(List<LectureAccessGrant> grants);
 
   // ---- Resources ----
   Stream<List<AdminLectureResource>> watchResources(String lectureId);

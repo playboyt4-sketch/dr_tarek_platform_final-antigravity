@@ -81,6 +81,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         episodes: widget.episodes,
         episode: widget.initialEpisode,
         watchWindowGateway: ref.watch(watchWindowGatewayProvider),
+        sessionGateway: ref.read(playbackSessionGatewayProvider),
       );
       controller.addListener(_onControllerChanged);
       _controller = controller;

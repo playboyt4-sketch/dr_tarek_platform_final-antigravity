@@ -50,7 +50,10 @@ String gradeDisplayName(String? key) {
 String? studentTypeDisplayName(String? type) {
   return switch (type) {
     'center_student' => 'طالب سنتر',
-    'public_student' => 'طالب عام',
+    'guest' => 'ضيف',
+    // Pre-migration stored value; display-only continuity until the data
+    // migration covers all requests.
+    'public_student' => 'ضيف',
     _ => null,
   };
 }

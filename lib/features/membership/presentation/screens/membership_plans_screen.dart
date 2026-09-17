@@ -24,7 +24,7 @@ class MembershipPlansScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final studentType = user.studentType;
     if (studentType == null ||
-        (studentType != 'public_student' && studentType != 'center_student')) {
+        (studentType != 'guest' && studentType != 'center_student')) {
       return Scaffold(
         appBar: AppBar(title: const Text('الخطط والاشتراكات')),
         body: const Center(child: Text('نوع الطالب غير مُعدّ بعد.')),

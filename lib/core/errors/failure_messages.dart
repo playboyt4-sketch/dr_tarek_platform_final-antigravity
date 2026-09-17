@@ -33,6 +33,11 @@ String failureMessage(AppLocalizations l10n, FailureCode code) {
     FailureCode.subscriptionExpired => l10n.errorSubscriptionExpired,
     FailureCode.subscriptionInactive => l10n.errorSubscriptionInactive,
     FailureCode.disciplinaryDisabled => l10n.errorDisciplinaryDisabled,
+    // Per-lecture student access: UI is approved, backend schema is not.
+    // Staff-facing only, so it stays out of the arb files (same precedent
+    // as sectionHasActiveLectures above).
+    FailureCode.schemaNotApproved =>
+      'Lecture access cannot be saved yet: per-lecture access has no approved backend schema. Selections are kept on this screen.',
     FailureCode.noInternet => l10n.errorNoInternet,
     FailureCode.timeout => l10n.errorTimeout,
     FailureCode.server => l10n.errorServer,

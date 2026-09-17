@@ -1,21 +1,36 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 
-/// Footer attribution from the Figma frame (452:397):
-/// `Created by Tarek el araby` — Google Sans Flex Light (300), 16 px,
-/// black, rendered as a single run per the live frame.
+/// Footer attribution from the approved Figma Dev Mode spec (bottom of
+/// the card): `Created by Tarek el araby` — Google Sans Flex 16 px black
+/// ("Created by" Thin 100, " " Light 300, "Tarek el araby" Regular 400).
+///
+/// Single [Text.rich] so the plain text stays one run for semantics/tests.
 class LoginFooter extends StatelessWidget {
   const LoginFooter({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final fontSize = context.rs(16, minScale: 0.8);
-    return Text(
-      'Created by Tarek el araby',
-      style: AppTypography.footerBase(fontSize: fontSize),
+    return Text.rich(
+      TextSpan(
+        children: <TextSpan>[
+          TextSpan(
+            text: 'Created by',
+            style: AppTypography.loginFooterCreatedBy(),
+          ),
+          TextSpan(
+            text: ' ',
+            style: AppTypography.loginFooterSpace(),
+          ),
+          TextSpan(
+            text: 'Tarek el araby',
+            style: AppTypography.loginFooterName(),
+          ),
+        ],
+      ),
       textAlign: TextAlign.center,
+      maxLines: 1,
     );
   }
 }

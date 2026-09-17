@@ -113,7 +113,10 @@ class StudentsManagementScreen extends StatelessWidget {
   static String _studentTypeLabel(String studentType) {
     return switch (studentType) {
       'center_student' => 'طالب سنتر',
-      'public_student' => 'طالب عام',
+      'guest' => 'ضيف',
+      // Legacy value from pre-migration documents; kept readable until
+      // the data migration covers all users.
+      'public_student' => 'ضيف',
       _ => studentType,
     };
   }
@@ -746,7 +749,7 @@ class _StudentApprovalCardState extends State<_StudentApprovalCard> {
               decoration: const InputDecoration(labelText: 'نوع الطالب المعتمد', border: OutlineInputBorder()),
               items: const [
                 DropdownMenuItem(value: 'center_student', child: Text('طالب سنتر (Center Student)')),
-                DropdownMenuItem(value: 'public_student', child: Text('طالب عام (Public Student)')),
+                DropdownMenuItem(value: 'guest', child: Text('ضيف (Guest)')),
               ],
               onChanged: (val) => setState(() => _selectedType = val ?? 'center_student'),
             ),
@@ -864,12 +867,12 @@ class _StudentTypeConverter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final target = currentType == 'center_student' ? 'public_student' : 'center_student';
-    final targetLabel = target == 'center_student' ? 'طالب سنتر' : 'طالب عام';
+    final target = currentType == 'center_student' ? 'guest' : 'center_student';
+    final targetLabel = target == 'center_student' ? 'طالب سنتر' : 'ضيف';
     return Card(
       child: ListTile(
         leading: const Icon(Icons.swap_horiz_rounded),
-        title: Text('النوع الحالي: ${currentType == 'center_student' ? 'طالب سنتر' : 'طالب عام'}'),
+        title: Text('النوع الحالي: ${currentType == 'center_student' ? 'طالب سنتر' : 'ضيف'}'),
         subtitle: Text('تحويل إلى: $targetLabel'),
         trailing: busy
             ? const SizedBox(
@@ -1387,9 +1390,9 @@ class _SubscriptionDisciplinaryRow extends StatelessWidget {
 
   static String _planLabel(String planId) {
     return switch (planId) {
-      'center_max' => 'Max',
-      'center_pro' => 'Pro',
-      'center_free' || 'public_free' => 'Free',
+      'max' => 'Max',
+      'pro' => 'Pro',
+      'free' || 'guest' => 'Free',
       _ => planId,
     };
   }

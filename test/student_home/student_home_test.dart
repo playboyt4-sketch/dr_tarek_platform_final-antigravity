@@ -25,7 +25,7 @@ AuthUser _student() {
     fullName: 'Tarek El Araby',
     phoneNumber: '01000000000',
     role: 'student',
-    studentType: 'public_student',
+    studentType: 'guest',
     grade: 'grade_one',
     approvalStatus: 'approved',
     accountStatus: 'active',

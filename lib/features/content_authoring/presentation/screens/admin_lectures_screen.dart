@@ -8,6 +8,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_input.dart';
 import '../../../lecture/domain/entities/lecture.dart';
 import '../providers/admin_content_providers.dart';
+import '../widgets/add_lecture_dialog.dart' show showAddLectureDialog;
 import 'admin_resources_screen.dart';
 
 /// Lecture management per Feature 04: list ordered by display_order with
@@ -55,7 +56,17 @@ class AdminLecturesScreen extends ConsumerWidget {
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.primary,
         child: const Icon(Icons.add),
-        onPressed: () => _createDialog(context, ref),
+        onPressed: () {
+          final order = (lectures.value?.length ?? 0) + 1;
+          showAddLectureDialog(
+            context,
+            ref,
+            subjectId: subjectId,
+            sectionId: sectionId,
+            sectionTitle: sectionTitle,
+            initialOrder: order,
+          );
+        },
       ),
       body: lectures.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -103,8 +114,8 @@ class AdminLecturesScreen extends ConsumerWidget {
                     '${published ? "منشورة" : lecture.status == LectureStatus.archived ? "مؤرشفة" : "مسودة"}'
                     ' • ترتيب ${lecture.displayOrder}'
                     '${lecture.publishDate != null ? " • النشر: ${_dateLabel(lecture.publishDate!)}" : ""}'
-                    // FINAL_DECISIONS §11 per-lecture Public Free state.
-                    '${lecture.publicFreeEnabled ? " • متاحة للفري العام (${lecture.publicFreePreviewMinutes ?? "افتراضي الباقة"} د)" : ""}',
+                    // FINAL_DECISIONS §11 per-lecture Guest preview state.
+                    '${lecture.guestEnabled ? " • متاحة للضيف (${lecture.guestPreviewMinutes ?? "افتراضي الباقة"} د)" : ""}',
                   ),
                   trailing: PopupMenuButton<String>(
                     onSelected: (v) {
@@ -158,8 +169,8 @@ class AdminLecturesScreen extends ConsumerWidget {
       '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
 
   /// FINAL_DECISIONS §11: the exact toggle + minutes pair — a green/gray
-  /// switch "إتاحة للفري العام" with the numeric minutes field beside it.
-  Widget _publicFreeControls({
+  /// switch "إتاحة للضيف" with the numeric minutes field beside it.
+  Widget _guestPreviewControls({
     required bool enabled,
     required TextEditingController minutes,
     required ValueChanged<bool> onToggle,
@@ -174,7 +185,7 @@ class AdminLecturesScreen extends ConsumerWidget {
         ),
         Expanded(
           child: Text(
-            'إتاحة للفري العام',
+            'إتاحة للضيف',
             style: TextStyle(color: enabled ? AppColors.success : Colors.grey),
           ),
         ),
@@ -201,100 +212,13 @@ class AdminLecturesScreen extends ConsumerWidget {
     return int.tryParse(text);
   }
 
-  Future<void> _createDialog(BuildContext context, WidgetRef ref) async {
-    final title = TextEditingController();
-    final description = TextEditingController();
-    final publicFreeMinutes = TextEditingController();
-    bool publicFreeEnabled = false;
-    DateTime? publishDate;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: const Text('محاضرة جديدة'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              AppInput(controller: title, hint: 'عنوان المحاضرة'),
-              const SizedBox(height: 8),
-              AppInput(controller: description, hint: 'الوصف (اختياري)'),
-              const SizedBox(height: 8),
-              // Publish date controls when the lecture goes live for students;
-              // auto-publish flips it once the date passes (Part D).
-              Row(children: [
-                Expanded(
-                  child: Text(publishDate == null
-                      ? 'بدون تاريخ نشر (فوري عند النشر)'
-                      : 'تاريخ النشر: ${_dateLabel(publishDate!)}'),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.calendar_today_outlined),
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: ctx,
-                      initialDate: publishDate ?? DateTime.now(),
-                      firstDate: DateTime(2024),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) setState(() => publishDate = picked);
-                  },
-                ),
-              ]),
-              const SizedBox(height: 8),
-              // FINAL_DECISIONS §11 per-lecture Public Free access.
-              _publicFreeControls(
-                enabled: publicFreeEnabled,
-                minutes: publicFreeMinutes,
-                onToggle: (v) => setState(() => publicFreeEnabled = v),
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('إنشاء')),
-          ],
-        ),
-      ),
-    );
-    if (created != true || !context.mounted) return;
-    if (title.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('عنوان المحاضرة مطلوب.')));
-      return;
-    }
-    final minutes = _parseMinutes(publicFreeMinutes);
-    if (publicFreeEnabled && minutes != null && minutes <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('الدقائق المسموحة يجب أن تكون رقمًا أكبر من صفر.')));
-      return;
-    }
-    await _mutate(
-      context,
-      () => ref.read(createLectureUseCaseProvider).execute(
-            subjectId: subjectId,
-            sectionId: sectionId,
-            title: title.text.trim(),
-            description: description.text.trim(),
-            displayOrder: null, // appended after the last lecture
-            publishDate: publishDate,
-            publicFreeEnabled: publicFreeEnabled,
-            publicFreePreviewMinutes:
-                publicFreeEnabled ? minutes : null,
-          ),
-      'تعذر إنشاء المحاضرة.',
-    );
-  }
-
   Future<void> _editDialog(
       BuildContext context, WidgetRef ref, Lecture lecture) async {
     final title = TextEditingController(text: lecture.title);
     final description = TextEditingController(text: lecture.description);
-    final publicFreeMinutes = TextEditingController(
-        text: lecture.publicFreePreviewMinutes?.toString() ?? '');
-    bool publicFreeEnabled = lecture.publicFreeEnabled;
+    final guestPreviewMinutes = TextEditingController(
+        text: lecture.guestPreviewMinutes?.toString() ?? '');
+    bool guestEnabled = lecture.guestEnabled;
     DateTime? publishDate = lecture.publishDate;
     final saved = await showDialog<bool>(
       context: context,
@@ -328,10 +252,10 @@ class AdminLecturesScreen extends ConsumerWidget {
               ]),
               const SizedBox(height: 8),
               // FINAL_DECISIONS §11: green/gray toggle + numeric field.
-              _publicFreeControls(
-                enabled: publicFreeEnabled,
-                minutes: publicFreeMinutes,
-                onToggle: (v) => setState(() => publicFreeEnabled = v),
+              _guestPreviewControls(
+                enabled: guestEnabled,
+                minutes: guestPreviewMinutes,
+                onToggle: (v) => setState(() => guestEnabled = v),
               ),
             ]),
           ),
@@ -347,8 +271,8 @@ class AdminLecturesScreen extends ConsumerWidget {
       ),
     );
     if (saved != true || !context.mounted) return;
-    final minutes = _parseMinutes(publicFreeMinutes);
-    if (publicFreeEnabled && minutes != null && minutes <= 0) {
+    final minutes = _parseMinutes(guestPreviewMinutes);
+    if (guestEnabled && minutes != null && minutes <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('الدقائق المسموحة يجب أن تكون رقمًا أكبر من صفر.')));
       return;
@@ -361,9 +285,9 @@ class AdminLecturesScreen extends ConsumerWidget {
             description: description.text.trim(),
             displayOrder: lecture.displayOrder,
             publishDate: publishDate,
-            publicFreeEnabled: publicFreeEnabled,
-            publicFreePreviewMinutes:
-                publicFreeEnabled ? minutes : null,
+            guestEnabled: guestEnabled,
+            guestPreviewMinutes:
+                guestEnabled ? minutes : null,
           ),
       'تعذر حفظ التعديلات.',
     );

@@ -7,9 +7,16 @@ import '../../../../core/widgets/dashboard_filter_dropdown.dart';
 import '../../domain/entities/join_application.dart';
 import '../../domain/grade.dart';
 import '../providers/join_applications_provider.dart';
+import '../widgets/application_decision_dialog.dart';
 
 class ReviewingApplicationsScreen extends ConsumerStatefulWidget {
-  const ReviewingApplicationsScreen({super.key});
+  /// Grade pre-selected in the filter (defaults to all grades).
+  final String initialGrade;
+
+  const ReviewingApplicationsScreen({
+    super.key,
+    this.initialGrade = _ReviewingApplicationsScreenState.allGrades,
+  });
 
   @override
   ConsumerState<ReviewingApplicationsScreen> createState() =>
@@ -26,6 +33,14 @@ class _ReviewingApplicationsScreenState
   };
 
   String _selectedGrade = allGrades;
+
+  @override
+  void initState() {
+    super.initState();
+    if (gradeFilters.containsKey(widget.initialGrade)) {
+      _selectedGrade = widget.initialGrade;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,61 +118,117 @@ class _ApplicationCard extends StatelessWidget {
 
   const _ApplicationCard({required this.application});
 
+  Future<void> _openDecision(BuildContext context) async {
+    final String? message =
+        await showApplicationDecisionDialog(context, application);
+    if (context.mounted && message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final rs = context.rs;
     final String? studentType = studentTypeDisplayName(application.studentType);
     final DateTime? createdAt = application.createdAt;
 
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.symmetric(horizontal: rs(28), vertical: rs(26)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppColors.inputStroke, width: 1.5),
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: Column(
+    return InkWell(
+      onTap: () => _openDecision(context),
+      borderRadius: BorderRadius.circular(28),
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(horizontal: rs(28), vertical: rs(26)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: AppColors.inputStroke, width: 1.5),
+          borderRadius: BorderRadius.circular(28),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(
-                  application.fullName,
-                  style: AppTypography.statValue(fontSize: rs(30)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        application.fullName,
+                        style: AppTypography.statValue(fontSize: rs(30)),
+                      ),
+                      SizedBox(height: rs(10)),
+                      Text(
+                        application.phone,
+                        style: AppTypography.statLabel(fontSize: rs(22)),
+                      ),
+                    ],
+                  ),
                 ),
-                SizedBox(height: rs(10)),
-                Text(
-                  application.phone,
-                  style: AppTypography.statLabel(fontSize: rs(22)),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _GradeChip(label: gradeDisplayName(application.gradeKey)),
+                    if (studentType != null) ...<Widget>[
+                      SizedBox(height: rs(10)),
+                      _InfoChip(label: studentType),
+                    ],
+                    if (createdAt != null) ...<Widget>[
+                      SizedBox(height: rs(10)),
+                      Text(
+                        '${createdAt.year}/'
+                        '${createdAt.month.toString().padLeft(2, '0')}/'
+                        '${createdAt.day.toString().padLeft(2, '0')}',
+                        style: AppTypography.statLabel(fontSize: rs(20)),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              _GradeChip(label: gradeDisplayName(application.gradeKey)),
-              if (studentType != null) ...<Widget>[
-                SizedBox(height: rs(10)),
-                _InfoChip(label: studentType),
-              ],
-              if (createdAt != null) ...<Widget>[
-                SizedBox(height: rs(10)),
-                Text(
-                  '${createdAt.year}/'
-                  '${createdAt.month.toString().padLeft(2, '0')}/'
-                  '${createdAt.day.toString().padLeft(2, '0')}',
-                  style: AppTypography.statLabel(fontSize: rs(20)),
-                ),
-              ],
-            ],
-          ),
-        ],
+            SizedBox(height: rs(18)),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _ReviewButton(
+                onTap: () => _openDecision(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewButton extends StatelessWidget {
+  const _ReviewButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final rs = context.rs;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(rs(100)),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: rs(28),
+          vertical: rs(12),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.ink,
+          borderRadius: BorderRadius.circular(rs(100)),
+        ),
+        child: Text(
+          'مراجعة الطلب',
+          style: AppTypography.buttonLabel(fontSize: rs(20)),
+        ),
       ),
     );
   }

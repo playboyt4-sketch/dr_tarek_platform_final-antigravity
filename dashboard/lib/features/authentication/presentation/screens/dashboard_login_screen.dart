@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/errors/failure.dart';
-import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/glass_text_field.dart';
 import '../../../../core/widgets/liquid_glass_card.dart';
@@ -13,13 +13,26 @@ import '../widgets/brand_title.dart';
 import '../widgets/login_footer.dart';
 import '../widgets/password_visibility_toggle.dart';
 
-/// Figma `education - os ui`, Page 2, frame `dashboard login` (452:397).
+/// Approved Figma Dev Mode frame `dashboard login` (1280 x 800 reference).
 ///
-/// Composition at the 1440 x 1024 reference viewport: brand title top,
-/// liquid-glass login card centered with the footer attribution inside the
-/// card near its bottom edge. The layout adapts responsively (scrolls when
-/// the viewport is too short) without distorting typography or shrinking
-/// the card arbitrarily.
+/// Page: 1280 x 800, pure white #FFFFFF. Responsive layout centered
+/// horizontally and vertically; a [SingleChildScrollView] prevents overflow
+/// on small viewports.
+/// Brand: max width 1120 above the card — "Tarek el araby" Regular 96 black
+/// + " " Medium 96 + "Platform" Thin 96 #979797, centered, clamped 48–96.
+/// Card (`#login frame`): 480 x 452 — radius 28, white 70%, blur 20/20,
+/// 1.5 px inside stroke #E5E7EB, shadow black 0x1E000000 offset (0, 12)
+/// blur 30.
+///
+/// Inner stack (relative to the card, horizontal padding 24 → 432 inner):
+/// title Y24 (32 SemiBold #111827, centered) → gap 8 → subtitle Y80
+/// (16 Regular #6B7280, centered) → gap 24 → phone Y128 432x68 → gap 16 →
+/// password Y212 432x68 → gap 8 → remember Y288 (128x24, right) → gap 32 →
+/// button Y344 345x56 → gap 16 → footer Y416 (16 px, centered).
+///
+/// Auth logic ([LoginController], Egyptian phone validation, password
+/// length >= 6, loading state, staff-only gating in the controller +
+/// router) is unchanged.
 class DashboardLoginScreen extends ConsumerStatefulWidget {
   const DashboardLoginScreen({super.key});
 
@@ -78,12 +91,12 @@ class _DashboardLoginScreenState extends ConsumerState<DashboardLoginScreen> {
   Widget build(BuildContext context) {
     final loginState = ref.watch(loginControllerProvider);
     final submitting = loginState is LoginSubmitting;
-
     final failure = loginState is LoginFailure ? loginState : null;
-    final formMessage = failure == null ? null : _messageFor(failure.failure.code);
+    final formMessage =
+        failure == null ? null : _messageFor(failure.failure.code);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: const Color(0xFFFFFFFF),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
@@ -93,33 +106,36 @@ class _DashboardLoginScreenState extends ConsumerState<DashboardLoginScreen> {
                   : const ClampingScrollPhysics(),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    context.isCompact ? 24 : 48,
-                    40,
-                    context.isCompact ? 24 : 48,
-                    32,
-                  ),
+                child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: <Widget>[
-                      const BrandTitle(),
-                      SizedBox(height: context.rs(48)),
-                      _LoginCard(
-                        phoneController: _phoneController,
-                        passwordController: _passwordController,
-                        passwordFocusNode: _passwordFocusNode,
-                        passwordVisible: _passwordVisible,
-                        onTogglePasswordVisibility: () => setState(
-                          () => _passwordVisible = !_passwordVisible,
-                        ),
-                        onSubmit: _submit,
-                        submitting: submitting,
-                        formMessage: formMessage,
-                        phoneError: failure?.phoneError,
-                        passwordError: failure?.passwordError,
+                      // Brand 1120 max, centered, with top padding.
+                      const Padding(
+                        padding: EdgeInsets.only(top: 24),
+                        child: Center(child: BrandTitle()),
                       ),
+                      // Brand + 16 = card top (Y: 136 at reference).
+                      const SizedBox(height: 16),
+                      // Card 480 x 452, centered horizontally.
+                      Center(
+                        child: _LoginCard(
+                          phoneController: _phoneController,
+                          passwordController: _passwordController,
+                          passwordFocusNode: _passwordFocusNode,
+                          passwordVisible: _passwordVisible,
+                          onTogglePasswordVisibility: () => setState(
+                            () => _passwordVisible = !_passwordVisible,
+                          ),
+                          onSubmit: _submit,
+                          submitting: submitting,
+                          formMessage: formMessage,
+                          phoneError: failure?.phoneError,
+                          passwordError: failure?.passwordError,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
                     ],
                   ),
                 ),
@@ -164,34 +180,40 @@ class _LoginCard extends StatefulWidget {
 class _LoginCardState extends State<_LoginCard> {
   @override
   Widget build(BuildContext context) {
-    final cardWidth = context.isCompact
-        ? MediaQuery.sizeOf(context).width - 48
-        : 620.0;
-    final horizontalPadding = context.isCompact ? 24.0 : 70.0;
+    final double screenWidth = MediaQuery.sizeOf(context).width;
+    // Figma width is 480; shrink on narrow viewports so nothing clips.
+    final double cardWidth =
+        screenWidth < 560 ? (screenWidth - 48).clamp(0.0, 480.0) : 480;
 
     return LiquidGlassCard(
       width: cardWidth,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(horizontalPadding, 76, horizontalPadding, 15),
+        // 24 sides → 432 inner; top 24 (title Y) / bottom 16 (footer pad).
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
         child: AutofillGroup(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Text('Login', style: AppTypography.loginHeading()),
-                ),
+              // Y: 24 — title, 32 SemiBold #111827, centered.
+              Text(
+                'Login',
+                style: AppTypography.loginHeading(),
+                textAlign: TextAlign.center,
               ),
+              // Title + gap 8 → subtitle Y: 80.
               const SizedBox(height: 8),
+              // Y: 80 — subtitle, 16 Regular #6B7280, centered.
               Text(
                 'Welcome back please login your account',
                 style: AppTypography.loginSubtitle(),
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: 28),
+              // Gap 24 → phone Y: 128.
+              const SizedBox(height: 24),
+              // Y: 128 — phone 432 x 68, hint 24 Thin black.
               GlassTextField(
                 controller: widget.phoneController,
                 placeholder: 'Phone Number',
@@ -200,17 +222,19 @@ class _LoginCardState extends State<_LoginCard> {
                 autofillHints: const <String>[AutofillHints.telephoneNumber],
                 textInputAction: TextInputAction.next,
                 errorText: widget.phoneError,
-                suffixIcon: const Padding(
-                  padding: EdgeInsets.only(left: 8),
-                  child: Icon(
-                    Icons.smartphone_outlined,
-                    size: 49,
-                    color: AppColors.iconInk,
-                  ),
+                hintStyle: AppTypography.loginFieldPlaceholder(),
+                textStyle: AppTypography.loginFieldValue(),
+                suffixIcon: SvgPicture.asset(
+                  'assets/images/Smartphone.svg',
+                  width: 40,
+                  height: 40,
+                  semanticsLabel: 'Phone icon',
                 ),
                 enabled: !widget.submitting,
               ),
-              const SizedBox(height: 20),
+              // Gap 16 → password Y: 212.
+              const SizedBox(height: 16),
+              // Y: 212 — password 432 x 68 with Eye toggle 30x30.
               GlassTextField(
                 controller: widget.passwordController,
                 focusNode: widget.passwordFocusNode,
@@ -220,6 +244,8 @@ class _LoginCardState extends State<_LoginCard> {
                 autofillHints: const <String>[AutofillHints.password],
                 textInputAction: TextInputAction.done,
                 errorText: widget.passwordError,
+                hintStyle: AppTypography.loginFieldPlaceholder(),
+                textStyle: AppTypography.loginFieldValue(),
                 onSubmitted: (_) => widget.onSubmit(),
                 suffixIcon: PasswordVisibilityToggle(
                   visible: widget.passwordVisible,
@@ -227,22 +253,29 @@ class _LoginCardState extends State<_LoginCard> {
                 ),
                 enabled: !widget.submitting,
               ),
-              const SizedBox(height: 20),
+              // Gap 8 → remember Y: 288.
+              const SizedBox(height: 8),
+              // Y: 288 — remember row (128 x 24 Figma), right-aligned to
+              // the form field boundaries.
               Align(
-                alignment: Alignment.centerLeft,
-                child: Consumer(
-                  builder: (BuildContext context, WidgetRef ref, _) {
-                    final rememberMe = ref.watch(rememberMeProvider);
-                    return RememberMeCheckbox(
-                      value: rememberMe,
-                      onChanged: (bool? value) =>
-                          ref.read(rememberMeProvider.notifier).set(value ?? false),
-                    );
-                  },
+                alignment: Alignment.centerRight,
+                child: SizedBox(
+                  height: 24,
+                  child: Consumer(
+                    builder: (BuildContext context, WidgetRef ref, _) {
+                      final rememberMe = ref.watch(rememberMeProvider);
+                      return RememberMeCheckbox(
+                        value: rememberMe,
+                        onChanged: (bool? value) => ref
+                            .read(rememberMeProvider.notifier)
+                            .set(value ?? false),
+                      );
+                    },
+                  ),
                 ),
               ),
-              const SizedBox(height: 36),
               if (widget.formMessage != null) ...<Widget>[
+                const SizedBox(height: 8),
                 Semantics(
                   liveRegion: true,
                   child: Text(
@@ -250,21 +283,31 @@ class _LoginCardState extends State<_LoginCard> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontFamily: AppTypography.fontFamily,
-                      fontSize: 16,
+                      fontSize: 14,
                       height: 1.2,
                       color: Color(0xFFB3261E),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
               ],
-              PrimaryActionButton(
-                label: 'Login',
-                onPressed: widget.onSubmit,
-                isLoading: widget.submitting,
-              ),
+              // Gap 32 → button Y: 344.
               const SizedBox(height: 32),
-              const LoginFooter(),
+              // Y: 344 — button 345 x 56, capsule 9999, #1D4ED8.
+              Center(
+                child: SizedBox(
+                  width: 345,
+                  height: 56,
+                  child: PrimaryActionButton(
+                    label: 'login',
+                    semanticsLabel: 'Login',
+                    onPressed: widget.onSubmit,
+                    isLoading: widget.submitting,
+                  ),
+                ),
+              ),
+              // Gap 16 → footer Y: 416, centered at card bottom.
+              const SizedBox(height: 16),
+              const Center(child: LoginFooter()),
             ],
           ),
         ),

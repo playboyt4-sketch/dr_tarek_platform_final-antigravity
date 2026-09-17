@@ -162,8 +162,8 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
     required String description,
     int? displayOrder,
     DateTime? publishDate,
-    bool publicFreeEnabled = false,
-    int? publicFreePreviewMinutes,
+    bool guestEnabled = false,
+    int? guestPreviewMinutes,
   }) async {
     final existing = await dataSource.watchLectures(sectionId).first;
     final next = existing.isEmpty
@@ -178,8 +178,8 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
       description: description.trim(),
       displayOrder: displayOrder ?? next,
       publishDate: publishDate,
-      publicFreeEnabled: publicFreeEnabled,
-      publicFreePreviewMinutes: publicFreePreviewMinutes,
+      guestEnabled: guestEnabled,
+      guestPreviewMinutes: guestPreviewMinutes,
     );
   }
 
@@ -188,10 +188,10 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
     required String lectureId,
     required String title,
     required String description,
-    required int displayOrder,
+    required     int displayOrder,
     DateTime? publishDate,
-    bool? publicFreeEnabled,
-    int? publicFreePreviewMinutes,
+    bool? guestEnabled,
+    int? guestPreviewMinutes,
   }) {
     return dataSource.updateLectureMetadata(
       lectureId: lectureId,
@@ -199,8 +199,8 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
       description: description.trim(),
       displayOrder: displayOrder,
       publishDate: publishDate,
-      publicFreeEnabled: publicFreeEnabled,
-      publicFreePreviewMinutes: publicFreePreviewMinutes,
+      guestEnabled: guestEnabled,
+      guestPreviewMinutes: guestPreviewMinutes,
     );
   }
 
@@ -225,6 +225,24 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
       dataSource.reorderLectures,
     );
   }
+
+  // ---- Lecture Access (V1 approved backend: lecture_access_grants) ----
+  @override
+  Future<String?> getSubjectGrade(String subjectId) =>
+      dataSource.getSubjectGrade(subjectId);
+
+  @override
+  Stream<List<LectureStudent>> watchStudents({String? gradeKey}) =>
+      dataSource.watchStudents(gradeKey: gradeKey);
+
+  @override
+  Stream<List<LectureAccessGrant>> watchLectureAccessGrants(
+          String lectureId) =>
+      dataSource.watchLectureAccessGrants(lectureId);
+
+  @override
+  Future<void> saveLectureAccess(List<LectureAccessGrant> grants) =>
+      dataSource.saveLectureAccess(grants);
 
   // ---- Resources ----
   @override

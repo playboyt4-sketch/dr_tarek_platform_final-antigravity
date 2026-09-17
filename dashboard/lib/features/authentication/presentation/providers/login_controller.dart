@@ -43,7 +43,14 @@ class LoginFailure extends LoginState {
 /// live in the domain/data layers; this class only orchestrates UI state.
 class LoginController extends Notifier<LoginState> {
   @override
-  LoginState build() => const LoginInitial();
+  LoginState build() {
+    // Login state must survive the session-driven router swap
+    // (DashboardLoginScreen → DashboardShell): the sign-in continuation
+    // writes state after authStateChanges() has already unmounted the
+    // login screen. Same keep-alive pattern as AuthController.
+    ref.keepAlive();
+    return const LoginInitial();
+  }
 
   Future<void> submit({
     required String phoneNumber,
@@ -54,8 +61,11 @@ class LoginController extends Notifier<LoginState> {
     final phoneError = isValidEgyptianPhoneNumber(phoneNumber)
         ? null
         : 'Enter a valid Egyptian phone number (e.g. 01001234567).';
-    final passwordError =
-        password.isEmpty ? 'Please enter your password.' : null;
+    final passwordError = password.isEmpty
+        ? 'Please enter your password.'
+        : password.length < 6
+            ? 'Password must be at least 6 characters.'
+            : null;
 
     if (phoneError != null || passwordError != null) {
       state = LoginFailure(
@@ -102,7 +112,7 @@ class LoginController extends Notifier<LoginState> {
 }
 
 final loginControllerProvider =
-    NotifierProvider.autoDispose<LoginController, LoginState>(
+    NotifierProvider<LoginController, LoginState>(
   LoginController.new,
 );
 
