@@ -11,22 +11,12 @@ import '../../../students/presentation/widgets/add_lecture_overlay.dart';
 import '../providers/home_stats_provider.dart';
 import '../widgets/quick_announcement_dialog.dart';
 
-/// Figma reference constants (`dashboard - home`, 1280 x 800) that have no
-/// live source yet: weekly activity curve + grade accent colors.
+/// Weekday labels (`dashboard - home`, 1280 x 800) for the activity chart.
+/// Only the labels are kept: all chart values come from live analytics.
 abstract final class HomeFigmaData {
-  static const int totalStudents = 1240;
-  static const int activeToday = 240;
-
-  /// Weekly activity curve: starts at 100, peaks 240 on Friday.
-  static const List<double> weeklyActivity = <double>[
-    100, 130, 150, 170, 190, 210, 240,
-  ];
-
   static const List<String> weekDays = <String>[
     'Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri',
   ];
-
-  static const List<int> yTicks = <int>[80, 120, 160, 200, 220, 240];
 }
 
 /// Accent color per canonical grade key (matches the pie sectors).
@@ -82,8 +72,8 @@ class GradeBreakdown {
 ///   menu button at (80, 24, 80 x 80); this screen only reserves the
 ///   80 + 210 spacer so the brand never shifts a pixel;
 /// - middle (Y 136): pie card 250 x 304 + four grade cards 395 x 140
-///   in a 2 x 2 grid, driven by [homeAnalyticsProvider] with the Figma
-///   fallback while the database is still getting started;
+///   in a 2 x 2 grid, driven by [homeAnalyticsProvider] (live data;
+///   loading shows a skeleton, errors show a retry state);
 /// - bottom (Y 472): upload 250 x 210 + announcement 250 x 210 +
 ///   activity 537 x 306. The two pills open functional quick-action
 ///   dialogs (upload lecture / broadcast announcement).
@@ -209,11 +199,47 @@ class _TopAnalytics extends ConsumerWidget {
     return analyticsAsync.when(
       // Fixed-size skeleton keeps the 1280 x 800 geometry stable.
       loading: () => const _TopAnalyticsSkeleton(),
-      // The screen always stays full and beautiful.
-      error: (Object error, StackTrace stackTrace) =>
-          _TopAnalyticsContent(analytics: HomeAnalytics.fallback()),
+      // Real error state with retry: synthetic analytics are never shown.
+      error: (Object error, StackTrace stackTrace) => _TopAnalyticsError(
+        onRetry: () => ref.invalidate(homeAnalyticsProvider),
+      ),
       data: (HomeAnalytics analytics) =>
           _TopAnalyticsContent(analytics: analytics),
+    );
+  }
+}
+
+/// Error state for the top analytics section: muted message + retry that
+/// re-runs [homeAnalyticsProvider]. Same geometry rhythm as the content.
+class _TopAnalyticsError extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _TopAnalyticsError({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Text(
+              'Could not load analytics.',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 14,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -715,11 +741,83 @@ class _StudentActivityCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final HomeAnalytics analytics =
-        ref.watch(homeAnalyticsProvider).maybeWhen(
-              data: (HomeAnalytics a) => a,
-              orElse: HomeAnalytics.fallback,
-            );
+    final AsyncValue<HomeAnalytics> analyticsAsync =
+        ref.watch(homeAnalyticsProvider);
+    return analyticsAsync.when(
+      loading: () => const _ActivityCardSkeleton(),
+      error: (Object error, StackTrace stackTrace) => _ActivityCardError(
+        onRetry: () => ref.invalidate(homeAnalyticsProvider),
+      ),
+      data: (HomeAnalytics analytics) =>
+          _ActivityCardContent(analytics: analytics),
+    );
+  }
+}
+
+/// Loading skeleton for the activity card: same 306 chrome, quiet fill.
+class _ActivityCardSkeleton extends StatelessWidget {
+  const _ActivityCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 306,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(28),
+      ),
+    );
+  }
+}
+
+/// Compact error state for the activity card: muted message + retry that
+/// re-runs [homeAnalyticsProvider]. Synthetic activity is never shown.
+class _ActivityCardError extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _ActivityCardError({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 306,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFFFF),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.inputStroke, width: 1),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Text(
+              'Could not load activity.',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 14,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityCardContent extends StatelessWidget {
+  final HomeAnalytics analytics;
+
+  const _ActivityCardContent({required this.analytics});
+
+  @override
+  Widget build(BuildContext context) {
     final int activeToday = analytics.activeToday;
     final List<int> weeklyActivity = analytics.weeklyActivity;
     final int maxVal = weeklyActivity.fold(0, math.max);

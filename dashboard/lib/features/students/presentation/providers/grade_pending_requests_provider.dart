@@ -24,59 +24,6 @@ String formatRequestDate(DateTime? date) {
   return '${date.day}/${date.month}/${date.year}';
 }
 
-/// Figma fallback rows (visible in the reference frame) so the table is
-/// always full and beautiful while the queue is empty or unreachable.
-List<PendingRequestRow> fallbackPendingRequests(String gradeKey) {
-  const List<({String name, String phone, String device, String date})> rows =
-      <({String name, String phone, String device, String date})>[
-    (
-      name: 'Ahmed gamal mousa',
-      phone: '01101011588',
-      device: 'I phone 15 pro',
-      date: '3/9/2026',
-    ),
-    (
-      name: 'Mariam adel samy',
-      phone: '01022334455',
-      device: 'Samsung A54',
-      date: '2/9/2026',
-    ),
-    (
-      name: 'Omar khaled hassan',
-      phone: '01233445566',
-      device: 'I phone 13',
-      date: '1/9/2026',
-    ),
-    (
-      name: 'Salma mohamed ali',
-      phone: '01544556677',
-      device: 'Xiaomi Redmi 12',
-      date: '31/8/2026',
-    ),
-    (
-      name: 'Youssef tarek adel',
-      phone: '01155667788',
-      device: 'I phone 15 pro',
-      date: '30/8/2026',
-    ),
-  ];
-  return <PendingRequestRow>[
-    for (int i = 0; i < rows.length; i++)
-      PendingRequestRow(
-        application: JoinApplication(
-          id: 'fallback-$gradeKey-$i',
-          fullName: rows[i].name,
-          phone: rows[i].phone,
-          gradeKey: gradeKey,
-          studentType: 'center_student',
-          createdAt: null,
-        ),
-        deviceLabel: rows[i].device,
-        requestDate: rows[i].date,
-      ),
-  ];
-}
-
 /// Resolves a human-readable device label for a pending user doc.
 ///
 /// Prefers inline fields on the user doc, then falls back to the shared
@@ -130,17 +77,13 @@ Future<Map<String, String>> _fetchDeviceLabels(
 /// the grade client-side via [normalizeGradeKey] so no composite index is
 /// needed beyond the queue's own).
 ///
-/// Falls back to the Figma reference rows when the queue is empty or
-/// Firestore is unreachable, so the table always stays full during
-/// preview and offline states.
+/// An empty queue yields an empty list so the table renders its empty
+/// state. Firestore failures propagate to the UI error state — they are
+/// never replaced with placeholder students.
 final gradePendingRequestsProvider =
     FutureProvider.family<List<PendingRequestRow>, String>(
   (ref, String gradeKey) async {
-    try {
-      return await _fetchLive(ref, gradeKey);
-    } catch (_) {
-      return fallbackPendingRequests(gradeKey);
-    }
+    return _fetchLive(ref, gradeKey);
   },
 );
 
@@ -163,7 +106,7 @@ Future<List<PendingRequestRow>> _fetchLive(
       if (normalizeGradeKey(doc.data()['grade']) == gradeKey) doc,
   ];
 
-  if (docs.isEmpty) return fallbackPendingRequests(gradeKey);
+  if (docs.isEmpty) return <PendingRequestRow>[];
 
   final Set<String> deviceIds = <String>{
     for (final doc in docs)

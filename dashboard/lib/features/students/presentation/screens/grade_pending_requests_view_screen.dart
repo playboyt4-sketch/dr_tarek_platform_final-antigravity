@@ -25,28 +25,6 @@ String _gradeLabel(String? gradeKey) {
   };
 }
 
-/// Fallback subjects per grade (Arabic accounting set from the Figma
-/// frame) used only when the live `subjects` collection is unreachable.
-List<SubjectOption> _fallbackSubjects(String gradeKey) {
-  if (gradeKey != 'grade_one') return const <SubjectOption>[];
-  const List<String> titles = <String>[
-    'مالية متقدمة',
-    'محاسبة حكومية',
-    'مشاكل محاسبية',
-    'محاسبة إدارية',
-    'محاسبة دولية',
-    'محاسبة ضريبية',
-  ];
-  return <SubjectOption>[
-    for (int i = 0; i < titles.length; i++)
-      SubjectOption(
-        id: 'fallback-$gradeKey-$i',
-        title: titles[i],
-        gradeKey: gradeKey,
-      ),
-  ];
-}
-
 /// Review screen for one pending request
 /// (`# Grade- Grade one pending requests view`): fixed 1280 x 800 canvas.
 ///
@@ -110,38 +88,20 @@ class _GradePendingRequestsViewScreenState
     return canonicalGradeKeys.sublist(0, index);
   }
 
-  /// Synchronous subject snapshot for dialogs and the approve payload:
-  /// live provider value when loaded and non-empty, otherwise the same
-  /// Figma fallback the dialogs display. Never suspends, so overlay
-  /// opening and approve can never hang on a pending future.
-  List<SubjectOption> _gradeSubjectsSync() {
-    final List<SubjectOption>? live =
-        ref.read(gradeSubjectsProvider(_gradeKey)).maybeWhen(
-              data: (List<SubjectOption> subjects) => subjects,
-              orElse: () => null,
-            );
-    if (live != null && live.isNotEmpty) return live;
-    return _fallbackSubjects(_gradeKey);
+  /// Live grade subjects, or null while the `subjects` stream is still
+  /// loading or has errored. Never synthesized: callers show a loading or
+  /// retry state instead, and the dialogs render their own empty state for
+  /// loaded-but-empty lists.
+  List<SubjectOption>? _liveGradeSubjects() {
+    return ref.read(gradeSubjectsProvider(_gradeKey)).maybeWhen(
+          data: (List<SubjectOption> subjects) => subjects,
+          orElse: () => null,
+        );
   }
 
-  List<SubjectOption> _otherSubjectsSync() {
-    final List<SubjectOption> all = <SubjectOption>[];
-    for (final String key in _previousGradeKeys()) {
-      final List<SubjectOption>? live =
-          ref.read(gradeSubjectsProvider(key)).maybeWhen(
-                data: (List<SubjectOption> subjects) => subjects,
-                orElse: () => null,
-              );
-      if (live != null && live.isNotEmpty) {
-        all.addAll(live);
-      } else {
-        all.addAll(_fallbackSubjects(key));
-      }
-    }
-    return all;
-  }
-
-  Map<String, List<SubjectOption>> _otherSubjectGroups() {
+  /// Live previous-grade subject groups, or null when any required group
+  /// is still loading or has errored. Empty live groups are kept as-is.
+  Map<String, List<SubjectOption>>? _liveOtherSubjectGroups() {
     final Map<String, List<SubjectOption>> groups =
         <String, List<SubjectOption>>{};
     for (final String key in _previousGradeKeys()) {
@@ -150,9 +110,8 @@ class _GradePendingRequestsViewScreenState
                 data: (List<SubjectOption> subjects) => subjects,
                 orElse: () => null,
               );
-      final List<SubjectOption> list =
-          (live != null && live.isNotEmpty) ? live : _fallbackSubjects(key);
-      if (list.isNotEmpty) groups[key] = list;
+      if (live == null) return null;
+      if (live.isNotEmpty) groups[key] = live;
     }
     return groups;
   }
@@ -169,11 +128,23 @@ class _GradePendingRequestsViewScreenState
     });
   }
 
+  /// Message shown when live subject data is not available yet (still
+  /// loading) or failed to load. The reviewer retries once Firestore
+  /// delivers; nothing synthetic is ever substituted.
+  static const String _subjectsUnavailableMessage =
+      'تعذّر تحميل المواد. تحقق من الاتصال ثم حاول مرة أخرى.';
+
   Future<void> _pickGradeSubjects() async {
+    final List<SubjectOption>? subjects = _liveGradeSubjects();
+    if (subjects == null) {
+      if (!mounted) return;
+      setState(() => _error = _subjectsUnavailableMessage);
+      return;
+    }
     final GradeSubjectsResult? updated = await showGradeSubjectsDialog(
       context,
       gradeLabel: _gradeLabel(_gradeKey),
-      subjects: _gradeSubjectsSync(),
+      subjects: subjects,
       initialToggles: _gradeToggles,
       initialPlans: _gradePlans,
     );
@@ -185,11 +156,18 @@ class _GradePendingRequestsViewScreenState
   }
 
   Future<void> _pickOtherSubjects() async {
+    final Map<String, List<SubjectOption>>? groups =
+        _liveOtherSubjectGroups();
+    if (groups == null) {
+      if (!mounted) return;
+      setState(() => _error = _subjectsUnavailableMessage);
+      return;
+    }
     final GradeSubjectsResult? updated = await showOtherSubjectsDialog(
       context,
       gradeKey: _gradeKey,
       previousGrades: _previousGradeKeys(),
-      groups: _otherSubjectGroups(),
+      groups: groups,
       initialToggles: _otherToggles,
       initialPlans: _otherPlans,
     );
@@ -204,6 +182,12 @@ class _GradePendingRequestsViewScreenState
     List<SubjectOption> gradeSubjects,
     List<SubjectOption> otherSubjects,
   ) {
+    // Defense in depth: only real loaded subject IDs may enter the
+    // approve payload, even if a toggle map ever held a stale key.
+    final Set<String> liveIds = <String>{
+      for (final SubjectOption subject in gradeSubjects) subject.id,
+      for (final SubjectOption subject in otherSubjects) subject.id,
+    };
     return <Map<String, Object>>[
       for (final SubjectOption subject in gradeSubjects)
         <String, Object>{
@@ -220,19 +204,34 @@ class _GradePendingRequestsViewScreenState
           'enabled': _otherToggles[subject.id] ?? false,
           'plan': _otherPlans[subject.id] ?? 'free',
         },
-    ];
+    ]
+        .where(
+          (Map<String, Object> item) =>
+              liveIds.contains(item['subjectId']),
+        )
+        .toList(growable: false);
   }
 
   Future<void> _approve() async {
     if (_busy) return;
+    // Never approve against unavailable subject data: every subjectId in
+    // the payload must come from a loaded live list.
+    final List<SubjectOption>? gradeSubjects = _liveGradeSubjects();
+    final Map<String, List<SubjectOption>>? otherGroups =
+        _isCenter ? _liveOtherSubjectGroups() : const <String, List<SubjectOption>>{};
+    if (gradeSubjects == null || otherGroups == null) {
+      if (!mounted) return;
+      setState(() => _error = _subjectsUnavailableMessage);
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final List<SubjectOption> gradeSubjects = _gradeSubjectsSync();
-      final List<SubjectOption> otherSubjects =
-          _isCenter ? _otherSubjectsSync() : const <SubjectOption>[];
+      final List<SubjectOption> otherSubjects = <SubjectOption>[
+        for (final List<SubjectOption> group in otherGroups.values) ...group,
+      ];
       final List<Map<String, Object>> access =
           _subjectAccess(gradeSubjects, otherSubjects);
       final ApprovalResult result = await ref
@@ -323,8 +322,9 @@ class _GradePendingRequestsViewScreenState
   @override
   Widget build(BuildContext context) {
     // Prime every grade's subjects stream up front so the stepper
-    // overlays and the approve payload always read loaded values;
-    // offline they resolve to errors and the Figma fallbacks apply.
+    // overlays and the approve payload read loaded live values; while a
+    // stream is loading or errored the pickers and Approve surface a
+    // retry state instead of substituting placeholder subjects.
     for (final String key in canonicalGradeKeys) {
       ref.watch(gradeSubjectsProvider(key));
     }

@@ -43,10 +43,16 @@ class DashboardFullMenu extends StatelessWidget {
   final VoidCallback? onClose;
   final ValueChanged<String> onNavigate;
 
+  /// Voluntary sign-out, rendered as red text below System Settings.
+  /// Available to every admitted staff session (Doctor and Admin alike);
+  /// it calls the existing `authRepositoryProvider.logout()` from the shell.
+  final VoidCallback? onSignOut;
+
   const DashboardFullMenu({
     super.key,
     this.onClose,
     required this.onNavigate,
+    this.onSignOut,
   });
 
   static const List<({String label, String route})> _grades =
@@ -153,7 +159,9 @@ class DashboardFullMenu extends StatelessWidget {
                     ),
                   ),
                   // Frame 31 — management list 250 wide at (660, 410),
-                  // 8 px below the Management cap, 12 px gaps.
+                  // 8 px below the Management cap, 12 px gaps. Sign Out
+                  // renders last with the same spacing, in the existing
+                  // error-ink red, text only (no icon).
                   Positioned(
                     left: 660,
                     top: 410,
@@ -170,6 +178,16 @@ class DashboardFullMenu extends StatelessWidget {
                             style: AppTypography.menuSubItem(),
                             onTap: () =>
                                 onNavigate(_management[i].route),
+                          ),
+                        ],
+                        if (onSignOut != null) ...<Widget>[
+                          const SizedBox(height: 12),
+                          _HoverEntry(
+                            label: 'Sign Out',
+                            style: AppTypography.menuSubItem().copyWith(
+                              color: AppColors.errorInk,
+                            ),
+                            onTap: onSignOut!,
                           ),
                         ],
                       ],

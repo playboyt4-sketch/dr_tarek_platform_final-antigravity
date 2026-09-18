@@ -66,10 +66,7 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
 // ---------------------------------------------------------------------------
 
 /// Active-today counter. There is no activity feed in the Firestore schema
-/// yet, so live snapshots report 0 until one lands. The Figma reference
-/// (240) survives only inside [HomeAnalytics.fallback], which is kept for
-/// previews, offline error states and tests.
-const int kFallbackActiveToday = 240;
+/// yet, so live snapshots report 0 until one lands.
 
 /// Per-grade live analytics row.
 class GradeAnalytics {
@@ -110,7 +107,6 @@ class HomeAnalytics {
   final int totalStudents;
   final int activeToday;
   final List<GradeAnalytics> grades;
-  final bool isFallback;
 
   /// Active students per day for the last seven days (Sat → Fri).
   /// No activity feed exists in the Firestore schema yet, so live
@@ -124,50 +120,8 @@ class HomeAnalytics {
     required this.totalStudents,
     required this.activeToday,
     required this.grades,
-    required this.isFallback,
     required this.weeklyActivity,
   });
-
-  /// Smart fallback (Figma reference) so the screen always looks full and
-  /// beautiful while the database is still getting started.
-  factory HomeAnalytics.fallback() {
-    return const HomeAnalytics(
-      totalStudents: 1240,
-      activeToday: kFallbackActiveToday,
-      isFallback: true,
-      weeklyActivity: <int>[100, 130, 150, 170, 190, 210, 240],
-      grades: <GradeAnalytics>[
-        GradeAnalytics(
-          gradeKey: 'grade_one',
-          total: 450,
-          pending: 7,
-          center: 396,
-          guest: 54,
-        ),
-        GradeAnalytics(
-          gradeKey: 'grade_two',
-          total: 380,
-          pending: 9,
-          center: 266,
-          guest: 114,
-        ),
-        GradeAnalytics(
-          gradeKey: 'grade_three',
-          total: 260,
-          pending: 13,
-          center: 143,
-          guest: 117,
-        ),
-        GradeAnalytics(
-          gradeKey: 'grade_four',
-          total: 150,
-          pending: 5,
-          center: 135,
-          guest: 15,
-        ),
-      ],
-    );
-  }
 }
 
 /// Automatic Y-axis scale for the Student Activity chart, always starting
@@ -248,7 +202,6 @@ final homeAnalyticsProvider = FutureProvider<HomeAnalytics>((ref) async {
   return HomeAnalytics(
     totalStudents: approvedCount,
     activeToday: 0,
-    isFallback: false,
     // No activity feed in the schema yet → all zeros until events land.
     weeklyActivity: List<int>.filled(7, 0),
     grades: <GradeAnalytics>[
@@ -281,7 +234,6 @@ HomeAnalytics _mockHomeAnalytics() {
   return HomeAnalytics(
     totalStudents: mockStudents.length,
     activeToday: 0,
-    isFallback: false,
     weeklyActivity: List<int>.filled(7, 0),
     grades: <GradeAnalytics>[
       for (final gradeKey in canonicalGradeKeys)

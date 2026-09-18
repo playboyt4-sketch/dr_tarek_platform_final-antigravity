@@ -7,30 +7,33 @@ import 'package:drtarek_dashboard/features/applications/presentation/providers/a
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_pending_requests_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/screens/grade_pending_requests_screen.dart';
 
+/// Test-only fixtures. These names/phones are synthetic widget-test data
+/// and never ship in the production code path: the provider serves only
+/// live Firestore rows (empty list when the queue is empty).
 List<PendingRequestRow> _rows(String gradeKey) {
   return <PendingRequestRow>[
     PendingRequestRow(
       application: JoinApplication(
         id: 'p1',
-        fullName: 'Ahmed gamal mousa',
-        phone: '01101011588',
+        fullName: 'Test Student One',
+        phone: '01000000001',
         gradeKey: gradeKey,
         studentType: 'center_student',
         createdAt: DateTime(2026, 9, 3),
       ),
-      deviceLabel: 'I phone 15 pro',
+      deviceLabel: 'Test Device A',
       requestDate: '3/9/2026',
     ),
     PendingRequestRow(
       application: JoinApplication(
         id: 'p2',
-        fullName: 'Mariam adel samy',
-        phone: '01022334455',
+        fullName: 'Test Student Two',
+        phone: '01000000002',
         gradeKey: gradeKey,
         studentType: 'guest',
         createdAt: DateTime(2026, 9, 2),
       ),
-      deviceLabel: 'Samsung A54',
+      deviceLabel: 'Test Device B',
       requestDate: '2/9/2026',
     ),
   ];
@@ -40,6 +43,9 @@ Future<void> _pumpScreen(
   WidgetTester tester, {
   String gradeKey = 'grade_one',
   List<PendingRequestRow>? rows,
+  Object? rowsError,
+  Map<String, List<PendingRequestRow>> rowsByGrade =
+      const <String, List<PendingRequestRow>>{},
   List<SubjectOption> subjects = const <SubjectOption>[],
   ValueChanged<String>? onStudentsTab,
   ValueChanged<String>? onSubjectsTab,
@@ -48,12 +54,26 @@ Future<void> _pumpScreen(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
+  Future<List<PendingRequestRow>> valuesFor(String key) {
+    if (rowsError != null && key == gradeKey) {
+      return Future<List<PendingRequestRow>>.error(rowsError);
+    }
+    if (key == gradeKey && rows != null) return Future.value(rows);
+    return Future.value(
+        rowsByGrade[key] ?? (key == gradeKey ? _rows(key) : <PendingRequestRow>[]));
+  }
+
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        if (rows != null)
-          gradePendingRequestsProvider(gradeKey)
-              .overrideWith((ref) => Future.value(rows)),
+        gradePendingRequestsProvider('grade_one')
+            .overrideWith((ref) => valuesFor('grade_one')),
+        gradePendingRequestsProvider('grade_two')
+            .overrideWith((ref) => valuesFor('grade_two')),
+        gradePendingRequestsProvider('grade_three')
+            .overrideWith((ref) => valuesFor('grade_three')),
+        gradePendingRequestsProvider('grade_four')
+            .overrideWith((ref) => valuesFor('grade_four')),
         gradeSubjectsProvider('grade_one')
             .overrideWith((ref) => Stream.value(subjects)),
         gradeSubjectsProvider('grade_two')
@@ -81,11 +101,33 @@ Future<void> _pumpScreen(
 
 void main() {
   group('GradePendingRequestsScreen', () {
-    testWidgets('renders banner, headers and Figma fallback rows',
+    testWidgets('shows an empty state when the queue is empty',
         (WidgetTester tester) async {
-      // No provider override: Firestore is unreachable in tests, so the
-      // Figma fallback fills the table.
-      await _pumpScreen(tester);
+      await _pumpScreen(tester, rows: <PendingRequestRow>[]);
+
+      expect(find.text('Pending Requests'), findsOneWidget);
+      expect(find.text('No pending requests.'), findsOneWidget);
+      expect(find.text('Test Student One'), findsNothing);
+      expect(find.text('Test Student Two'), findsNothing);
+      expect(find.text('View'), findsNothing);
+    });
+
+    testWidgets('shows an error state when Firestore fails, never fake rows',
+        (WidgetTester tester) async {
+      await _pumpScreen(
+        tester,
+        rowsError: StateError('unavailable'),
+      );
+
+      expect(find.text('Could not load requests.'), findsOneWidget);
+      expect(find.text('No pending requests.'), findsNothing);
+      expect(find.text('Test Student One'), findsNothing);
+      expect(find.text('Test Student Two'), findsNothing);
+    });
+
+    testWidgets('renders banner, headers and live rows',
+        (WidgetTester tester) async {
+      await _pumpScreen(tester, rows: _rows('grade_one'));
 
       expect(find.text('Pending Requests'), findsOneWidget);
       for (final String header in <String>[
@@ -98,9 +140,9 @@ void main() {
       ]) {
         expect(find.text(header), findsOneWidget);
       }
-      expect(find.text('Ahmed gamal mousa'), findsOneWidget);
-      expect(find.text('01101011588'), findsOneWidget);
-      expect(find.text('I phone 15 pro'), findsWidgets);
+      expect(find.text('Test Student One'), findsOneWidget);
+      expect(find.text('01000000001'), findsOneWidget);
+      expect(find.text('Test Device A'), findsOneWidget);
       expect(find.text('3/9/2026'), findsOneWidget);
       expect(find.text('01.'), findsOneWidget);
       expect(find.text('View'), findsWidgets);
@@ -113,20 +155,29 @@ void main() {
         (WidgetTester tester) async {
       await _pumpScreen(tester, rows: _rows('grade_one'));
 
-      expect(find.text('Ahmed gamal mousa'), findsOneWidget);
-      expect(find.text('Mariam adel samy'), findsOneWidget);
-      expect(find.text('Samsung A54'), findsOneWidget);
+      expect(find.text('Test Student One'), findsOneWidget);
+      expect(find.text('Test Student Two'), findsOneWidget);
+      expect(find.text('Test Device B'), findsOneWidget);
       expect(find.text('2/9/2026'), findsOneWidget);
     });
 
-    testWidgets('grade pills switch the queue', (WidgetTester tester) async {
-      await _pumpScreen(tester, rows: _rows('grade_one'));
+    testWidgets('grade pills switch the queue; empty stays empty',
+        (WidgetTester tester) async {
+      await _pumpScreen(
+        tester,
+        rows: _rows('grade_one'),
+        rowsByGrade: const <String, List<PendingRequestRow>>{
+          'grade_two': <PendingRequestRow>[],
+        },
+      );
 
       await tester.tap(find.text('Grade Two').first);
       await tester.pumpAndSettle();
 
-      // Grade two falls back (no override): still full, accent switches.
-      expect(find.text('Ahmed gamal mousa'), findsOneWidget);
+      // Grade two has no real requests: empty state, accent switches,
+      // and no rows leak across grades.
+      expect(find.text('No pending requests.'), findsOneWidget);
+      expect(find.text('Test Student One'), findsNothing);
       expect(find.text('Pending Requests'), findsOneWidget);
     });
 
@@ -166,20 +217,6 @@ void main() {
     test('formats D/M/YYYY and dashes nulls', () {
       expect(formatRequestDate(DateTime(2026, 9, 3)), '3/9/2026');
       expect(formatRequestDate(null), '—');
-    });
-  });
-
-  group('fallbackPendingRequests', () {
-    test('matches the Figma reference row first', () {
-      final List<PendingRequestRow> rows =
-          fallbackPendingRequests('grade_one');
-
-      expect(rows, isNotEmpty);
-      expect(rows.first.application.fullName, 'Ahmed gamal mousa');
-      expect(rows.first.application.phone, '01101011588');
-      expect(rows.first.deviceLabel, 'I phone 15 pro');
-      expect(rows.first.requestDate, '3/9/2026');
-      expect(rows.first.application.gradeKey, 'grade_one');
     });
   });
 }

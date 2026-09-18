@@ -44,25 +44,54 @@ void main() {
     await loader.load();
   });
 
-  group('HomeAnalytics fallback', () {
-    test('matches the Figma reference numbers', () {
-      final HomeAnalytics analytics = HomeAnalytics.fallback();
+  /// Explicit live-shaped fixture (test-only): small real-world-like
+  /// counts exercising the same snapshot math the UI consumes.
+  group('HomeAnalytics live snapshot math', () {
+    const HomeAnalytics analytics = HomeAnalytics(
+      totalStudents: 10,
+      activeToday: 3,
+      weeklyActivity: <int>[0, 1, 2, 3, 2, 1, 0],
+      grades: <GradeAnalytics>[
+        GradeAnalytics(
+            gradeKey: 'grade_one',
+            total: 4,
+            pending: 1,
+            center: 3,
+            guest: 1),
+        GradeAnalytics(
+            gradeKey: 'grade_two',
+            total: 3,
+            pending: 0,
+            center: 2,
+            guest: 1),
+        GradeAnalytics(
+            gradeKey: 'grade_three',
+            total: 2,
+            pending: 2,
+            center: 1,
+            guest: 1),
+        GradeAnalytics(
+            gradeKey: 'grade_four',
+            total: 1,
+            pending: 0,
+            center: 1,
+            guest: 0),
+      ],
+    );
 
-      expect(analytics.totalStudents, 1240);
-      expect(analytics.activeToday, 240);
-      expect(analytics.isFallback, isTrue);
+    test('reports live totals', () {
+      expect(analytics.totalStudents, 10);
+      expect(analytics.activeToday, 3);
       expect(analytics.grades, hasLength(4));
-      expect(analytics.grades.map((g) => g.total), [450, 380, 260, 150]);
+      expect(analytics.grades.map((g) => g.total), [4, 3, 2, 1]);
     });
 
-    test('center/guest shares round to the Figma labels', () {
-      final HomeAnalytics analytics = HomeAnalytics.fallback();
-
-      expect(analytics.grades[0].centerShareLabel, '88%');
-      expect(analytics.grades[0].guestShareLabel, '12%');
-      expect(analytics.grades[1].centerShareLabel, '70%');
-      expect(analytics.grades[2].centerShareLabel, '55%');
-      expect(analytics.grades[3].centerShareLabel, '90%');
+    test('center/guest shares round from live counts', () {
+      expect(analytics.grades[0].centerShareLabel, '75%');
+      expect(analytics.grades[0].guestShareLabel, '25%');
+      expect(analytics.grades[1].centerShareLabel, '67%');
+      expect(analytics.grades[2].centerShareLabel, '50%');
+      expect(analytics.grades[3].centerShareLabel, '100%');
     });
 
     test('empty grades report zero shares', () {
@@ -78,12 +107,10 @@ void main() {
       expect(empty.guestShareLabel, '0%');
     });
 
-    test('fallback carries the Figma weekly activity peak', () {
-      final HomeAnalytics analytics = HomeAnalytics.fallback();
-
+    test('weekly activity max derives from live data', () {
       expect(analytics.weeklyActivity, hasLength(7));
-      expect(analytics.weeklyActivity.last, 240);
-      expect(analytics.maxWeeklyActivity, 240);
+      expect(analytics.weeklyActivity.last, 0);
+      expect(analytics.maxWeeklyActivity, 3);
     });
   });
 

@@ -223,11 +223,17 @@ class _DashboardShellState extends State<DashboardShell> {
 
                 // القائمة الكاملة
                 if (isMenuOpen)
-                  DashboardFullMenu(
-                    onClose: _closeMenu,
-                    onNavigate: (String section) {
-                      _navigate(section);
-                    },
+                  Consumer(
+                    builder:
+                        (BuildContext context, WidgetRef ref, _) =>
+                            DashboardFullMenu(
+                      onClose: _closeMenu,
+                      onNavigate: (String section) {
+                        _navigate(section);
+                      },
+                      onSignOut: () =>
+                          ref.read(authRepositoryProvider).logout(),
+                    ),
                   ),
 
                 // زر المنيو داخل الـ 1280 الموسط:
