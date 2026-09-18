@@ -587,6 +587,39 @@ function requireAdminOrTeacher(request: CallableRequest<unknown>): string {
   return uid;
 }
 
+/**
+ * Single staff claims synchronizer (doctor/admin).
+ *
+ * Persists the authoritative Firestore role to the stored Firebase Auth
+ * custom claims at the trusted backend login boundary. Role is always
+ * supplied by the caller from the Firestore user record — never from
+ * client input. Existing claims are merged so valid entries (e.g.
+ * max_devices) and any other unrelated claims are preserved; only role,
+ * approved, and force_password_change are normalized. Skips the write
+ * when the stored claims already match.
+ * @param {string} userId Staff Firebase Auth UID.
+ * @param {string} role Authoritative role from the Firestore user record.
+ * @param {boolean} forcePasswordChange Force-password-change flag from Firestore.
+ */
+async function syncStaffStoredClaims(userId: string, role: string, forcePasswordChange: boolean): Promise<void> {
+  const current = await auth.getUser(userId);
+  const existing = current.customClaims ?? {};
+  const next = {
+    ...existing,
+    role,
+    approved: true,
+    force_password_change: forcePasswordChange,
+  };
+  if (
+    existing.role === next.role &&
+    existing.approved === true &&
+    existing.force_password_change === next.force_password_change
+  ) {
+    return;
+  }
+  await auth.setCustomUserClaims(userId, next);
+}
+
 async function requireStudentAccessManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
   actorRole: "teacher" | "admin";
@@ -1484,6 +1517,14 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   const studentType = getString(user.student_type);
   if (!studentType && role === "student") {
     throw new HttpsError("failed-precondition", "Student type is not configured.");
+  }
+
+  // Staff claim sync (doctor/admin only): persist the authoritative
+  // Firestore role to the stored custom claims so auth:export stays
+  // consistent with the session token. Students are untouched here;
+  // student claims remain managed by the approval flow.
+  if (role === "doctor" || role === "admin") {
+    await syncStaffStoredClaims(userDoc.id, role, user.force_password_change === true);
   }
 
   // ADR-004: login succeeds regardless of subscription or device state.
@@ -5633,6 +5674,9 @@ export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
   await clearLoginFailures("staff_login", throttleKey);
 
   const role = getString(user.role) ?? "admin";
+  // Persist the authoritative Firestore role to the stored custom claims
+  // (merge preserves max_devices and other valid claims).
+  await syncStaffStoredClaims(userDoc.id, role, user.force_password_change === true);
   const token = await auth.createCustomToken(userDoc.id, {
     role,
     approved: true,
