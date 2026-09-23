@@ -71,6 +71,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # firebase-tools is not preinstalled on ubuntu runners, but
+      # `npm test` invokes `firebase emulators:exec`, so install the
+      # CLI first (major-pinned for deterministic builds).
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@15
       - run: npm install
       - run: npm run lint
       - run: npm run build
@@ -84,6 +89,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # Same as above: the emulator step needs the `firebase` command,
+      # which ubuntu runners do not preinstall.
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@15
       - name: Install rules test deps
         working-directory: security-tests
         run: npm install
