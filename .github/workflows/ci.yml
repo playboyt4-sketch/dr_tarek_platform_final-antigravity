@@ -54,7 +54,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build web --release
+      # Main Web release boot requires the App Check reCAPTCHA site key
+      # (lib/main.dart guard). Injected from the GitHub secret
+      # RECAPTCHA_SITE_KEY (value = "Dr Tarek Platform Web" site key,
+      # created once by the Project Owner, never committed).
+      - run: flutter build web --release --dart-define=RECAPTCHA_SITE_KEY=${{ secrets.RECAPTCHA_SITE_KEY }}
 
   cloud-functions:
     name: Cloud Functions lint + build + tests
