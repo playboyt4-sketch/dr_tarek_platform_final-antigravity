@@ -35,7 +35,7 @@ import 'student_profile_subjects_provider.dart';
 ///
 /// Writes go exclusively through the audited callables
 /// (`unbindSubjectDevice`, `resetStudentDevices`), which enforce
-/// `requireDeviceManager` (teacher or delegated `admin_devices`)
+/// `requireDeviceManager` (doctor or delegated `admin_devices`)
 /// server-side and write `admin_audit_log` / analytics events. The client
 /// never invents permission or audit identifiers.
 
@@ -155,9 +155,12 @@ class SubjectAuthorizedDevice {
 /// One Device-tab table row: a registered Subject with its own plan,
 /// allowance, and authorized devices. Allowances never leak across
 /// Subjects — each row resolves only its own Subject's subscription.
+/// [gradeKey] is the subject's OWN catalog grade (passed straight through
+/// from the registration join — never the student's current grade).
 class StudentSubjectDeviceRow {
   final String subjectId;
   final String title;
+  final String? gradeKey;
   final String planLabel;
   final int allowance;
   final List<SubjectAuthorizedDevice> devices;
@@ -165,6 +168,7 @@ class StudentSubjectDeviceRow {
   const StudentSubjectDeviceRow({
     required this.subjectId,
     required this.title,
+    required this.gradeKey,
     required this.planLabel,
     required this.allowance,
     required this.devices,
@@ -251,6 +255,7 @@ List<StudentSubjectDeviceRow> buildStudentSubjectDeviceRows({
     rows.add(StudentSubjectDeviceRow(
       subjectId: reg.subjectId,
       title: reg.title,
+      gradeKey: reg.gradeKey,
       planLabel: reg.planLabel,
       allowance: allowance,
       devices: List<SubjectAuthorizedDevice>.unmodifiable(joined),
@@ -315,7 +320,7 @@ String formatDeviceOsLine(SubjectAuthorizedDevice device) {
 ///
 /// Single-filter query only (`student_id`); status / soft-delete filters
 /// are applied client-side so no composite index is required. Readable by
-/// teacher or delegated `admin_devices` (firestore.rules); others observe
+/// doctor or delegated `admin_devices` (firestore.rules); others observe
 /// the backend denial honestly.
 final studentDeviceAuthorizationsProvider =
     StreamProvider.family<List<SubjectDeviceAuthorization>, String>(
@@ -460,7 +465,7 @@ final adminDevicePermissionProvider =
 
 /// Whether the current actor may manage student devices (ADMIN_DEVICES).
 ///
-/// Teacher (platform owner): full permission. Admin: only with the
+/// Doctor (platform owner): full permission. Admin: only with the
 /// delegated `admin_devices` grant. Unknown / loading / non-staff sessions
 /// fail closed; the backend re-enforces this server-side on every write.
 /// No role checks live in widgets — they read this provider.
@@ -476,10 +481,10 @@ final canManageStudentDevicesProvider =
   final DashboardSession? session = sessionAsync.value;
   if (session == null) return const AsyncData<bool>(false);
   final String? role = session.role;
-  if (!(role == 'teacher' || role == 'admin') || !session.approved) {
+  if (!(role == 'doctor' || role == 'admin') || !session.approved) {
     return const AsyncData<bool>(false);
   }
-  if (role == 'teacher') return const AsyncData<bool>(true);
+  if (role == 'doctor') return const AsyncData<bool>(true);
   return ref.watch(adminDevicePermissionProvider(session.userId)).when(
         data: (can) => AsyncData<bool>(can),
         loading: () => const AsyncLoading<bool>(),

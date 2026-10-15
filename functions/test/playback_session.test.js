@@ -27,7 +27,7 @@ try {
 }
 
 const STUDENT = "pbs_student";
-const TEACHER = "pbs_teacher";
+const DOCTOR = "pbs_doctor";
 const ADMIN_DEV = "pbs_admin_dev";
 const SUB_A = "pbs_maxA";
 const SUB_B = "pbs_maxB";
@@ -35,7 +35,7 @@ const LEC_A = "pbs_lecA";
 const LEC_B = "pbs_lecB";
 
 const studentCtx = {uid: STUDENT, token: {role: "student", approved: true}};
-const teacherCtx = {uid: TEACHER, token: {role: "teacher"}};
+const doctorCtx = {uid: DOCTOR, token: {role: "doctor"}};
 const adminDevCtx = {uid: ADMIN_DEV, token: {role: "admin"}};
 
 function expectCode(promise, code, label) {
@@ -229,7 +229,7 @@ async function run() {
   console.log("ok 14 - Latest persisted progress returned");
 
   // 15. Reset invalidates the live session on next validation; rebinding works.
-  await resetRaw({data: {studentId: STUDENT, reason: "pbs-test15"}, auth: teacherCtx});
+  await resetRaw({data: {studentId: STUDENT, reason: "pbs-test15"}, auth: doctorCtx});
   await expectCode(
     beat({studentId: STUDENT, subjectId: SUB_A, deviceId: "pbs-playback-device-B", sessionToken: s14.sessionToken}),
     "permission-denied", "post-reset heartbeat",

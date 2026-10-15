@@ -97,7 +97,7 @@ void main() {
         existingCreatedAt: null,
         existingCreatedBy: null,
         hadExistingDoc: false,
-        actorId: 'teacher1',
+        actorId: 'doctor1',
         serverTimestamp: ts,
       );
       expect(write.isNew, isTrue);
@@ -108,12 +108,12 @@ void main() {
           'student_id': 'std1',
           'allowed': false,
           'updated_at': ts,
-          'updated_by': 'teacher1',
+          'updated_by': 'doctor1',
           'is_deleted': false,
           'deleted_at': null,
           'deleted_by': null,
           'created_at': ts,
-          'created_by': 'teacher1',
+          'created_by': 'doctor1',
         },
       );
     });
@@ -126,15 +126,15 @@ void main() {
           allowed: true,
         ),
         existingCreatedAt: 'OLD_TS',
-        existingCreatedBy: 'teacher0',
+        existingCreatedBy: 'doctor0',
         hadExistingDoc: true,
-        actorId: 'teacher1',
+        actorId: 'doctor1',
         serverTimestamp: ts,
       );
       expect(write.isNew, isFalse);
       expect(write.fields['created_at'], 'OLD_TS');
-      expect(write.fields['created_by'], 'teacher0');
-      expect(write.fields['updated_by'], 'teacher1');
+      expect(write.fields['created_by'], 'doctor0');
+      expect(write.fields['updated_by'], 'doctor1');
       expect(write.fields['allowed'], isTrue);
       expect(write.fields['is_deleted'], isFalse);
     });

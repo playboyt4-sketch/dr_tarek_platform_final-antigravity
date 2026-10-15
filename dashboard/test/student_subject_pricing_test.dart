@@ -14,7 +14,6 @@ const GradeStudent _student = GradeStudent(
   id: 'stu_001',
   name: 'ahmed mohamed gamal',
   isCenter: true,
-  plan: 'PRO',
   isActive: true,
   lastSignIn: '12/8/2026',
   phone: '01115800180',

@@ -5,6 +5,20 @@
 Version: 1.1
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
 
+## Owner-Ratified iOS Finals (recorded 2026-10-14, still Draft until approved)
+
+| Item | Value |
+|-----------|-------|
+| iOS Bundle ID (final) | `com.drtarek.platform` |
+| Android application ID (final) | `com.drtarek.platform` |
+| Store-facing app name | `Tarek El Araby Platform` |
+| App Store Connect SKU | `TAREK-PLATFORM-IOS-001` |
+| Primary category | `Education` |
+| Flutter version/build | `1.0.0+1` (temporary; final build-number policy still open — do NOT silently adopt the `100000`-style scheme) |
+| TestFlight backend | Isolated Firebase Staging, never production |
+| Role migration | `teacher` → `doctor` atomic, before iOS publication |
+| iOS screenshot behavior | Detection-only (correct the prevention promise) |
+
 ## Version History
 
 - **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Release checklist and deliverables now describe per-Subject authorization (login succeeds; Full vs Guest per Subject) instead of login-rejection enforcement. No release history rewritten.

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
 
+import '../../../video_streaming/data/services/video_source_resolver.dart'
+    show resolveLocalDeviceId;
 import 'resource_storage_gateway.dart';
 
 /// Bunny Storage implementation (zone `dr-tarek-resources`).
@@ -67,10 +69,14 @@ class BunnyResourceStorageGateway implements ResourceStorageGateway {
     required bool forDownload,
   }) async {
     try {
+      // `generateBunnyResourceUrl` enforces `requireFullSubjectTier`,
+      // which needs the bound device id — resolved locally like issuance.
+      final deviceId = await resolveLocalDeviceId();
       final response =
           await functions.httpsCallable('generateBunnyResourceUrl').call({
         'resourceId': resourceId,
         'forDownload': forDownload,
+        'deviceId': deviceId,
       });
       final data = Map<String, dynamic>.from(response.data as Map);
       return ResourceAccessUrl(

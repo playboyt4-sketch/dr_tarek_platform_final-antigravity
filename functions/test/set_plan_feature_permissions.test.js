@@ -1,10 +1,10 @@
 /**
  * setPlanFeature authorization tiers (rolling-window hardening).
  *
- * - video.rolling_window.enabled/_hours are SENSITIVE: Teacher only.
+ * - video.rolling_window.enabled/_hours are SENSITIVE: Doctor only.
  *   Admin/Student/unauthenticated are rejected with permission-denied/
  *   unauthenticated and must not mutate the matrix or audit log.
- * - Ordinary keys (e.g. video.pip) stay Admin-or-Teacher, Student and
+ * - Ordinary keys (e.g. video.pip) stay Admin-or-Doctor, Student and
  *   unauthenticated rejected.
  * - Missing planId/featureKey and non-boolean enabled are invalid-argument.
  *
@@ -131,20 +131,20 @@ async function run() {
     }
   }
 
-  const teacherAuth = {uid: "teacher-1", token: {role: "teacher"}};
+  const doctorAuth = {uid: "doctor-1", token: {role: "doctor"}};
   const adminAuth = {uid: "admin-1", token: {role: "admin"}};
   const studentAuth = {uid: "student-1", token: {role: "student"}};
 
-  // 1. Teacher sets a sensitive key.
+  // 1. Doctor sets a sensitive key.
   await checkPass(
-    "Teacher sets video.rolling_window.enabled",
+    "Doctor sets video.rolling_window.enabled",
     {
       data: {
         planId: "plan-pro",
         featureKey: "video.rolling_window.enabled",
         enabled: true,
       },
-      auth: teacherAuth,
+      auth: doctorAuth,
     },
     (res) => {
       assert.equal(res.ok, true);
@@ -152,9 +152,9 @@ async function run() {
     },
   );
 
-  // 2. Teacher sets sensitive hours with a value.
+  // 2. Doctor sets sensitive hours with a value.
   await checkPass(
-    "Teacher sets video.rolling_window.hours=12",
+    "Doctor sets video.rolling_window.hours=12",
     {
       data: {
         planId: "plan-pro",
@@ -163,7 +163,7 @@ async function run() {
         value: 12,
         valueType: "number",
       },
-      auth: teacherAuth,
+      auth: doctorAuth,
     },
     (res) => assert.equal(res.value, 12),
   );
@@ -225,14 +225,14 @@ async function run() {
   // 8-9. Validation: missing fields + non-boolean enabled.
   await checkFail(
     "Missing featureKey rejected",
-    {data: {planId: "plan-pro", enabled: true}, auth: teacherAuth},
+    {data: {planId: "plan-pro", enabled: true}, auth: doctorAuth},
     "invalid-argument",
   );
   await checkFail(
     "Non-boolean enabled rejected",
     {
       data: {planId: "plan-pro", featureKey: "video.pip", enabled: "yes"},
-      auth: teacherAuth,
+      auth: doctorAuth,
     },
     "invalid-argument",
   );

@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 
+/// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
+bool isValidBunnyVideoId(String raw) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(raw.trim());
+}
+
 class AddVideoResourceOverlay extends StatefulWidget {
   final ValueChanged<Map<String, String>>? onSaveVideo;
   final VoidCallback? onClose;
@@ -61,10 +68,24 @@ class _AddVideoResourceOverlayState extends State<AddVideoResourceOverlay> {
   }
 
   void _handleSave() {
+    final String vid = _idController.text.trim();
+    if (vid.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Video ID is required.')),
+      );
+      return;
+    }
+    if (!isValidBunnyVideoId(vid)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.')),
+      );
+      return;
+    }
     final data = {
       'title': _nameController.text.trim().isEmpty ? 'Video' : _nameController.text.trim(),
       'order': _orderController.text.trim().isEmpty ? '01' : _orderController.text.trim(),
-      'id': _idController.text.trim(),
+      'id': vid,
       'type': 'Video',
     };
     if (widget.onSaveVideo != null) {

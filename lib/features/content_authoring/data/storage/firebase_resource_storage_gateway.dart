@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import '../../../video_streaming/data/services/video_source_resolver.dart'
+    show resolveLocalDeviceId;
 import 'resource_storage_gateway.dart';
 
 /// Firebase Storage implementation for pdf/attachment/thumbnail bytes.
@@ -71,8 +73,12 @@ class FirebaseResourceStorageGateway implements ResourceStorageGateway {
     try {
       final callableName =
           forDownload ? 'generatePdfDownloadUrl' : 'generateProtectedPdfUrl';
-      final response =
-          await functions.httpsCallable(callableName).call({'resourceId': resourceId});
+      // The document callables enforce `requireFullSubjectTier`, which
+      // needs the bound device id — resolved locally like video issuance.
+      final deviceId = await resolveLocalDeviceId();
+      final response = await functions
+          .httpsCallable(callableName)
+          .call({'resourceId': resourceId, 'deviceId': deviceId});
       final data = Map<String, dynamic>.from(response.data as Map);
       return ResourceAccessUrl(
         url: data['url'] as String,

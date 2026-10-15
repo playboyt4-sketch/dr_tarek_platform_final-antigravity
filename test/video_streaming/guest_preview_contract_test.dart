@@ -4,7 +4,7 @@ import 'package:dr_tarek_platform/features/content_authoring/data/datasources/ad
     show guestPreviewFromLectureMap;
 import 'package:dr_tarek_platform/features/lecture/domain/entities/lecture.dart';
 import 'package:dr_tarek_platform/features/video_streaming/data/services/video_source_resolver.dart'
-    show guestPreviewFromResponse;
+    show guestPreviewFromResponse, parsePreviewAudience;
 import 'package:dr_tarek_platform/features/video_streaming/domain/entities/playback_entities.dart';
 
 /// Phase 2A Guest preview contract verification (FINAL_DECISIONS §11):
@@ -94,7 +94,7 @@ void main() {
         id: 'r',
         title: 't',
         resourceType: 'video',
-        bunnyVideoId: 'b1',
+        bunnyVideoId: '44444444-4444-4444-8444-444444444444',
       );
       final stamped = VideoResource(
         id: base.id,
@@ -130,6 +130,13 @@ void main() {
       );
       expect(lecture.guestEnabled, isTrue);
       expect(lecture.guestPreviewMinutes, 5);
+    });
+
+    test('previewAudience travels inside the verdict map when present', () {
+      final gate = guestPreviewFromResponse({
+        'guestPreview': {'previewLimitSeconds': 0, 'previewAudience': 'guest'},
+      });
+      expect(parsePreviewAudience(gate?['previewAudience']), 'guest');
     });
 
     test('lecture entity defaults deny preview (no whole-subject access)', () {

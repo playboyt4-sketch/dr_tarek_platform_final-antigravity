@@ -6,13 +6,13 @@ import '../theme/app_colors.dart';
 
 /// The ring describes the user's role, independently from the subscription badge.
 enum UserAvatarRole {
-  teacher,
+  doctor,
   admin,
   studentExternal,
   studentInternal;
 
   factory UserAvatarRole.fromAuthValues(String role, String? studentType) {
-    if (role == 'teacher') return UserAvatarRole.teacher;
+    if (role == 'doctor') return UserAvatarRole.doctor;
     if (role == 'admin') return UserAvatarRole.admin;
     return studentType == 'internal' ||
             studentType == 'center' ||
@@ -22,7 +22,7 @@ enum UserAvatarRole {
   }
 }
 
-enum UserAvatarBadge { dr, admin, free, pro, max }
+enum UserAvatarBadge { dr, admin, free, pro, max, guest }
 
 class UserAvatar extends StatelessWidget {
   final String? photoUrl;
@@ -52,30 +52,57 @@ class UserAvatar extends StatelessWidget {
     return UserAvatar(
       photoUrl: photoUrl,
       role: parsedRole,
-      planBadge: _badgeFor(role: role, planId: planId),
+      planBadge: _badgeFor(
+        role: role,
+        studentType: studentType,
+        planId: planId,
+      ),
       size: size,
       semanticLabel: semanticLabel,
     );
   }
 
-  static UserAvatarBadge _badgeFor({required String role, String? planId}) {
-    if (role == 'teacher') return UserAvatarBadge.dr;
+  /// Public badge resolution for Figma-exact avatar renderers (e.g. the
+  /// Student Home header) that draw their own geometry instead of [UserAvatar].
+  /// Guest-type students always resolve to [UserAvatarBadge.guest], never free.
+  static UserAvatarBadge badgeFor({
+    required String role,
+    String? studentType,
+    String? planId,
+  }) => _badgeFor(role: role, studentType: studentType, planId: planId);
+  static UserAvatarBadge _badgeFor({
+    required String role,
+    String? studentType,
+    String? planId,
+  }) {
+    if (role == 'doctor') return UserAvatarBadge.dr;
     if (role == 'admin') return UserAvatarBadge.admin;
-    switch (planId?.toLowerCase()) {
-      case 'max':
-      case 'maximum':
-        return UserAvatarBadge.max;
-      case 'pro':
-        return UserAvatarBadge.pro;
-      case 'free':
-      default:
-        return UserAvatarBadge.free;
+    // Guest-type students always show the GUEST badge (never FREE),
+    // regardless of any plan record.
+    if (studentType?.trim().toLowerCase() == 'guest') {
+      return UserAvatarBadge.guest;
     }
+    // Canonical plan_key matching mirrors the dashboard
+    // (`planDisplayForKey`): keys are `public_free` / `center_free` /
+    // `center_pro` / `center_max` — never bare tier names — so matching is
+    // by `_tier` suffix, not equality.
+    final key = (planId ?? '').trim().toLowerCase();
+    if (key.endsWith('_max') || key == 'max' || key == 'maximum') {
+      return UserAvatarBadge.max;
+    }
+    if (key.endsWith('_pro') || key == 'pro') {
+      return UserAvatarBadge.pro;
+    }
+    if (key.endsWith('_guest') || key == 'guest') {
+      return UserAvatarBadge.guest;
+    }
+    // `_free`, bare `free`, and anything unknown render as FREE.
+    return UserAvatarBadge.free;
   }
 
   @override
   Widget build(BuildContext context) {
-    final badge = role == UserAvatarRole.teacher
+    final badge = role == UserAvatarRole.doctor
         ? UserAvatarBadge.dr
         : (planBadge ?? UserAvatarBadge.free);
     return Semantics(
@@ -158,6 +185,13 @@ class _AvatarBadge extends StatelessWidget {
         'FREE',
         (AppColors.avatarBadgeFreeStart, AppColors.avatarBadgeFreeEnd),
       ),
+      // Guest badge shares the blue family (Figma: #6FC3FF → #3D8FE0
+      // gradient, white 40% stroke, Cairo 800) — only the label differs
+      // from FREE.
+      UserAvatarBadge.guest => (
+        'GUEST',
+        (AppColors.avatarBadgeFreeStart, AppColors.avatarBadgeFreeEnd),
+      ),
       UserAvatarBadge.pro => (
         'PRO',
         (AppColors.avatarBadgeProStart, AppColors.avatarBadgeProEnd),
@@ -205,7 +239,7 @@ class _AvatarRingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = AppShapes.avatarRingWidth
       ..color = switch (role) {
-        UserAvatarRole.teacher => AppColors.avatarTeacherRing,
+        UserAvatarRole.doctor => AppColors.avatarTeacherRing,
         UserAvatarRole.admin => AppColors.avatarAdminRing,
         UserAvatarRole.studentExternal => AppColors.avatarExternalRing,
         UserAvatarRole.studentInternal => AppColors.avatarInternalRing,
@@ -215,7 +249,7 @@ class _AvatarRingPainter extends CustomPainter {
         : (paint..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
     if (glow != null) canvas.drawCircle(center, radius, glow);
     paint.maskFilter = null;
-    if (role == UserAvatarRole.teacher) {
+    if (role == UserAvatarRole.doctor) {
       canvas.drawCircle(center, radius, paint);
     } else {
       final path = Path()

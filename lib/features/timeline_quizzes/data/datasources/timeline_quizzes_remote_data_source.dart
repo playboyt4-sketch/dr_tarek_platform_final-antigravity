@@ -85,22 +85,6 @@ class TimelineQuizzesRemoteDataSource {
     );
   }
 
-  /// Evaluates a single answer statelessly on the server for immediate feedback.
-  Future<Map<String, dynamic>> evaluateAnswer({
-    required String attemptId,
-    required String questionId,
-    required String answer,
-  }) async {
-    final callable = FirebaseFunctions.instance.httpsCallable('evaluateQuestionAnswer');
-    final response = await callable.call({
-      'attemptId': attemptId,
-      'attemptType': 'quiz',
-      'questionId': questionId,
-      'answer': answer,
-    });
-    return Map<String, dynamic>.from(response.data as Map);
-  }
-
   /// Securely fetches questions for an attempt without correct answers or explanations.
   Future<List<Map<String, dynamic>>> getAssessmentQuestions({
     required String attemptId,

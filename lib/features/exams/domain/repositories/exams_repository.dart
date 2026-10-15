@@ -8,13 +8,6 @@ abstract class ExamsRepository {
 
   Future<AssessmentSubmitResult> submitExamAnswers({required String attemptId, required Map<String, String> answers});
 
-  /// Evaluates a single answer statelessly on the server for immediate feedback.
-  Future<Map<String, dynamic>> evaluateAnswer({
-    required String attemptId,
-    required String questionId,
-    required String answer,
-  });
-
   /// Securely fetches questions for an attempt without correct answers or explanations.
   Future<List<Map<String, dynamic>>> getAssessmentQuestions({
     required String attemptId,

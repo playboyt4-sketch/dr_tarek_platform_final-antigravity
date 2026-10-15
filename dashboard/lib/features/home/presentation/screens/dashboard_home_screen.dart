@@ -31,6 +31,7 @@ Color accentForGrade(String gradeKey) {
 }
 
 class GradeBreakdown {
+  final String gradeKey;
   final String title;
   final int total;
   final int pending;
@@ -41,6 +42,7 @@ class GradeBreakdown {
   final Color accent;
 
   const GradeBreakdown({
+    required this.gradeKey,
     required this.title,
     required this.total,
     required this.pending,
@@ -53,6 +55,7 @@ class GradeBreakdown {
 
   factory GradeBreakdown.fromAnalytics(GradeAnalytics analytics) {
     return GradeBreakdown(
+      gradeKey: analytics.gradeKey,
       title: gradeAnalyticsTitle(analytics.gradeKey),
       total: analytics.total,
       pending: analytics.pending,
@@ -80,7 +83,8 @@ class GradeBreakdown {
 ///
 /// [onMenuPressed] is kept for API compatibility but ignored — the
 /// shell's fixed top-layer button owns open/close. [onNavigate]
-/// optionally routes grade cards.
+/// receives the tapped card's canonical grade key
+/// (`grade_one` … `grade_four`) for the shell's existing grade navigation.
 class DashboardHomeScreen extends ConsumerWidget {
   final VoidCallback? onMenuPressed;
   final ValueChanged<String>? onNavigate;
@@ -109,7 +113,7 @@ class DashboardHomeScreen extends ConsumerWidget {
                 const _HomeHeader(),
                 // 24 + 80 = 104; gap 32 → analytics Y 136.
                 const SizedBox(height: 32),
-                const _TopAnalytics(),
+                _TopAnalytics(onNavigate: onNavigate),
                 // 136 + 304 = 440; gap 32 → bottom Y 472.
                 const SizedBox(height: 32),
                 const _BottomSection(),
@@ -190,7 +194,9 @@ class _HomeHeader extends StatelessWidget {
 // ------------------------------------------------------- top analytics
 
 class _TopAnalytics extends ConsumerWidget {
-  const _TopAnalytics();
+  final ValueChanged<String>? onNavigate;
+
+  const _TopAnalytics({this.onNavigate});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -203,8 +209,10 @@ class _TopAnalytics extends ConsumerWidget {
       error: (Object error, StackTrace stackTrace) => _TopAnalyticsError(
         onRetry: () => ref.invalidate(homeAnalyticsProvider),
       ),
-      data: (HomeAnalytics analytics) =>
-          _TopAnalyticsContent(analytics: analytics),
+      data: (HomeAnalytics analytics) => _TopAnalyticsContent(
+        analytics: analytics,
+        onNavigate: onNavigate,
+      ),
     );
   }
 }
@@ -288,7 +296,12 @@ class _TopAnalyticsSkeleton extends StatelessWidget {
 class _TopAnalyticsContent extends StatelessWidget {
   final HomeAnalytics analytics;
 
-  const _TopAnalyticsContent({required this.analytics});
+  /// Canonical grade key (`grade_one` … `grade_four`) of the tapped card,
+  /// or null when the cards are not interactive. Owned and interpreted by
+  /// the shell's existing grade navigation; this section only forwards it.
+  final ValueChanged<String>? onNavigate;
+
+  const _TopAnalyticsContent({required this.analytics, this.onNavigate});
 
   @override
   Widget build(BuildContext context) {
@@ -328,7 +341,13 @@ class _TopAnalyticsContent extends StatelessWidget {
             spacing: 20,
             runSpacing: 24,
             children: <Widget>[
-              for (final grade in grades) _GradeCard(data: grade),
+              for (final grade in grades)
+                _GradeCard(
+                  data: grade,
+                  onTap: onNavigate == null
+                      ? null
+                      : () => onNavigate!(grade.gradeKey),
+                ),
             ],
           ),
         ),
@@ -511,11 +530,14 @@ class _PieTotal extends StatelessWidget {
 class _GradeCard extends StatelessWidget {
   final GradeBreakdown data;
 
-  const _GradeCard({required this.data});
+  /// Tap destination for the whole card. Null keeps the card static.
+  final VoidCallback? onTap;
+
+  const _GradeCard({required this.data, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final Widget card = Container(
       width: 395,
       height: 140,
       decoration: BoxDecoration(
@@ -553,6 +575,23 @@ class _GradeCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+    final VoidCallback? tap = onTap;
+    // No interaction configured → exact legacy static card.
+    if (tap == null) return card;
+    // Interaction-only wrapper: identical visuals, whole card tappable
+    // with a click cursor and button semantics for assistive tech.
+    return Semantics(
+      button: true,
+      label: data.title,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: tap,
+          behavior: HitTestBehavior.opaque,
+          child: card,
+        ),
       ),
     );
   }
@@ -617,7 +656,7 @@ class _BottomSection extends ConsumerWidget {
       subjectId: '',
       gradeKey: gradeKey,
       tab: SubjectContentTab.lectures,
-      initialOrder: 1,
+      initialOrder: 0,
       gradeColor: accentForGrade(gradeKey),
     );
   }

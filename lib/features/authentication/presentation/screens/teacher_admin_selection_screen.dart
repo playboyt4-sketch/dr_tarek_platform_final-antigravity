@@ -68,7 +68,7 @@ class TeacherAdminSelectionScreen extends ConsumerWidget {
                     child: Padding(
                       padding: EdgeInsets.all(rs(8)),
                       child: Image.asset(
-                        'assets/images/teacher & admin icone.png',
+                        'assets/images/teacher & admin icone.svg',
                         width: rs(60),
                         height: rs(60),
                         errorBuilder: (context, error, stackTrace) => Icon(

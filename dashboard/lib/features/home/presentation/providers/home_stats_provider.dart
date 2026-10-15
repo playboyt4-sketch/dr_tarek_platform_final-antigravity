@@ -46,7 +46,7 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
       .get();
   final staffSnap = await db
       .collection('users')
-      .where('role', whereIn: <String>['admin', 'teacher'])
+      .where('role', whereIn: <String>['admin', 'doctor'])
       .count()
       .get();
 

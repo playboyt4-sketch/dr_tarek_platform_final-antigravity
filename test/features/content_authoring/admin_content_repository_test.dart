@@ -412,13 +412,13 @@ void main() {
         resourceType: LectureResourceType.video,
         title: 'الجزء الأول',
         displayOrder: 2,
-        bunnyVideoId: 'bunny-123',
+        bunnyVideoId: '77777777-7777-4777-8777-777777777777',
         isVisible: true,
         isDeleted: false,
       ));
 
       expect(fields['resource_type'], 'video');
-      expect(fields['bunny_video_id'], 'bunny-123');
+      expect(fields['bunny_video_id'], '77777777-7777-4777-8777-777777777777');
       // Video stays implicitly Bunny — no storage_provider field (§15).
       expect(fields.containsKey('storage_provider'), isFalse);
       expect(fields['resource_url'], '');
@@ -457,7 +457,7 @@ void main() {
         resourceType: LectureResourceType.video,
         title: 'فيديو بصورة',
         displayOrder: 1,
-        bunnyVideoId: 'bunny-x',
+        bunnyVideoId: '88888888-8888-4888-8888-888888888888',
         thumbnail: 'lecture_resources/lec-1/r-4/thumb.png',
         thumbnailProvider: ResourceStorageProvider.bunny,
         isVisible: true,

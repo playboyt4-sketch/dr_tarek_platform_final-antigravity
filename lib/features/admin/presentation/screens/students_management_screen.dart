@@ -9,6 +9,7 @@ import '../../../../core/errors/failure.dart';
 import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../profile/presentation/screens/grade_one_profile_overview_screen.dart';
 import '../../domain/admin_grades.dart';
 import '../providers/admin_providers.dart';
 import '../widgets/payment_receipt_dialog.dart';
@@ -95,11 +96,15 @@ class StudentsManagementScreen extends StatelessWidget {
   }
 
   static String _gradeLabel(String grade) {
-    return switch (grade) {
-      'grade_1' => 'الفرقة الأولى',
-      'grade_2' => 'الفرقة الثانية',
-      'grade_3' => 'الفرقة الثالثة',
-      'grade_4' => 'الفرقة الرابعة',
+    // Normalize to the canonical grade_one..grade_four keys so both
+    // canonical values (written by updateStudentGrade/registration) and
+    // legacy digit values (grade_1..grade_4) already in data display
+    // the same Arabic label.
+    return switch (normalizeAdminGradeKey(grade)) {
+      'grade_one' => 'الفرقة الأولى',
+      'grade_two' => 'الفرقة الثانية',
+      'grade_three' => 'الفرقة الثالثة',
+      'grade_four' => 'الفرقة الرابعة',
       _ => grade.isEmpty ? 'غير محدد' : grade,
     };
   }
@@ -249,14 +254,17 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
   void _showLogPaymentDialog() {
     final amountController = TextEditingController();
     final notesController = TextEditingController();
+    final collectorController = TextEditingController();
     String? selectedSubjectId;
+    String selectedPaymentMethod = 'cash';
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('تسجيل دفعة جديدة للطالب'),
-          content: Column(
+          content: SingleChildScrollView(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -267,7 +275,7 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
                   return DropdownButtonFormField<String>(
                     initialValue: selectedSubjectId,
                     decoration: const InputDecoration(
-                      labelText: 'المادة',
+                      labelText: 'المادة (اختياري)',
                       border: OutlineInputBorder(),
                     ),
                     items: [
@@ -291,6 +299,31 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedPaymentMethod,
+                decoration: const InputDecoration(
+                  labelText: 'طريقة الدفع',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'cash', child: Text('نقدي (cash)')),
+                  DropdownMenuItem(value: 'e_wallet', child: Text('محفظة إلكترونية (e_wallet)')),
+                  DropdownMenuItem(value: 'instapay', child: Text('انستاباي (instapay)')),
+                  DropdownMenuItem(value: 'bank', child: Text('تحويل بنكي (bank)')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedPaymentMethod = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: collectorController,
+                decoration: const InputDecoration(
+                  labelText: 'اسم المحصّل',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: notesController,
                 decoration: const InputDecoration(
@@ -300,6 +333,7 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
               ),
             ],
           ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
@@ -308,15 +342,23 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
             FilledButton(
               onPressed: () async {
                 final amount = double.tryParse(amountController.text.trim());
-                if (selectedSubjectId == null || amount == null || amount <= 0) {
+                final collectorName = collectorController.text.trim();
+                if (amount == null || amount <= 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى اختيار المادة وتحديد المبلغ.')),
+                    const SnackBar(content: Text('يرجى تحديد مبلغ صحيح.')),
+                  );
+                  return;
+                }
+                if (collectorName.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('يرجى إدخال اسم المحصّل.')),
                   );
                   return;
                 }
                 Navigator.of(ctx).pop();
-                // Contract of onPaymentLogged: studentId, subjectId,
-                // amount, receiptNumber (+ optional notes). The receipt
+                // Approved backend contract of onPaymentLogged: studentId,
+                // amount, receiptNumber, paymentMethod, collectorName,
+                // paymentDate (+ optional subjectId/notes). The receipt
                 // number is generated here for the manual external payment.
                 final receiptNumber =
                     'R-${DateTime.now().millisecondsSinceEpoch}';
@@ -325,9 +367,13 @@ await _call(
                   'onPaymentLogged',
                   {
                     'studentId': widget.studentId,
-                    'subjectId': selectedSubjectId,
+                    if (selectedSubjectId != null)
+                      'subjectId': selectedSubjectId,
                     'amount': amount,
                     'receiptNumber': receiptNumber,
+                    'paymentMethod': selectedPaymentMethod,
+                    'collectorName': collectorName,
+                    'paymentDate': DateTime.now().toIso8601String(),
                     if (notesController.text.trim().isNotEmpty)
                       'notes': notesController.text.trim(),
                   },
@@ -488,12 +534,23 @@ await _call(
   @override
   Widget build(BuildContext context) {
     final currentUserRole = ref.watch(userRoleProvider);
-    final isTeacher = currentUserRole == 'teacher';
+    final isTeacher = currentUserRole == 'doctor';
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.studentName),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'الملف التعريفي (Overview)',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => GradeOneProfileOverviewScreen(
+                  studentId: widget.studentId,
+                ),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.lock_reset_outlined),
             tooltip: 'إعادة تعيين كلمة المرور',
@@ -628,10 +685,10 @@ await _call(
                 busy: _busy.contains('reset_device'),
                 onResetDevice: () => _call(
                   'reset_device',
-                  'onDeviceChangeRequest',
+                  'resetStudentDevices',
                   {
                     'studentId': widget.studentId,
-                    'action': 'force_reset',
+                    'reason': 'reset_requested',
                   },
                   'تمت إعادة تعيين جهاز الطالب بنجاح.',
                 ),

@@ -78,6 +78,7 @@ class _DashboardLoginScreenState extends ConsumerState<DashboardLoginScreen> {
         return null;
       case FailureCode.noInternet:
       case FailureCode.timeout:
+      case FailureCode.appCheckFailed:
         return 'Connection problem. Check your network and try again.';
       case FailureCode.server:
       case FailureCode.unknown:

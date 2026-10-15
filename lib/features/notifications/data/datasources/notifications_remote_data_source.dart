@@ -14,22 +14,35 @@ class NotificationsRemoteDataSource {
     required String userId,
     int limit = 50,
   }) async {
+    // NOTE: no server-side orderBy here on purpose — where(user_id) +
+    // orderBy(created_at) needs a composite index + deploy (نشر).
+    // Client-side sort below gives newest-first without any index.
     final snap = await _notificationsRef
         .where('user_id', isEqualTo: userId)
         .limit(limit)
         .get();
-    return snap.docs.map(AppNotificationModel.fromFirestore).toList();
+    final items =
+        snap.docs.map(AppNotificationModel.fromFirestore).toList();
+    // Newest first: الأحدث فوق والأقدم تحت.
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items.take(limit).toList();
   }
 
   Stream<List<AppNotificationModel>> watchNotifications({
     required String userId,
     int limit = 50,
   }) {
+    // Same reason: keep the query index-free, sort locally newest-first.
     return _notificationsRef
         .where('user_id', isEqualTo: userId)
         .limit(limit)
         .snapshots()
-        .map((snap) => snap.docs.map(AppNotificationModel.fromFirestore).toList());
+        .map((snap) {
+      final items =
+          snap.docs.map(AppNotificationModel.fromFirestore).toList();
+      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return items.take(limit).toList();
+    });
   }
 
   Future<void> markAsRead({required String notificationId}) async {

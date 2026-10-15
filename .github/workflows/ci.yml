@@ -99,4 +99,4 @@ jobs:
       - name: Run rules unit tests against emulators
         working-directory: security-tests
         # Java is preinstalled on GitHub runners (required by Firestore emulator).
-        run: firebase emulators:exec --only firestore,storage --project dr-tarek-platform-emulator "npm test"
+        run: firebase emulators:exec --only firestore,storage --project dr-tarek-platform-rules-test "npm test"

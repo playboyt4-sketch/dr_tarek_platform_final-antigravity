@@ -9,11 +9,18 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isTeacher() {
-      return isSignedIn() && request.auth.token.role == 'teacher';
+    function isDoctor() {
+      return isSignedIn() && request.auth.token.role == 'doctor';
     }
 
     function hasAdminStoragePermission(permissionKey) {
+      // NOTE: no firestore.exists() here on purpose. The Storage rules
+      // emulator used by security-tests (@firebase/rules-unit-testing)
+      // does not resolve cross-service firestore.exists() with
+      // $(request.auth.uid) interpolation, which turns the whole
+      // conjunction into deny (admin-with-content sheets.zip upload
+      // fails). firestore.get() alone is sufficient: for a missing doc
+      // .data is null, so the == true comparisons below are already false.
       return isSignedIn()
         && request.auth.token.role == 'admin'
         && firestore.get(/databases/(default)/documents/admin_permissions/$(request.auth.uid)).data.is_active == true
@@ -21,7 +28,7 @@ service firebase.storage {
     }
 
     function canManageContent() {
-      return isTeacher() || hasAdminStoragePermission('admin_content');
+      return isDoctor() || hasAdminStoragePermission('admin_content');
     }
 
     function isImageWithinLimit(maxBytes) {
@@ -34,7 +41,7 @@ service firebase.storage {
     match /profile_photos/{userId}/{fileName} {
       allow read: if isSignedIn()
         && (request.auth.uid == userId
-          || request.auth.token.role == 'teacher'
+          || request.auth.token.role == 'doctor'
           || request.auth.token.role == 'admin');
 
       allow create, update: if isSignedIn()
@@ -48,12 +55,17 @@ service firebase.storage {
     // ===== Lecture resources (PDFs / attachments / thumbnails) =====
     // Client reads are DENIED: short-lived signed URLs are minted
     // server-side (generateProtectedPdfUrl / generatePdfDownloadUrl).
-    // Upload / replace / delete are staff-only, max 50MB.
-
+    // Upload / replace / delete are staff-only, max 50MB. Video bytes are
+    // NEVER stored here — video delivery is Bunny CDN only (video_id
+    // strings, never uploads), so explicit video/* content types are denied
+    // even for staff. A null/inferred content type still passes: only an
+    // explicit video/* declaration is rejected.
     match /lecture_resources/{lectureId}/{resourceId}/{fileName} {
       allow read: if false;
       allow create, update: if canManageContent()
-        && request.resource.size <= 50 * 1024 * 1024;
+        && request.resource.size <= 50 * 1024 * 1024
+        && (request.resource.contentType == null
+          || !request.resource.contentType.matches('video/.*'));
       allow delete: if canManageContent();
     }
 

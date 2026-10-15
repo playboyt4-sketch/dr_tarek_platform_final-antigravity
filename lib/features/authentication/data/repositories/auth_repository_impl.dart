@@ -132,4 +132,9 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<void> logout() {
     return remoteDataSource.firebaseAuth.signOut();
   }
+
+  @override
+  Future<void> applySessionPersistence({required bool rememberMe}) {
+    return remoteDataSource.applySessionPersistence(rememberMe: rememberMe);
+  }
 }

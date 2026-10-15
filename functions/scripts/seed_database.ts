@@ -1,3 +1,14 @@
+/**
+ * QUARANTINE NOTICE (post ADR-005 Doctor migration) — documentation only,
+ * no behavior change.
+ *
+ * The optional teacher-promotion block in this file writes the LEGACY role
+ * "teacher" to BOTH Auth custom claims and the users document. Post-migration
+ * that role is inert (denied by Rules, Functions, and clients), so passing a
+ * teacherPhone regresses the owner instead of promoting them. DO NOT pass a
+ * teacher phone without explicit Project Owner approval. Changing the
+ * promoted role string or removing the block requires an owner decision.
+ */
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";

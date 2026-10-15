@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "dr-tarek-platform"
+    "default": "dr-tarek-platform",
+    "staging": "dr-tarek-staging"
   }
 }

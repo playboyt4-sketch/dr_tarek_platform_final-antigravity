@@ -3,7 +3,7 @@
  *
  * Approved student-level payment model
  * (payments_student_level_database_change_authority.md):
- * - Teacher ONLY. No delegated admin may create payment records.
+ * - Doctor ONLY. No delegated admin may create payment records.
  * - Payment is student-level, NOT Student x Subject.
  * - subjectId is optional legacy/descriptive metadata only; it is never
  *   required and never affects aggregation or caps.
@@ -12,7 +12,7 @@
  * - Cap: SUM(non-deleted payments for student) + amount <= net_egp.
  * - payment_method in {cash, e_wallet, instapay, bank} (descriptive only).
  * - collected_by = manual free-text collector name (never a UID).
- * - created_by/updated_by = transcribing Teacher, server-derived.
+ * - created_by/updated_by = transcribing Doctor, server-derived.
  * - paymentDate required, today or past (no future dates).
  * - No subscription/membership mutation.
  */
@@ -58,13 +58,21 @@ const adminMock = {
       });
       return {
         doc: (docId) => ({
+          id: docId,
           get: async () => {
             const docData = (store[collPath] || {})[docId];
             if (docData === undefined) return {exists: false};
             return {exists: true, data: () => docData};
           },
           update: async () => {},
-          set: async () => {},
+          // Records set() writes (transactional deterministic-ID creation
+          // in onPaymentLogged) exactly like add() so existing assertions
+          // on writes[] keep working unchanged.
+          set: async (data) => {
+            if (!store[collPath]) store[collPath] = {};
+            store[collPath][docId] = data;
+            writes.push({collection: collPath, id: docId, data});
+          },
         }),
         where: (f, op, v) => query([[f, op, v]]),
         get: async () => applyWheres(collPath, []),
@@ -76,6 +84,17 @@ const adminMock = {
           return {id};
         },
       };
+    },
+    // Passthrough runner for the payment idempotency transaction
+    // (get-or-create on the deterministic payment doc; no contention
+    // semantics — see payment_idempotency.test.js).
+    runTransaction: async (fn) => {
+      const txRef = (ref) => ref;
+      return fn({
+        get: (ref) => txRef(ref).get(),
+        update: (ref, data) => txRef(ref).update(data),
+        set: (ref, data, options) => txRef(ref).set(data, options),
+      });
     },
   }),
   FieldValue: {serverTimestamp: () => ({_serverTimestamp: true})},
@@ -135,7 +154,7 @@ function calls(collection) {
   return writes.filter((w) => w.collection === collection);
 }
 
-const teacherAuth = {uid: "teacher-1", token: {role: "teacher"}};
+const doctorAuth = {uid: "doctor-1", token: {role: "doctor"}};
 const adminAuth = {uid: "admin-1", token: {role: "admin"}};
 
 // Student-level contract: no subjectId required.
@@ -191,12 +210,12 @@ async function run() {
     }
   }
 
-  // 1. Teacher records with the student-level contract (no subjectId).
+  // 1. Doctor records with the student-level contract (no subjectId).
   resetStore();
   seedAccount(1000);
-  const res = await checkPass("Teacher logs payment without subjectId", {
+  const res = await checkPass("Doctor logs payment without subjectId", {
     data: {...validPayload},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.equal(res.logged, true);
   assert.ok(res.paymentId);
@@ -207,8 +226,8 @@ async function run() {
   assert.equal(doc.amount, 500);
   assert.equal(doc.payment_method, "cash");
   assert.equal(doc.collected_by, "Jo");
-  assert.equal(doc.created_by, "teacher-1");
-  assert.equal(doc.updated_by, "teacher-1");
+  assert.equal(doc.created_by, "doctor-1");
+  assert.equal(doc.updated_by, "doctor-1");
   assert.equal(doc.receipt_number, "R-1001");
   assert.equal(doc.notes, "Cash collected");
   assert.ok(doc.payment_date);
@@ -219,10 +238,10 @@ async function run() {
   assert.equal(audits.length, 1);
   assert.equal(audits[0].data.action, "payment_logged");
   assert.equal(audits[0].data.entity, "payment_logs");
-  assert.equal(audits[0].data.actor_id, "teacher-1");
-  assert.equal(audits[0].data.actor_role, "teacher");
-  assert.equal(audits[0].data.permission_basis, "teacher");
-  console.log("ok - teacher audit event generated");
+  assert.equal(audits[0].data.actor_id, "doctor-1");
+  assert.equal(audits[0].data.actor_role, "doctor");
+  assert.equal(audits[0].data.permission_basis, "doctor");
+  console.log("ok - doctor audit event generated");
 
   const analytics = calls("analytics_events");
   assert.equal(analytics.length, 1);
@@ -238,7 +257,7 @@ async function run() {
   seedAccount(1000);
   const memoRes = await checkPass("Legacy subjectId memo accepted", {
     data: {...validPayload, subjectId: "legacy-sub-1", receiptNumber: "R-1002"},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.ok(memoRes.paymentId);
   const memoDoc = calls("payment_logs")[0].data;
@@ -250,13 +269,13 @@ async function run() {
   seedAccount(1000);
   const bankRes = await checkPass("Bank method accepted", {
     data: {...validPayload, paymentMethod: "bank", receiptNumber: "R-1003"},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.ok(bankRes.paymentId);
   assert.equal(calls("payment_logs")[0].data.payment_method, "bank");
   const bankUpperRes = await checkPass("Bank method case-insensitive", {
     data: {...validPayload, paymentMethod: "Bank", receiptNumber: "R-1004"},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.ok(bankUpperRes.paymentId);
   assert.equal(calls("payment_logs")[1].data.payment_method, "bank");
@@ -266,34 +285,34 @@ async function run() {
   resetStore();
   seedAccount(1000);
   await checkFail("Unknown method rejected", {
-    data: {...validPayload, paymentMethod: "cheque"}, auth: teacherAuth,
+    data: {...validPayload, paymentMethod: "cheque"}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Missing method rejected", {
-    data: {...validPayload, paymentMethod: undefined}, auth: teacherAuth,
+    data: {...validPayload, paymentMethod: undefined}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Blank collector rejected", {
-    data: {...validPayload, collectorName: "   "}, auth: teacherAuth,
+    data: {...validPayload, collectorName: "   "}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Long collector rejected", {
-    data: {...validPayload, collectorName: "x".repeat(101)}, auth: teacherAuth,
+    data: {...validPayload, collectorName: "x".repeat(101)}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Long notes rejected", {
-    data: {...validPayload, notes: "n".repeat(501)}, auth: teacherAuth,
+    data: {...validPayload, notes: "n".repeat(501)}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Future date rejected", {
-    data: {...validPayload, paymentDate: "2999-01-01"}, auth: teacherAuth,
+    data: {...validPayload, paymentDate: "2999-01-01"}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Missing date rejected", {
-    data: {...validPayload, paymentDate: undefined}, auth: teacherAuth,
+    data: {...validPayload, paymentDate: undefined}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Missing receipt rejected", {
-    data: {...validPayload, receiptNumber: undefined}, auth: teacherAuth,
+    data: {...validPayload, receiptNumber: undefined}, auth: doctorAuth,
   }, "invalid-argument");
   await checkFail("Negative amount rejected", {
-    data: {...validPayload, amount: -5}, auth: teacherAuth,
+    data: {...validPayload, amount: -5}, auth: doctorAuth,
   }, "invalid-argument");
 
-  // 3. Teacher-only gate (delegated admin has no create rights).
+  // 3. Doctor-only gate (delegated admin has no create rights).
   resetStore();
   seedAccount(1000);
   seedDoc("admin_permissions", "admin-1", {
@@ -315,17 +334,17 @@ async function run() {
     is_deleted: false,
   });
   await checkFail("Over-Net rejected (legacy subject ignored)", {
-    data: {...validPayload, amount: 500}, auth: teacherAuth,
+    data: {...validPayload, amount: 500}, auth: doctorAuth,
   }, "failed-precondition");
   const okRes = await checkPass("At-Net accepted", {
-    data: {...validPayload, amount: 200}, auth: teacherAuth,
+    data: {...validPayload, amount: 200}, auth: doctorAuth,
   });
   assert.ok(okRes.paymentId);
 
   // 5. Missing student financial account.
   resetStore();
   await checkFail("Missing account rejected", {
-    data: {...validPayload}, auth: teacherAuth,
+    data: {...validPayload}, auth: doctorAuth,
   }, "failed-precondition");
 
   // 6. Mixed-subject history aggregates into one student Paid total.
@@ -346,10 +365,10 @@ async function run() {
     is_deleted: false,
   });
   await checkFail("Third payment rejected after mixed-subject cap", {
-    data: {...validPayload, amount: 1, subjectId: "subject-C"}, auth: teacherAuth,
+    data: {...validPayload, amount: 1, subjectId: "subject-C"}, auth: doctorAuth,
   }, "failed-precondition");
   await checkFail("Third payment rejected without subject too", {
-    data: {...validPayload, amount: 1}, auth: teacherAuth,
+    data: {...validPayload, amount: 1}, auth: doctorAuth,
   }, "failed-precondition");
 
   test.cleanup();

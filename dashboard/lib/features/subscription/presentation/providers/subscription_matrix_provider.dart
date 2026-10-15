@@ -158,7 +158,7 @@ final corePeriodsProvider = StreamProvider<List<CorePeriodState>>((ref) {
 /// Server writes for the Subscription section.
 ///
 /// Every toggle/value edit goes through the audited `setPlanFeature`
-/// callable; term start/end goes through the teacher-only
+/// callable; term start/end goes through the doctor-only
 /// `setAcademicPeriodStatus` callable. Client writes to `plan_features`
 /// stay denied in `firestore.rules`, so there is no direct-write path.
 class SubscriptionActions {

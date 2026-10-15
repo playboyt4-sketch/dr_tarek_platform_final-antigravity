@@ -1,5 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
+import 'failure_messages.dart' show appCheckFailureMessageAr;
+
 /// Maps backend errors to unified Arabic user-facing messages.
 ///
 /// Raw exception details (`error.toString()`, stack traces, internal server
@@ -9,6 +11,15 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 /// Pure code → Arabic mapper (unit-testable without platform exceptions).
 String mapFunctionErrorCode(String code, String? detail, String fallback) {
+  // Same BUG-AUTH anti-pattern as Failure.from had: App Check attestation
+  // failures arrive with generic codes (usually `unauthenticated`), so the
+  // message signal must win over the code switch — otherwise every screen
+  // using this mapper shows Login's "بيانات الدخول غير صحيحة." copy for a
+  // transport failure. Reuses the canonical [appCheckFailureMessageAr].
+  final signal = '$code ${detail ?? ''}'.toLowerCase();
+  if (signal.contains('app check') || signal.contains('app-check')) {
+    return appCheckFailureMessageAr;
+  }
   switch (code) {
     case 'unauthenticated':
       return 'بيانات الدخول غير صحيحة.';

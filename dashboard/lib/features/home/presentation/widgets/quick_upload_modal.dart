@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
+import '../../../students/presentation/providers/subject_details_provider.dart';
 import '../providers/home_stats_provider.dart';
 
 /// Quick-lecture section tabs: (display label, system section key).
@@ -16,6 +17,13 @@ const List<({String key, String label})> quickUploadTabs = <({String key, String
   (key: 'revision', label: 'مراجعة'),
   (key: 'final', label: 'فاينل'),
 ];
+
+/// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
+bool isValidBunnyVideoId(String raw) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(raw.trim());
+}
 
 /// Pure validation for the quick-upload form. Returns the first user-facing
 /// error, or null when the draft is submittable.
@@ -34,10 +42,14 @@ String? validateQuickUpload({
   if (bunnyVideoId.trim().isEmpty && pdfPath.trim().isEmpty) {
     return 'Add a Bunny Video ID or a PDF path.';
   }
+  if (bunnyVideoId.trim().isNotEmpty &&
+      !isValidBunnyVideoId(bunnyVideoId)) {
+    return 'الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.';
+  }
   return null;
 }
 
-/// Opens the Quick Upload modal from the "Upload Lecture" card.
+/// Opens the Quick Upload modal from the "Quick Upload" card.
 Future<bool?> showQuickUploadModal(BuildContext context) {
   return showDialog<bool>(
     context: context,
@@ -408,10 +420,15 @@ Future<String> publishQuickLecture({
   });
 
   int resourceOrder = 0;
+  String? videoResourceId;
   if (bunnyVideoId != null && bunnyVideoId.isNotEmpty) {
     resourceOrder++;
-    await db.collection('lecture_resources').doc().set(<String, dynamic>{
+    final DocumentReference<Map<String, dynamic>> videoRef =
+        db.collection('lecture_resources').doc();
+    videoResourceId = videoRef.id;
+    await videoRef.set(<String, dynamic>{
       'lecture_id': lectureRef.id,
+      'subject_id': subjectId,
       'resource_type': 'video',
       'title': title,
       'display_order': resourceOrder,
@@ -432,6 +449,7 @@ Future<String> publishQuickLecture({
     resourceOrder++;
     await db.collection('lecture_resources').doc().set(<String, dynamic>{
       'lecture_id': lectureRef.id,
+      'subject_id': subjectId,
       'resource_type': 'pdf',
       'title': '$title (PDF)',
       'display_order': resourceOrder,
@@ -449,6 +467,27 @@ Future<String> publishQuickLecture({
       'updated_by': actorId,
     });
   }
+
+  // First-video sync (same sequential flow): at most one video exists here;
+  // the canonical selector decides (draft lectures stay null via
+  // publishNow-gated visibility).
+  final FirstVideoCandidate? quickWinner = videoResourceId == null
+      ? null
+      : selectFirstVideoCandidate(<FirstVideoCandidate>[
+          FirstVideoCandidate(
+            id: videoResourceId,
+            type: 'video',
+            title: title,
+            isVisible: publishNow,
+            isDeleted: false,
+            bunnyVideoId: bunnyVideoId,
+            displayOrder: 1,
+          ),
+        ]);
+  await lectureRef.update(<String, dynamic>{
+    'first_video':
+        quickWinner == null ? null : firstVideoFields(quickWinner),
+  });
 
   return lectureRef.id;
 }

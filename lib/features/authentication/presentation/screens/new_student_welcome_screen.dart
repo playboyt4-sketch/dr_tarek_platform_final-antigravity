@@ -35,7 +35,7 @@ abstract final class _WelcomeDesign {
   static const heroCornerRadius = 35.0;
   static const heroAlignX = -0.0034;
   static const heroAlignY = -0.8009;
-  static const heroAsset = 'assets/images/New Student - Welcome photo .png';
+  static const heroAsset = 'assets/images/New Student - Welcome photo.png';
 
   // Floating back button: 44x44 at (24, 54), asset button/back.
   static const backButtonX = 24.0;

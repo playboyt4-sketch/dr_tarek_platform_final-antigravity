@@ -73,8 +73,8 @@ class NotesRepositoryImpl implements NotesRepository {
   }
 
   @override
-  Future<Note> createQuickNote({required String studentId, required String title, required String content}) {
-    return remoteDataSource.createQuickNote(studentId: studentId, title: title, content: content).asFailureAware();
+  Future<Note> createQuickNote({required String studentId, required String subjectId, required String title, required String content}) {
+    return remoteDataSource.createQuickNote(studentId: studentId, subjectId: subjectId, title: title, content: content).asFailureAware();
   }
 
   @override

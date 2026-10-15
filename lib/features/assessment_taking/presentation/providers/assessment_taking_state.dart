@@ -8,14 +8,9 @@ class AssessmentTakingState {
   final List<AssessmentQuestion> questions;
   final int currentIndex;
   
-  // Keyed by questionId
+  // Keyed by questionId. O6-B: answers only — correctness and explanations
+  // are never stored pre-submit (results surface only at final submission).
   final Map<String, String> selectedAnswers;
-  
-  // Keyed by questionId
-  final Map<String, bool> correctStatuses;
-  
-  // Keyed by questionId
-  final Map<String, String> explanations;
 
   // Final result metrics
   final int? finalScore;
@@ -30,8 +25,6 @@ class AssessmentTakingState {
     this.questions = const [],
     this.currentIndex = 0,
     this.selectedAnswers = const {},
-    this.correctStatuses = const {},
-    this.explanations = const {},
     this.finalScore,
     this.totalMarks,
     this.needsManualGrading,
@@ -45,12 +38,6 @@ class AssessmentTakingState {
   bool get isCurrentQuestionAnswered =>
       currentQuestion != null && selectedAnswers.containsKey(currentQuestion!.id);
 
-  bool get isCurrentQuestionCorrect =>
-      currentQuestion != null && correctStatuses[currentQuestion!.id] == true;
-      
-  String? get currentExplanation =>
-      currentQuestion != null ? explanations[currentQuestion!.id] : null;
-
   bool get isLastQuestion => currentIndex == questions.length - 1;
 
   AssessmentTakingState copyWith({
@@ -61,8 +48,6 @@ class AssessmentTakingState {
     List<AssessmentQuestion>? questions,
     int? currentIndex,
     Map<String, String>? selectedAnswers,
-    Map<String, bool>? correctStatuses,
-    Map<String, String>? explanations,
     int? finalScore,
     int? totalMarks,
     bool? needsManualGrading,
@@ -75,8 +60,6 @@ class AssessmentTakingState {
       questions: questions ?? this.questions,
       currentIndex: currentIndex ?? this.currentIndex,
       selectedAnswers: selectedAnswers ?? this.selectedAnswers,
-      correctStatuses: correctStatuses ?? this.correctStatuses,
-      explanations: explanations ?? this.explanations,
       finalScore: finalScore ?? this.finalScore,
       totalMarks: totalMarks ?? this.totalMarks,
       needsManualGrading: needsManualGrading ?? this.needsManualGrading,

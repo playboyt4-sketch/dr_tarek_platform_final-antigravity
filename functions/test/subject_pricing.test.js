@@ -2,10 +2,10 @@
  * Manual Student-Subject Pricing — focused callable tests (mocked Admin SDK,
  * student_subject_pricing_database_change_authority.md).
  *
- * Covers setStudentSubjectPricing (Teacher-only, ONE callable for Create
+ * Covers setStudentSubjectPricing (Doctor-only, ONE callable for Create
  * and Correct at the deterministic document
  * `student_subject_pricing/{studentId}_{subjectId}`):
- * Teacher create, non-Teacher/Admin rejection, price/discount validation,
+ * Doctor create, non-Doctor/Admin rejection, price/discount validation,
  * server-derived Net (client net ignored), deterministic ID, correction
  * preserving created_at/created_by while updating updated_at/updated_by,
  * immutable student_id/subject_id linkage, before/after admin_audit_log,
@@ -150,8 +150,8 @@ console.log("ok - payment callables intact (untouched)");
 
 const setPricing = test.wrap(functions.setStudentSubjectPricing);
 
-const teacherAuth = {uid: "teacher-1", token: {role: "teacher"}};
-const teacher2Auth = {uid: "teacher-2", token: {role: "teacher"}};
+const doctorAuth = {uid: "doctor-1", token: {role: "doctor"}};
+const doctor2Auth = {uid: "doctor-2", token: {role: "doctor"}};
 const adminAuth = {uid: "admin-1", token: {role: "admin"}};
 
 const FORBIDDEN_COLL = [
@@ -207,11 +207,11 @@ async function run() {
     }
   }
 
-  // 1+5+7. Teacher can create pricing; stored Net is server-derived (500-50=450).
+  // 1+5+7. Doctor can create pricing; stored Net is server-derived (500-50=450).
   resetStore();
-  const created = await checkPass(setPricing, "Teacher creates pricing", {
+  const created = await checkPass(setPricing, "Doctor creates pricing", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 500, discountEgp: 50},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.equal(created.pricingId, "s1_sub1");
   assert.equal(created.netEgp, 450);
@@ -221,8 +221,8 @@ async function run() {
   assert.equal(doc.price_egp, 500);
   assert.equal(doc.discount_egp, 50);
   assert.equal(doc.net_egp, 450);
-  assert.equal(doc.created_by, "teacher-1");
-  assert.equal(doc.updated_by, "teacher-1");
+  assert.equal(doc.created_by, "doctor-1");
+  assert.equal(doc.updated_by, "doctor-1");
   assert.equal(doc.is_deleted, false);
   assert.equal(doc.deleted_at, null);
   assert.equal(doc.deleted_by, null);
@@ -235,14 +235,14 @@ async function run() {
   assert.equal(createAudits[0].data.entity, "student_subject_pricing");
   assert.equal(createAudits[0].data.student_id, "s1");
   assert.equal(createAudits[0].data.subject_id, "sub1");
-  assert.equal(createAudits[0].data.actor_role, "teacher");
-  assert.equal(createAudits[0].data.permission_basis, "teacher");
+  assert.equal(createAudits[0].data.actor_role, "doctor");
+  assert.equal(createAudits[0].data.permission_basis, "doctor");
   console.log("ok - creation audit correct");
 
   // 12. Create touched no finance/subscription collections.
   assertSeparation("create separation");
 
-  // 2. Non-Teacher/Admin cannot create; unauthenticated cannot create.
+  // 2. Non-Doctor/Admin cannot create; unauthenticated cannot create.
   resetStore();
   await checkFail(setPricing, "Admin rejected", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: 0},
@@ -255,40 +255,40 @@ async function run() {
   // 3. Price validation.
   await checkFail(setPricing, "Missing studentId rejected", {
     data: {subjectId: "sub1", priceEgp: 100, discountEgp: 0},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
   await checkFail(setPricing, "Missing subjectId rejected", {
     data: {studentId: "s1", priceEgp: 100, discountEgp: 0},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
   await checkFail(setPricing, "Negative price rejected", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: -1, discountEgp: 0},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
   await checkFail(setPricing, "Missing price rejected", {
     data: {studentId: "s1", subjectId: "sub1", discountEgp: 0},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
 
   // 4. Discount validation.
   await checkFail(setPricing, "Negative discount rejected", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: -1},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
   await checkFail(setPricing, "Discount above price rejected", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: 101},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
   await checkFail(setPricing, "Missing discount rejected", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100},
-    auth: teacherAuth,
+    auth: doctorAuth,
   }, "invalid-argument");
 
   // 6. Client cannot control Net: bogus client net is ignored.
   resetStore();
   const withBogusNet = await checkPass(setPricing, "Bogus client net ignored", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: 50, netEgp: 9999, net_egp: 9999},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.equal(withBogusNet.netEgp, 50);
   assert.equal(store["student_subject_pricing"]["s1_sub1"].net_egp, 50);
@@ -304,15 +304,15 @@ async function run() {
     net_egp: 450,
     created_at: "ORIGINAL_TS",
     updated_at: "OLD_TS",
-    created_by: "teacher-1",
-    updated_by: "teacher-1",
+    created_by: "doctor-1",
+    updated_by: "doctor-1",
     is_deleted: false,
     deleted_at: null,
     deleted_by: null,
   });
-  const corrected = await checkPass(setPricing, "Teacher corrects pricing (same ID)", {
+  const corrected = await checkPass(setPricing, "Doctor corrects pricing (same ID)", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: 50},
-    auth: teacher2Auth,
+    auth: doctor2Auth,
   });
   assert.equal(corrected.pricingId, "s1_sub1");
   assert.equal(corrected.netEgp, 50);
@@ -323,8 +323,8 @@ async function run() {
   assert.equal(after.student_id, "s1");
   assert.equal(after.subject_id, "sub1");
   assert.equal(after.created_at, "ORIGINAL_TS");
-  assert.equal(after.created_by, "teacher-1");
-  assert.equal(after.updated_by, "teacher-2");
+  assert.equal(after.created_by, "doctor-1");
+  assert.equal(after.updated_by, "doctor-2");
   assert.deepEqual(after.updated_at, {_serverTimestamp: true});
   assert.ok(!("netEgp" in after));
   console.log("ok - correction same-ID, linkage/created_* preserved, updated_* refreshed");
@@ -338,9 +338,9 @@ async function run() {
   assert.equal(corrAudits[0].data.subject_id, "sub1");
   assert.deepEqual(corrAudits[0].data.before, {price_egp: 500, discount_egp: 50, net_egp: 450});
   assert.deepEqual(corrAudits[0].data.after, {price_egp: 100, discount_egp: 50, net_egp: 50});
-  assert.equal(corrAudits[0].data.actor_id, "teacher-2");
-  assert.equal(corrAudits[0].data.actor_role, "teacher");
-  assert.equal(corrAudits[0].data.permission_basis, "teacher");
+  assert.equal(corrAudits[0].data.actor_id, "doctor-2");
+  assert.equal(corrAudits[0].data.actor_role, "doctor");
+  assert.equal(corrAudits[0].data.permission_basis, "doctor");
   console.log("ok - correction before/after audit correct");
 
   // 12. Correction touched no finance/subscription collections.
@@ -358,7 +358,7 @@ async function run() {
   });
   await checkPass(setPricing, "Pricing below paid total accepted (no cap)", {
     data: {studentId: "s1", subjectId: "sub1", priceEgp: 100, discountEgp: 50},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.equal(store["student_subject_pricing"]["s1_sub1"].net_egp, 50);
   assert.equal(store["student_financial_accounts"]["s1"].net_egp, 1000);

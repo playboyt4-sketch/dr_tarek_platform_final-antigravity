@@ -26,7 +26,7 @@ class VideoLectureCard extends StatelessWidget {
       child: Container(
         width: 280,
         height: 160,
-        margin: const EdgeInsets.only(left: 15), // RTL/LTR? The design was horizontal flex with gap 15
+        margin: const EdgeInsets.only(right: 15), // reference gap: 15 (LTR flow)
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
@@ -43,6 +43,14 @@ class VideoLectureCard extends StatelessWidget {
               Image.network(
                 lecture.thumbnailUrl!,
                 fit: BoxFit.cover,
+                // P2: low-opacity block ONLY while the bytes are in flight;
+                // error keeps the permanent dark fallback.
+                loadingBuilder: (context, child, progress) =>
+                    progress == null
+                        ? child
+                        : ColoredBox(
+                            color: Colors.grey.shade900.withValues(alpha: 0.6),
+                          ),
                 errorBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
               )
             else

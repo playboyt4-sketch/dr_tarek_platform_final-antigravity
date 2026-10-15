@@ -1,6 +1,7 @@
 import 'package:dr_tarek_platform/features/membership/domain/entities/membership_entities.dart';
 import 'package:dr_tarek_platform/features/membership/domain/repositories/membership_repository.dart';
 import 'package:dr_tarek_platform/features/video_streaming/data/services/video_source_resolver.dart';
+import 'package:dr_tarek_platform/features/video_streaming/domain/entities/playback_entities.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeMembershipRepository implements MembershipRepository {
@@ -91,9 +92,14 @@ void main() {
     ).resolve(userId: 'student-1', subjectId: 'subject-1');
 
     expect(entitlement.allowed, isFalse);
+    expect(
+      entitlement.denialKind,
+      VideoDenialKind.subscriptionInactive,
+    );
   });
 
-  test('denies active subscriptions without an explicit end date', () async {
+  test('allows active subscriptions with open-ended term (null end date)',
+      () async {
     final repository = _FakeMembershipRepository()
       ..subscription = MembershipSubscription(
         id: 'subscription-open',
@@ -119,6 +125,33 @@ void main() {
           featureKey: 'video.access',
           enabled: true,
         ),
+        PlanFeature(
+          id: 'quality',
+          planId: 'plan-1',
+          featureKey: 'video.quality.max',
+          enabled: true,
+          featureValue: '720p',
+        ),
+      ];
+
+    final entitlement = await VideoEntitlementService(
+      membershipRepository: repository,
+    ).resolve(userId: 'student-1', subjectId: 'subject-1');
+
+    expect(entitlement.allowed, isTrue);
+  });
+
+  test('marks a disabled video.access as a genuine plan upsell', () async {
+    final repository = _FakeMembershipRepository()
+      ..subscription = _subscription()
+      ..features = const [
+        PlanFeature(
+          id: 'quality',
+          planId: 'plan-1',
+          featureKey: 'video.quality.max',
+          enabled: true,
+          featureValue: '720p',
+        ),
       ];
 
     final entitlement = await VideoEntitlementService(
@@ -126,6 +159,7 @@ void main() {
     ).resolve(userId: 'student-1', subjectId: 'subject-1');
 
     expect(entitlement.allowed, isFalse);
+    expect(entitlement.denialKind, VideoDenialKind.planUpsell);
   });
 
   test('returns backend quality cap from active plan features', () async {

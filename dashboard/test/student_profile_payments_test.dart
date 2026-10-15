@@ -13,7 +13,6 @@ const GradeStudent _student = GradeStudent(
   id: 'stu_001',
   name: 'ahmed mohamed gamal',
   isCenter: true,
-  plan: 'PRO',
   isActive: true,
   lastSignIn: '12/8/2026',
   phone: '01115800180',
@@ -286,6 +285,7 @@ void main() {
       expect(find.text('Partially Paid'), findsOneWidget);
       expect(find.text('Payment Date'), findsOneWidget);
       expect(find.text('Subjects'), findsWidgets);
+      expect(find.text('Grade'), findsOneWidget);
       expect(find.text('Price'), findsOneWidget);
       expect(find.text('Discount'), findsOneWidget);
       expect(find.text('Net'), findsOneWidget);

@@ -22,4 +22,10 @@ abstract final class AppRoutes {
 
   static const String staffPassword = 'staffPassword';
   static const String staffPasswordPath = '/staff-password';
+
+  static const String studentHome = 'studentHome';
+  static const String studentHomePath = '/student-home';
+
+  static const String adminHome = 'adminHome';
+  static const String adminHomePath = '/admin-home';
 }

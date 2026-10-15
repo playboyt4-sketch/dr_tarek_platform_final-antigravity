@@ -5,12 +5,19 @@ const List<String> canonicalGradeKeys = <String>[
   'grade_four',
 ];
 
+/// Normalizes any known grade spelling to its canonical key
+/// (`canonicalGradeKeys`): `grade_one` … `grade_four`.
+///
+/// Digit spellings (`grade_2`, `2`, `Grade 3`, Arabic-Indic digits) and
+/// word spellings (English/Arabic labels) all fold to the same canonical
+/// key, so grade-filtered lists match regardless of which spelling a
+/// document carries. Returns null when unparseable.
 String? normalizeGradeKey(Object? raw) {
   if (raw is! String) return null;
   final text = raw.trim().toLowerCase();
   if (text.isEmpty) return null;
   final digit = _extractGradeDigit(text);
-  if (digit != null) return 'grade_$digit';
+  if (digit != null) return canonicalGradeKeys[digit - 1];
   final folded = text
       .replaceAll('أ', 'ا')
       .replaceAll('إ', 'ا')

@@ -14,7 +14,7 @@ const GradeStudentsData _mockTableData = GradeStudentsData(
       id: 'stu_001',
       name: 'ahmed mohamed gamal',
       isCenter: true,
-      plan: 'PRO',
+      planSummary: StudentPlanSummary(subjects: 1, pro: 1),
       isActive: true,
       lastSignIn: '12/8/2026',
       phone: '01115800180',
@@ -25,7 +25,7 @@ const GradeStudentsData _mockTableData = GradeStudentsData(
     PlanBreakdownRow(label: 'Free', count: 0, share: 0),
     PlanBreakdownRow(label: 'PRO', count: 1, share: 100),
     PlanBreakdownRow(label: 'MAX', count: 0, share: 0),
-    PlanBreakdownRow(label: 'Guest', count: 0, share: 0),
+    PlanBreakdownRow(label: 'No active plan', count: 0, share: 0),
   ],
   isFallback: false,
 );
@@ -72,7 +72,6 @@ Future<void> _pumpProfile(WidgetTester tester) async {
             id: 'stu_001',
             name: 'ahmed mohamed gamal',
             isCenter: true,
-            plan: 'PRO',
             isActive: true,
             lastSignIn: '12/8/2026',
             phone: '01115800180',
@@ -116,7 +115,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('Plan: PRO'), findsOneWidget);
+      expect(find.text('Plan: 1 subject · 1 PRO'), findsOneWidget);
     });
 
     testWidgets('profile screen binds the passed student',
@@ -178,7 +177,6 @@ void main() {
                 id: 'stu_002',
                 name: 'youssef mostafa ibrahim',
                 isCenter: false,
-                plan: 'FREE',
                 isActive: true,
                 lastSignIn: '15/9/2026',
                 phone: '01101011588',

@@ -2,9 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../domain/entities/playback_entities.dart';
+
+// DIAGNOSIS-ONLY (video playback permission-denied): every Firestore op
+// logs op type + full path/query + exception. Read/save keep their
+// local-fallback behavior; the log is added before falling back.
+// No behavior change. Remove once the failing rule is identified.
+void _diagLogPlayback(String op, String target, Object error) {
+  final extra = error is FirebaseException
+      ? ' code=${error.code} message=${error.message} plugin=${error.plugin}'
+      : '';
+  debugPrint(
+    '[VIDEO-DIAG] firestore op=$op target=$target '
+    'errorType=${error.runtimeType} error=$error$extra',
+  );
+}
 
 abstract interface class PlaybackRepository {
   Future<PlaybackProgressRecord?> read(String lectureId);
@@ -46,9 +61,11 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
           return cloud;
         }
       }
-    } catch (_) {
-      // Local restoration is intentionally independent of the network.
-    }
+      } catch (error) {
+        _diagLogPlayback(
+            'get', 'lecture_progress/${userId}_$lectureId', error);
+        // Local restoration is intentionally independent of the network.
+      }
     return local;
   }
 
@@ -83,7 +100,9 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
             if (record.pdfTotalPages != null) 'pdf_total_pages': record.pdfTotalPages,
             'updated_at': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
-    } catch (_) {
+    } catch (error) {
+      _diagLogPlayback(
+          'set', 'lecture_progress/${userId}_${record.lectureId}', error);
       // The local copy remains authoritative until a later save succeeds.
     }
   }
@@ -143,7 +162,10 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
       final result = merged.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return result.take(limit).toList();
-    } catch (_) {
+    } catch (error) {
+      _diagLogPlayback('query',
+          'collection=lecture_progress where student_id==$userId orderBy updated_at desc limit($limit)',
+          error);
       localRecords.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return localRecords.take(limit).toList();
     }

@@ -3,7 +3,7 @@
  *
  * Covers the live `setPlanQualityFeature` callable (the legacy generic
  * `setPlanFeature` matrix setter was removed from the backend):
- * teacher/admin success + analytics audit, student/unauthenticated
+ * doctor/admin success + analytics audit, student/unauthenticated
  * rejection, unknown quality and non-boolean enabled rejection, no
  * mutation on rejected changes, and quality key normalization.
  */
@@ -127,14 +127,14 @@ async function run() {
     }
   }
 
-  const teacherAuth = {uid: "teacher-1", token: {role: "teacher"}};
+  const doctorAuth = {uid: "doctor-1", token: {role: "doctor"}};
   const adminAuth = {uid: "admin-1", token: {role: "admin"}};
   const studentAuth = {uid: "student-1", token: {role: "student"}};
 
-  // 1. Teacher success: quality key normalized, analytics audit written.
-  const res = await checkPass("Teacher sets 720p quality", {
+  // 1. Doctor success: quality key normalized, analytics audit written.
+  const res = await checkPass("Doctor sets 720p quality", {
     data: {planId: "plan-pro", quality: "720p", enabled: true},
-    auth: teacherAuth,
+    auth: doctorAuth,
   });
   assert.equal(res.ok, true);
   assert.equal(res.planId, "plan-pro");
@@ -169,17 +169,17 @@ async function run() {
   // 5-7. Unknown quality, missing fields and non-boolean enabled rejected.
   await checkFail(
     "Unknown quality rejected",
-    {data: {planId: "plan-pro", quality: "999p", enabled: true}, auth: teacherAuth},
+    {data: {planId: "plan-pro", quality: "999p", enabled: true}, auth: doctorAuth},
     "invalid-argument",
   );
   await checkFail(
     "Missing planId rejected",
-    {data: {quality: "720p", enabled: true}, auth: teacherAuth},
+    {data: {quality: "720p", enabled: true}, auth: doctorAuth},
     "invalid-argument",
   );
   await checkFail(
     "Non-boolean enabled rejected",
-    {data: {planId: "plan-pro", quality: "720p", enabled: "yes"}, auth: teacherAuth},
+    {data: {planId: "plan-pro", quality: "720p", enabled: "yes"}, auth: doctorAuth},
     "invalid-argument",
   );
 

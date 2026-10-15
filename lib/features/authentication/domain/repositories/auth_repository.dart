@@ -38,4 +38,9 @@ abstract class AuthRepository {
   Future<AuthUser?> getCurrentUser();
 
   Future<void> logout();
+
+  /// Applies the login "Remember me" choice to the Firebase session
+  /// (web-native persistence; mobile is enforced at cold start).
+  /// Best-effort: must never fail a login.
+  Future<void> applySessionPersistence({required bool rememberMe});
 }

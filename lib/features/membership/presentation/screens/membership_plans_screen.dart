@@ -89,6 +89,7 @@ class MembershipPlansScreen extends ConsumerWidget {
               message:
                   'لتفعيل اشتراك أو ترقيته أو تجديده، تواصل مع إدارة المنصة '
                   'وسيتم التفعيل بعد تأكيد الدفع.',
+              phoneNumber: '01098282915',
               tone: _InfoTone.info,
             ),
           ],
@@ -319,11 +320,13 @@ enum _InfoTone { warning, info, neutral }
 class _InfoCard extends StatelessWidget {
   final IconData icon;
   final String message;
+  final String? phoneNumber;
   final _InfoTone tone;
 
   const _InfoCard({
     required this.icon,
     required this.message,
+    this.phoneNumber,
     required this.tone,
   });
 
@@ -343,7 +346,24 @@ class _InfoCard extends StatelessWidget {
             Icon(icon, color: color),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Text(message, style: const TextStyle(height: 1.6)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(message, style: const TextStyle(height: 1.6)),
+                  if (phoneNumber != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      phoneNumber!,
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        height: 1.6,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),

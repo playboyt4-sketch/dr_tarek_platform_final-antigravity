@@ -10,7 +10,7 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "backfill:prices": "ts-node src/scripts/backfill_subject_prices.ts",
-    "test": "npm run build && firebase emulators:exec --project demo-tarek-platform --only firestore,functions,auth \"node test/wait_for_triggers.js && node test/academic_periods.test.js && node test/login_throttle.test.js && node test/device_limits.test.js && node test/password_reset.test.js && node test/exam_grading.test.js && node test/final_decisions_addendum.test.js && node test/guest_migration.test.js && node test/resource_delivery.test.js && node test/progress_percentage.test.js && node test/sections_12_13.test.js && node test/security_event.test.js && node test/payment_logged.test.js && node test/payment_correction.test.js && node test/plan_feature.test.js && node test/result_release.test.js && node test/device_change.test.js && node test/subject_authorization.test.js && node test/protected_content.test.js && node test/playback_session.test.js && node test/offline_drm.test.js\"",
+    "test": "npm run build && firebase emulators:exec --project demo-tarek-platform --only firestore,functions,auth \"node test/run_all.js\"",
     "test:pure": "npm run build && node test/rolling_window_policy.test.js && node test/final_decisions_addendum.test.js && node test/guest_migration.test.js"
   },
   "engines": {

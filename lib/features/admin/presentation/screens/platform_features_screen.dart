@@ -20,7 +20,7 @@ class PlatformFeaturesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (user.role != 'teacher') {
+    if (user.role != 'doctor') {
       return const Scaffold(
         body: Center(child: Text('هذه الشاشة متاحة للمعلم (مالك المنصة) فقط.')),
       );

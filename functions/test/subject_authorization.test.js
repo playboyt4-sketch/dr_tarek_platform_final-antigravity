@@ -24,7 +24,7 @@ try {
 }
 
 const STUDENT = "sauth_student";
-const TEACHER = "sauth_teacher";
+const DOCTOR = "sauth_doctor";
 const ADMIN_DEV = "sauth_admin_dev";
 const ADMIN_NODEV = "sauth_admin_nodev";
 
@@ -35,7 +35,7 @@ const SUB_D = "sauth_subD"; // Free, used for race test
 const SUB_E = "sauth_subE"; // Max, used for last-slot race test
 
 const studentCtx = {uid: STUDENT, token: {role: "student", approved: true}};
-const teacherCtx = {uid: TEACHER, token: {role: "teacher"}};
+const doctorCtx = {uid: DOCTOR, token: {role: "doctor"}};
 const adminDevCtx = {uid: ADMIN_DEV, token: {role: "admin"}};
 const adminNoDevCtx = {uid: ADMIN_NODEV, token: {role: "admin"}};
 
@@ -76,7 +76,7 @@ async function run() {
     approval_status: "approved",
     account_status: "active",
   });
-  await db.collection("users").doc(TEACHER).set({role: "teacher"});
+  await db.collection("users").doc(DOCTOR).set({role: "doctor"});
   await db.collection("admin_permissions").doc(ADMIN_DEV).set({
     is_active: true,
     permissions: {admin_devices: true},
@@ -250,7 +250,7 @@ async function run() {
   const activeBefore = (await db.collection("subject_device_authorizations")
     .where("student_id", "==", STUDENT).where("status", "==", "active").get()).size;
   assert.ok(activeBefore > 0, "Precondition: active authorizations exist");
-  const resetRes = await reset({data: {studentId: STUDENT, reason: "test-reset"}}, teacherCtx);
+  const resetRes = await reset({data: {studentId: STUDENT, reason: "test-reset"}}, doctorCtx);
   assert.equal(resetRes.revokedCount, activeBefore);
   assert.equal(
     (await db.collection("subject_device_authorizations")
@@ -260,7 +260,7 @@ async function run() {
   const revokedSample = await db.collection("subject_device_authorizations")
     .where("student_id", "==", STUDENT).where("status", "==", "revoked").limit(1).get();
   assert.equal(revokedSample.docs[0].data().revoke_reason, "reset");
-  assert.equal(revokedSample.docs[0].data().revoked_by, TEACHER);
+  assert.equal(revokedSample.docs[0].data().revoked_by, DOCTOR);
   const resetAudit = await db.collection("admin_audit_log")
     .where("target_id", "==", STUDENT).get();
   assert.ok(resetAudit.docs.some((d) => d.data().action === "subject_device_reset"), "Reset audit required");
@@ -271,13 +271,13 @@ async function run() {
   await tier(STUDENT, SUB_B, "sauth-dev1");
   const unRes = await unbind(
     {data: {studentId: STUDENT, subjectId: SUB_A, deviceId: "sauth-dev1", reason: "test-unbind"}},
-    teacherCtx,
+    doctorCtx,
   );
   assert.equal(unRes.revoked, true);
   assert.equal(await authzCount(SUB_A), 0);
   assert.equal(await authzCount(SUB_B), 1, "Other Subject untouched");
   await expectCode(
-    unbind({data: {studentId: STUDENT, subjectId: SUB_A, deviceId: "sauth-dev1"}}, teacherCtx),
+    unbind({data: {studentId: STUDENT, subjectId: SUB_A, deviceId: "sauth-dev1"}}, doctorCtx),
     "not-found",
     "double unbind",
   );
@@ -296,7 +296,7 @@ async function run() {
   // 19. Reset does not log the student out: auth user intact, registry
   // intact, users doc untouched by authorization, rebinding works.
   await tier(STUDENT, SUB_A, "sauth-dev1");
-  await reset({data: {studentId: STUDENT}}, teacherCtx);
+  await reset({data: {studentId: STUDENT}}, doctorCtx);
   const stillUser = await auth.getUser(STUDENT);
   assert.equal(stillUser.uid, STUDENT, "Auth session identity intact after reset");
   const usersDoc = await db.collection("users").doc(STUDENT).get();

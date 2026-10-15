@@ -9,7 +9,6 @@ import '../widgets/edit_subject_overlay.dart';
 import '../widgets/grade_capsule_button.dart';
 import '../widgets/grade_nav_bar.dart';
 import '../widgets/grade_theme.dart';
-import '../widgets/lecture_overlays.dart';
 
 /// Dashboard Subject Details page (`Grade → Subject → Subject Details`).
 ///
@@ -196,6 +195,7 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
               height: 251,
               child: _LecturesTable(
                 subjectId: widget.subjectId,
+                gradeKey: widget.gradeKey,
                 tab: _tab,
                 accent: _accent,
                 onGradeFill: Colors.white,
@@ -208,13 +208,13 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
   }
 
   Future<void> _openAddLecture(BuildContext context) async {
-    int initialOrder = 1;
+    int initialOrder = 0;
     try {
       initialOrder = await ref
           .read(subjectDetailsControllerProvider)
           .nextLectureOrder(subjectId: widget.subjectId, tab: _tab);
     } catch (_) {
-      initialOrder = 1;
+      initialOrder = 0;
     }
     if (!context.mounted) return;
     await AddLectureOverlay.show(
@@ -405,18 +405,26 @@ class _ContentTab extends StatelessWidget {
 
 /// Lectures table — Figma `1120` wide, radius 16, `#E5E7EB` border.
 ///
-/// Header: No. (`80px`) / Lecture Name (Expanded) / Action (`160px`),
-/// 14 px Regular #6B7280. Rows render `01.` + lecture name + Edit / Del
-/// grade pills; row Edit opens the edit overlay, Delete archives after
-/// confirmation.
+/// Header: No. (`80px`) / Lecture Name (Expanded) / Status (`100px`) /
+/// Action (`160px`), 14 px Regular #6B7280. Rows render `01.` + lecture
+/// name + Status pill + Edit / Del grade pills; row Edit opens the edit
+/// overlay, Delete archives after confirmation.
+///
+/// The Status pill is the student-visibility truth: only `published`
+/// lectures reach the mobile app (student query filters
+/// `status == 'published'`). Drafts — including scheduled ones waiting
+/// for `autoPublishDueLectures` — show here so they are never confused
+/// with live content.
 class _LecturesTable extends ConsumerWidget {
   final String subjectId;
+  final String gradeKey;
   final SubjectContentTab tab;
   final Color accent;
   final Color onGradeFill;
 
   const _LecturesTable({
     required this.subjectId,
+    required this.gradeKey,
     required this.tab,
     required this.accent,
     required this.onGradeFill,
@@ -440,47 +448,66 @@ class _LecturesTable extends ConsumerWidget {
         children: <Widget>[
           SizedBox(
             height: 32,
-            child: Row(
-              children: <Widget>[
-                const SizedBox(
-                  width: 80,
-                  child: Text(
-                    'No.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: 'Google Sans Flex',
-                      fontWeight: FontWeight.w400,
-                      fontSize: 14,
-                      color: Color(0xFF6B7280),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: <Widget>[
+                  const SizedBox(
+                    width: 80,
+                    child: Text(
+                      'No.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 14,
+                        color: Color(0xFF6B7280),
+                      ),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: Text(
-                    tab.contentNameLabel,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: 'Google Sans Flex',
-                      fontWeight: FontWeight.w400,
-                      fontSize: 14,
-                      color: Color(0xFF6B7280),
+                  Expanded(
+                    child: Text(
+                      tab.contentNameLabel,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 14,
+                        color: Color(0xFF6B7280),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(
-                  width: 160,
-                  child: Text(
-                    'Action',
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                      fontFamily: 'Google Sans Flex',
-                      fontWeight: FontWeight.w400,
-                      fontSize: 14,
-                      color: Color(0xFF6B7280),
+                  const SizedBox(
+                    width: 100,
+                    child: Text(
+                      'Status',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 14,
+                        color: Color(0xFF6B7280),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  // Centered over the Edit/Del button group below (same
+                  // 160px column + same 16px row padding on both sides),
+                  // so headers and rows share one alignment.
+                  const SizedBox(
+                    width: 160,
+                    child: Text(
+                      'Action',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Google Sans Flex',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 14,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           Container(height: 1, color: const Color(0xFFE5E7EB)),
@@ -527,70 +554,95 @@ class _LecturesTable extends ConsumerWidget {
                     final SubjectLecture lecture = lectures[index];
                     return SizedBox(
                       height: 44,
-                      child: Row(
-                        children: <Widget>[
-                          SizedBox(
-                            width: 80,
-                            child: Text(
-                              '${lecture.displayOrder.toString().padLeft(2, '0')}.',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontFamily: 'Google Sans Flex',
-                                fontWeight: FontWeight.w400,
-                                fontSize: 16,
-                                color: Color(0xFF111827),
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: <Widget>[
+                            SizedBox(
+                              width: 80,
+                              child: Text(
+                                '${lecture.displayOrder.toString().padLeft(2, '0')}.',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontFamily: 'Google Sans Flex',
+                                  fontWeight: FontWeight.w400,
+                                  fontSize: 16,
+                                  color: Color(0xFF111827),
+                                ),
                               ),
                             ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              lecture.title,
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'Google Sans Flex',
-                                fontWeight: FontWeight.w400,
-                                fontSize: 16,
-                                color: Color(0xFF111827),
+                            Expanded(
+                              child: Text(
+                                lecture.title,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontFamily: 'Google Sans Flex',
+                                  fontWeight: FontWeight.w400,
+                                  fontSize: 16,
+                                  color: Color(0xFF111827),
+                                ),
                               ),
                             ),
-                          ),
-                          SizedBox(
-                            width: 160,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: <Widget>[
-                                GradeCapsuleButton(
-                                  label: 'Edit',
-                                  gradeColor: accent,
-                                  textColor: onGradeFill,
-                                  width: 64,
-                                  height: 28,
-                                  fontSize: 13,
-                                  onPressed: () => showEditLectureOverlay(
-                                    context,
-                                    lectureTitle: lecture.title,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                GradeCapsuleButton(
-                                  label: 'Del',
-                                  gradeColor: accent,
-                                  textColor: onGradeFill,
-                                  width: 56,
-                                  height: 28,
-                                  fontSize: 13,
-                                  onPressed: () => _confirmDeleteLecture(
-                                    context,
-                                    ref,
-                                    lecture,
-                                  ),
-                                ),
-                              ],
+                            SizedBox(
+                              width: 100,
+                              child: Center(
+                                child: _LectureStatusPill(lecture: lecture),
+                              ),
                             ),
-                          ),
-                        ],
+                            // Centered (not edge-flush) so Del is never
+                            // clipped by the table border; mirrors the
+                            // centered Action header above.
+                            SizedBox(
+                              width: 160,
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.center,
+                                children: <Widget>[
+                                  GradeCapsuleButton(
+                                    label: 'Edit',
+                                    gradeColor: accent,
+                                    textColor: onGradeFill,
+                                    width: 64,
+                                    height: 28,
+                                    fontSize: 13,
+                                    // Full edit on the same Add page:
+                                    // name, order, resources (+add),
+                                    // publish state, guest access and
+                                    // per-student access — prefilled.
+                                    onPressed: () =>
+                                        AddLectureOverlay.show(
+                                      context,
+                                      subjectId: subjectId,
+                                      gradeKey: gradeKey,
+                                      tab: tab,
+                                      initialOrder:
+                                          lecture.displayOrder,
+                                      gradeColor: accent,
+                                      lectureId: lecture.id,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GradeCapsuleButton(
+                                    label: 'Delete',
+                                    gradeColor: accent,
+                                    textColor: onGradeFill,
+                                    width: 72,
+                                    height: 28,
+                                    fontSize: 13,
+                                    onPressed: () => _confirmDeleteLecture(
+                                      context,
+                                      ref,
+                                      lecture,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -637,5 +689,63 @@ class _LecturesTable extends ConsumerWidget {
           .read(subjectDetailsControllerProvider)
           .deleteLecture(lecture.id);
     }
+  }
+}
+
+/// Student-visibility status pill for one lecture row.
+///
+/// - `published` → منشور (green): live in the student app now.
+/// - draft with a future `publish_date` → مجدول (blue): auto-publishes
+///   via `autoPublishDueLectures`, hidden until then.
+/// - plain draft → مسودة (amber): hidden until someone publishes it.
+class _LectureStatusPill extends StatelessWidget {
+  final SubjectLecture lecture;
+
+  const _LectureStatusPill({required this.lecture});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool scheduled =
+        !lecture.isPublished &&
+        lecture.publishDate != null &&
+        lecture.publishDate!.isAfter(DateTime.now());
+    final String label = lecture.isPublished
+        ? 'منشور'
+        : scheduled
+        ? 'مجدول'
+        : 'مسودة';
+    final Color foreground = lecture.isPublished
+        ? const Color(0xFF15803D)
+        : scheduled
+        ? const Color(0xFF1D4ED8)
+        : const Color(0xFFB45309);
+    final Color background = lecture.isPublished
+        ? const Color(0xFFDCFCE7)
+        : scheduled
+        ? const Color(0xFFDBEAFE)
+        : const Color(0xFFFEF3C7);
+    return Tooltip(
+      message: lecture.isPublished
+          ? 'ظاهرة للطلاب في التطبيق'
+          : scheduled
+          ? 'مجدولة للنشر — مخفية حتى موعدها'
+          : 'مسودة — مخفية عن الطلاب حتى النشر',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(100),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Google Sans Flex',
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
+            color: foreground,
+          ),
+        ),
+      ),
+    );
   }
 }

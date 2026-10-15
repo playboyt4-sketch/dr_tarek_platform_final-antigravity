@@ -140,7 +140,7 @@ void main() {
         validateQuickUpload(
           subjectId: null,
           title: 'Newton',
-          bunnyVideoId: 'vid-1',
+          bunnyVideoId: '66666666-6666-4666-8666-666666666666',
           pdfPath: '',
         ),
         'Please select a subject.',
@@ -152,7 +152,7 @@ void main() {
         validateQuickUpload(
           subjectId: 's-math',
           title: '   ',
-          bunnyVideoId: 'vid-1',
+          bunnyVideoId: '66666666-6666-4666-8666-666666666666',
           pdfPath: '',
         ),
         'Lecture title is required.',
@@ -176,7 +176,7 @@ void main() {
         validateQuickUpload(
           subjectId: 's-math',
           title: 'Newton',
-          bunnyVideoId: 'vid-1',
+          bunnyVideoId: '66666666-6666-4666-8666-666666666666',
           pdfPath: '',
         ),
         isNull,

@@ -65,4 +65,19 @@ class GradeTheme {
       _ => AppColors.gradeOne,
     };
   }
+
+  /// Display label for a subject row's OWN grade (`Grade One` …),
+  /// shared by the Subjects / Memberships / Payments / Device tabs so all
+  /// four render identically. Resolves only known catalog ids; unknown or
+  /// missing grades render as `—` instead of invented data. (Unlike
+  /// [fromKey], which falls back to Grade One — correct for navigation,
+  /// wrong for data display.)
+  static String subjectGradeLabel(String? gradeKey) {
+    final String key = (gradeKey ?? '').trim();
+    if (key.isEmpty) return '—';
+    for (final GradeTheme grade in allGrades) {
+      if (grade.gradeId == key) return grade.title;
+    }
+    return '—';
+  }
 }

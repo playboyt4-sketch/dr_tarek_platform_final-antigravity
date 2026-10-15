@@ -23,7 +23,7 @@ import '../widgets/student_financial_summary_bar.dart';
 /// account plus the transcribed payments; Add Payment records via
 /// [StudentPaymentsController]; Print Invoice renders a PDF statement
 /// via [buildInvoicePdf]. Tapping the summary numbers opens the
-/// Teacher-only Price/Discount editor for the student account.
+/// Doctor-only Price/Discount editor for the student account.
 class StudentProfilePaymentsTab extends ConsumerStatefulWidget {
   final GradeStudent student;
   final String gradeKey;
@@ -140,7 +140,7 @@ class _StudentProfilePaymentsTabState
     }
   }
 
-  /// Teacher-only Price/Discount editor for the student's single
+  /// Doctor-only Price/Discount editor for the student's single
   /// financial account (opened by tapping the summary numbers).
   Future<void> _openAccountEditor(StudentLedger ledger) async {
     final _AccountResult? result = await showDialog<_AccountResult>(
@@ -176,7 +176,7 @@ class _StudentProfilePaymentsTabState
     }
   }
 
-  /// Teacher-only Price/Discount editor for one subject's manual
+  /// Doctor-only Price/Discount editor for one subject's manual
   /// pricing reference (opened by tapping a Subjects-table row). Writes
   /// go through `setStudentSubjectPricing`; the student ledger is never
   /// touched by subject pricing.
@@ -229,12 +229,65 @@ class _StudentProfilePaymentsTabState
     );
   }
 
+  /// Guest students have no financial account and no payments — the
+  /// whole tab stays empty for them (no pricing table, no summary, no
+  /// Add Payment / Print Invoice actions).
+  bool get _isGuest => !widget.student.isCenter;
+
   @override
   Widget build(BuildContext context) {
     final AsyncValue<StudentLedger> ledgerAsync =
         ref.watch(studentLedgerProvider(widget.student.id));
     final AsyncValue<List<StudentPricedSubject>> pricedAsync =
         ref.watch(studentPricedSubjectsProvider(widget.student.id));
+
+    if (_isGuest) {
+      return SizedBox(
+        width: 830,
+        child: Column(
+          children: <Widget>[
+            Container(
+              width: 830,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: const Text(
+                'Guest student — no payments, guest access only.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  color: Color(0xFF6B7280),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: 830,
+              decoration: _cardDecoration(),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'No payments for guest students.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return SizedBox(
       width: 830,
@@ -282,7 +335,7 @@ class _StudentProfilePaymentsTabState
             // Figma order: Subjects table first, then Payment Summary,
             // then Payment History. Widgets themselves are unchanged —
             // only their vertical position moved.
-            // Table 1 — subjects with manual Teacher-entered
+            // Table 1 — subjects with manual Doctor-entered
             // Price/Discount/Net (display/reference only; tapping a row
             // opens the per-subject pricing editor). Never feeds Paid or
             // Balance — those stay student-level in [StudentLedger].
@@ -295,7 +348,7 @@ class _StudentProfilePaymentsTabState
             ),
             const SizedBox(height: 24),
             // Financial summary + actions (Y 658). Tapping the numbers
-            // opens the Teacher-only account editor; visuals unchanged.
+            // opens the Doctor-only account editor; visuals unchanged.
             StudentFinancialSummaryBar(
               ledger: ledger,
               accent: _accent,
@@ -305,7 +358,7 @@ class _StudentProfilePaymentsTabState
             ),
             const SizedBox(height: 24),
             // Table 2 — payments history (Y 714). Tapping a row opens
-            // the Teacher-only in-place correction for that record.
+            // the Doctor-only in-place correction for that record.
             _PaymentsHistoryTable(
               payments: ledger.payments,
               onCorrect: (payment) => _openCorrectPayment(payment),
@@ -325,7 +378,7 @@ class _AccountResult {
   const _AccountResult({required this.priceEgp, required this.discountEgp});
 }
 
-/// Teacher-only Price/Discount editor dialog for the student account.
+/// Doctor-only Price/Discount editor dialog for the student account.
 class _AccountDialog extends StatefulWidget {
   final StudentFinancialAccount? account;
 
@@ -425,18 +478,6 @@ class _AccountDialogState extends State<_AccountDialog> {
   }
 }
 
-/// Grade display label for a Subjects-table row. Resolves only known
-/// catalog grade ids (`Grade One` …); unknown or missing grades render
-/// as `—` instead of invented data.
-String _pricingGradeLabel(String? gradeKey) {
-  final String key = (gradeKey ?? '').trim();
-  if (key.isEmpty) return '—';
-  for (final GradeTheme grade in GradeTheme.allGrades) {
-    if (grade.gradeId == key) return grade.title;
-  }
-  return '—';
-}
-
 /// Table 1 — subjects section wrapper: renders the manual-pricing table
 /// once loaded, a spinner while loading, and a retry state on error.
 /// Loading/error here never blocks the summary strip or history table.
@@ -491,8 +532,10 @@ class _SubjectPricingSection extends StatelessWidget {
 }
 
 /// Table 1 — subjects with manual pricing (830 wide, same card language
-/// as the history table): No. 56 | Subjects 236 | Grade 136 |
-/// Price 120 | Discount 120 | Net 120. Unpriced rows show `—`.
+/// as the history table): No. 56 | Subjects 222 | Grade 150 |
+/// Price 120 | Discount 120 | Net 120. Unpriced rows show `—`. The Grade
+/// column is 150 wide so the full `Grade Three` label at the shared 24 px
+/// cell style never truncates (previously 136 wide: "Grade Thr...").
 class _SubjectPricingTable extends StatelessWidget {
   final List<StudentPricedSubject> rows;
   final ValueChanged<StudentPricedSubject> onEdit;
@@ -515,8 +558,8 @@ class _SubjectPricingTable extends StatelessWidget {
               children: <Widget>[
                 SizedBox(width: 56, child: _PaymentsHeaderLabel('No.')),
                 SizedBox(
-                    width: 236, child: _PaymentsHeaderLabel('Subjects')),
-                SizedBox(width: 136, child: _PaymentsHeaderLabel('Grade')),
+                    width: 222, child: _PaymentsHeaderLabel('Subjects')),
+                SizedBox(width: 150, child: _PaymentsHeaderLabel('Grade')),
                 SizedBox(width: 120, child: _PaymentsHeaderLabel('Price')),
                 SizedBox(
                     width: 120, child: _PaymentsHeaderLabel('Discount')),
@@ -578,7 +621,7 @@ class _SubjectPricingDataRow extends StatelessWidget {
                   Text('$number.', textAlign: TextAlign.center, style: style),
             ),
             SizedBox(
-              width: 236,
+              width: 222,
               child: Text(
                 row.title,
                 textAlign: TextAlign.center,
@@ -588,9 +631,9 @@ class _SubjectPricingDataRow extends StatelessWidget {
               ),
             ),
             SizedBox(
-              width: 136,
+              width: 150,
               child: Text(
-                _pricingGradeLabel(row.gradeKey),
+                GradeTheme.subjectGradeLabel(row.gradeKey),
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -637,7 +680,7 @@ class _SubjectPricingResult {
       {required this.priceEgp, required this.discountEgp});
 }
 
-/// Teacher-only Price/Discount editor dialog for one subject. Prefills
+/// Doctor-only Price/Discount editor dialog for one subject. Prefills
 /// the stored pricing when present (blank/0 when unpriced); Net is
 /// always server-derived and is never entered here.
 class _SubjectPricingDialog extends StatefulWidget {
@@ -778,7 +821,7 @@ class _PaymentsHeaderLabel extends StatelessWidget {
 TextStyle _cellStyle() {
   return const TextStyle(
     fontFamily: AppTypography.fontFamily,
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: FontWeight.w400,
     fontVariations: <FontVariation>[FontVariation('wght', 400)],
     color: Colors.black,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
@@ -52,6 +53,17 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Landscape-first player: the course videos are 16:9 landscape, so the
+    // route locks to landscape + immersive while it is on screen. Restored
+    // to portrait in [dispose]. Best-effort on web (orientation lock may
+    // reject without a user gesture — the layout itself is responsive).
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]),
+    );
   }
 
   @override
@@ -83,9 +95,18 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         watchWindowGateway: ref.watch(watchWindowGatewayProvider),
         sessionGateway: ref.read(playbackSessionGatewayProvider),
       );
+      // NOTE: a temporary DIAGNOSIS-ONLY forced token refresh
+      // (`getIdTokenResult(true)`) lived here during the permission-denied
+      // hunt and was removed: the player needs only the uid (above), every
+      // authorization verdict is re-checked server-side per issuance, and a
+      // forced refresh on every open adds avoidable auth latency.
       controller.addListener(_onControllerChanged);
       _controller = controller;
       _initializingController = false;
+      // Keep the controller flag in sync with the route-level landscape
+      // lock above (drives any fullscreen-aware layout + its own dispose
+      // restore). Orientation calls are idempotent.
+      controller.fullscreen = true;
       unawaited(controller.initialize());
       _scheduleHideControls();
       setState(() {});
@@ -113,37 +134,97 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
     _ensureController();
     final preferences = ref.watch(sharedPreferencesProvider);
     if (preferences.isLoading || _controller == null) {
-      return const Scaffold(
+      // Single-route loading state: full-screen black, no AppBar — the
+      // overlay chevron below is the only back affordance and pops the
+      // player route exactly once (same contract as the ready state).
+      return Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator()),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Center(child: CircularProgressIndicator()),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              left: 8,
+              child: IconButton(
+                // P4: pinned LTR so the chevron always points left even
+                // under the app's RTL Directionality.
+                icon: const Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Icon(
+                    Icons.chevron_left,
+                    size: 32,
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+              ),
+            ),
+          ],
+        ),
       );
     }
     if (preferences.hasError) {
+      // Single-route error state: full-screen black, no AppBar widget.
+      // The overlay chevron is the only back affordance (single pop to
+      // the subject page); retry stays in-route, never pushes.
+      final message = 'تعذر تهيئة التخزين المحلي: ${preferences.error}';
       return Scaffold(
-        appBar: AppBar(title: const Text('الفيديو')),
-        body: Center(
-          child: Text('تعذر تهيئة التخزين المحلي: ${preferences.error}'),
+        backgroundColor: Colors.black,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  textDirection: TextDirection.rtl,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              left: 8,
+              child: IconButton(
+                // P4: pinned LTR so the chevron always points left even
+                // under the app's RTL Directionality.
+                icon: const Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Icon(
+                    Icons.chevron_left,
+                    size: 32,
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+              ),
+            ),
+          ],
         ),
       );
     }
     return AnimatedBuilder(
       animation: _controller!,
-      builder: (context, _) => PopScope(
-        canPop: !_controller!.fullscreen,
-        onPopInvokedWithResult: (didPop, result) {
-          if (!didPop && _controller!.fullscreen) {
-            unawaited(_controller!.setFullscreen(false));
-          }
-        },
-        child: Scaffold(
-          backgroundColor: Colors.black,
-          appBar: _controller!.fullscreen
-              ? null
-              : AppBar(title: Text(_controller!.episodeTitle)),
-          body: VideoPlayerLayout(
-            controller: _controller!,
-            onBack: () => Navigator.of(context).maybePop(),
-            onLecturesTap: _showEpisodesPanel,
+      // Reference design has no app bar: the overlay top bar (back chevron
+      // + title + quality pill) is the only chrome. The overlay back
+      // chevron pops this route exactly once, landing directly on the
+      // subject page — no intermediate route, no fullscreen-exit hop.
+      builder: (context, _) => Scaffold(
+        backgroundColor: Colors.black,
+        body: VideoPlayerLayout(
+          controller: _controller!,
+          sectionButtonLabel: _sectionButtonLabel(),
+          onBack: () {
+            Navigator.pop(context);
+          },
+          onLecturesTap: _showEpisodesPanel,
             onUpgradeTap: () {
               final navigator = Navigator.of(context);
               final user = ref.read(authProvider).value;
@@ -235,8 +316,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
             },
           ),
         ),
-      ),
-    );
+      );
   }
 
   /// Persists a bookmark for the current lecture at the current position.
@@ -275,12 +355,37 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
     return '${two(duration.inMinutes.remainder(60))}:${two(duration.inSeconds.remainder(60))}';
   }
 
+  /// Section-aware toolbar label matching the reference design order:
+  /// Lectures (explanation/default) | Revisions | Finals | Online.
+  /// Resolved from the active episode's section against the catalog.
+  String _sectionButtonLabel() {
+    final sectionId = _controller?.sectionId;
+    String? key;
+    if (sectionId != null && sectionId.isNotEmpty) {
+      for (final section in widget.seasons) {
+        if (section.id == sectionId) {
+          key = section.sectionKey?.toLowerCase();
+          break;
+        }
+      }
+    }
+    return switch (key) {
+      'revision' || 'revisions' => 'Revisions',
+      'final_review' || 'final' || 'finals' => 'Finals',
+      'online' => 'Online',
+      _ => 'Lectures',
+    };
+  }
+
   Future<void> _showQualitySheet() async {
     await showGeneralDialog(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Quality',
-      barrierColor: Colors.black54,
+      // Transparent barrier: the sheet itself paints the single reference
+      // rgba(0,0,0,0.8) overlay and handles outside-tap close, so the
+      // dialog barrier must not add a second dim layer.
+      barrierColor: Colors.transparent,
       pageBuilder: (context, animation, secondaryAnimation) => VideoQualitySheet(
         controller: _controller!,
         onClose: () => Navigator.of(context).pop(),
@@ -293,12 +398,24 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Lectures',
-      barrierColor: Colors.black54,
+      barrierColor: Colors.black,
       pageBuilder: (context, animation, secondaryAnimation) => VideoLecturePanel(
         controller: _controller!,
+        panelTitle: _sectionButtonLabel(),
+        seasonLabel: _activeSeasonTitle(),
         onClose: () => Navigator.of(context).pop(),
       ),
     );
+  }
+
+  /// Title of the active section for the season pill ('' hides it).
+  String _activeSeasonTitle() {
+    final sectionId = _controller?.sectionId;
+    if (sectionId == null || sectionId.isEmpty) return '';
+    for (final section in widget.seasons) {
+      if (section.id == sectionId) return section.title;
+    }
+    return '';
   }
 
   @override
@@ -307,6 +424,14 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
     WidgetsBinding.instance.removeObserver(this);
     _controller?.removeListener(_onControllerChanged);
     _controller?.dispose();
+    // Restore the app-wide portrait + edge-to-edge chrome on exit.
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]),
+    );
     super.dispose();
   }
 }

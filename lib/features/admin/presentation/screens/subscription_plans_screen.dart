@@ -163,10 +163,10 @@ const _sections = <_FeatureSection>[
     _FeatureDef('notes.smart', 'حفظ Smart Notes'),
     _FeatureDef('notes.reminders', 'التذكيرات وجدول المذاكرة'),
     _FeatureDef('notes.revision_tag', 'تعليم المحاضرات للمراجعة'),
-    _FeatureDef('bookmark.create', 'إنشاء الإشارات المرجعية'),
-    _FeatureDef('bookmark.max_count', 'أقصى عدد للإشارات',
+    _FeatureDef('bookmarks.create', 'إنشاء الإشارات المرجعية'),
+    _FeatureDef('bookmarks.max_count', 'أقصى عدد للإشارات',
         hint: 'Max = غير محدود', kind: _ValueKind.number),
-    _FeatureDef('bookmark.search', 'البحث في الإشارات'),
+    _FeatureDef('bookmarks.search', 'البحث في الإشارات'),
   ]),
   _FeatureSection('device', 'Devices & Security', [
     _FeatureDef('device.max_count', 'عدد الأجهزة المسموح',
@@ -430,7 +430,7 @@ class _SubscriptionPlansScreenState extends State<SubscriptionPlansScreen> {
                   section: _sections[i],
                   valuesByKey: byKey,
                   pending: _pending,
-                  isTeacher: widget.user.role == 'teacher',
+                  isTeacher: widget.user.role == 'doctor',
                   onToggle: (def, enabled) {
                     final current = byKey[def.key];
                     final currentValue =

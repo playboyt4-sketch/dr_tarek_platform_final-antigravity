@@ -9,8 +9,11 @@ const bool kUseMockGradeStudents = false;
 /// Minimal mock mirroring the main-app `Student` entity
 /// (`lib/features/profile/domain/entities/student.dart`):
 /// id / name / phone / grade / studentType('Center' | 'Guest').
-/// `plan`, `status` and `lastSignIn` have no entity field yet, so the
-/// mapper below fills in stable dummy values per student.
+/// `status` and `lastSignIn` have no entity field yet, so the mapper below
+/// fills in stable dummy values per student. Plan data needs no dummy:
+/// it comes from the per-student [StudentPlanSummary] fixtures below,
+/// which mirror live `subscriptions` rows (there is no single "student
+/// plan" — see [StudentPlanSummary]).
 class MockStudent {
   final String id;
   final String name;
@@ -74,16 +77,30 @@ const List<MockStudent> mockStudents = <MockStudent>[
   ),
 ];
 
-/// Dummy per-student extras keyed by id (entity has no plan/status/
+/// Per-student plan fixtures keyed by id: the honest subscription
+/// distribution each mock row holds, including a multi-tier student
+/// (stu_003: FREE + PRO + MAX across 3 subjects) and a student with no
+/// active subscription at all (stu_006).
+const Map<String, StudentPlanSummary> _mockPlanSummaries =
+    <String, StudentPlanSummary>{
+  'stu_001': StudentPlanSummary(subjects: 2, free: 1, pro: 1),
+  'stu_002': StudentPlanSummary(subjects: 1, free: 1),
+  'stu_003': StudentPlanSummary(subjects: 3, free: 1, pro: 1, max: 1),
+  'stu_004': StudentPlanSummary(subjects: 1, pro: 1),
+  'stu_005': StudentPlanSummary(subjects: 1, max: 1),
+  'stu_006': StudentPlanSummary.empty,
+};
+
+/// Dummy per-student extras keyed by id (entity has no status/
 /// last-sign-in fields yet).
-const Map<String, ({String plan, bool isActive, String lastSignIn})>
-    _mockExtras = <String, ({String plan, bool isActive, String lastSignIn})>{
-  'stu_001': (plan: 'PRO', isActive: true, lastSignIn: '12/8/2026'),
-  'stu_002': (plan: 'FREE', isActive: true, lastSignIn: '11/8/2026'),
-  'stu_003': (plan: 'MAX', isActive: true, lastSignIn: '10/8/2026'),
-  'stu_004': (plan: 'FREE', isActive: false, lastSignIn: '9/8/2026'),
-  'stu_005': (plan: 'FREE', isActive: true, lastSignIn: '8/8/2026'),
-  'stu_006': (plan: 'PRO', isActive: false, lastSignIn: '7/8/2026'),
+const Map<String, ({bool isActive, String lastSignIn})> _mockExtras =
+    <String, ({bool isActive, String lastSignIn})>{
+  'stu_001': (isActive: true, lastSignIn: '12/8/2026'),
+  'stu_002': (isActive: true, lastSignIn: '11/8/2026'),
+  'stu_003': (isActive: true, lastSignIn: '10/8/2026'),
+  'stu_004': (isActive: false, lastSignIn: '9/8/2026'),
+  'stu_005': (isActive: true, lastSignIn: '8/8/2026'),
+  'stu_006': (isActive: false, lastSignIn: '7/8/2026'),
 };
 
 /// Builds the exact snapshot the grade screen consumes:
@@ -99,7 +116,8 @@ GradeStudentsData mockGradeStudentsData(String gradeKey) {
           id: student.id,
           name: student.name,
           isCenter: student.isCenter,
-          plan: _mockExtras[student.id]?.plan ?? 'FREE',
+          planSummary:
+              _mockPlanSummaries[student.id] ?? StudentPlanSummary.empty,
           isActive: _mockExtras[student.id]?.isActive ?? true,
           lastSignIn: _mockExtras[student.id]?.lastSignIn ?? '—',
           phone: student.phone,
@@ -109,31 +127,7 @@ GradeStudentsData mockGradeStudentsData(String gradeKey) {
     gradeKey: gradeKey,
     students: rows,
     pendingCount: 2,
-    breakdown: _mockBreakdown(rows),
+    breakdown: buildPlanBreakdown(rows),
     isFallback: false,
   );
-}
-
-List<PlanBreakdownRow> _mockBreakdown(List<GradeStudent> students) {
-  int freeCount = 0, pro = 0, max = 0, guestCount = 0;
-  for (final GradeStudent student in students) {
-    if (student.plan == 'PRO') {
-      pro++;
-    } else if (student.plan == 'MAX') {
-      max++;
-    } else if (student.isCenter) {
-      freeCount++;
-    } else {
-      guestCount++;
-    }
-  }
-  int share(int count) =>
-      students.isEmpty ? 0 : ((count * 100) / students.length).round();
-  return <PlanBreakdownRow>[
-    PlanBreakdownRow(label: 'Free', count: freeCount, share: share(freeCount)),
-    PlanBreakdownRow(label: 'PRO', count: pro, share: share(pro)),
-    PlanBreakdownRow(label: 'MAX', count: max, share: share(max)),
-    PlanBreakdownRow(
-        label: 'Guest', count: guestCount, share: share(guestCount)),
-  ];
 }

@@ -23,6 +23,9 @@ class VideoOverlayControls extends StatelessWidget {
   /// Free preview wall is shown.
   final VoidCallback? onUpgradeTap;
 
+  /// Section-aware toolbar label (Lectures / Revisions / Finals / Online).
+  final String sectionButtonLabel;
+
   const VideoOverlayControls({
     required this.controller,
     required this.onBack,
@@ -33,6 +36,7 @@ class VideoOverlayControls extends StatelessWidget {
     required this.onToggleControls,
     this.onBookmarkTap,
     this.onUpgradeTap,
+    this.sectionButtonLabel = 'Lectures',
     super.key,
   });
 
@@ -55,61 +59,62 @@ class VideoOverlayControls extends StatelessWidget {
             child: _buildGradient(),
           ),
         ),
-        
-        // Actual Controls
-        if (controller.controlsVisible && !controller.locked) ...[
-          // Header
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: VideoHeader(
-              controller: controller,
-              onBack: onBack,
-            ),
-          ),
-          
-          // Side Sliders (Volume / Brightness)
-          const Positioned.fill(
-            child: VideoSideSliders(),
-          ),
-          
-          // Center Big Controls
-          Positioned.fill(
-            child: VideoCenterControls(controller: controller),
-          ),
-          
-          // Bottom Action Bar
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: VideoBottomActionBar(
-              controller: controller,
-              onLecturesTap: onLecturesTap,
-              onPdfTap: onPdfTap,
-              onQualityTap: onQualityTap,
-              onNextTap: onNextTap,
-              onBookmarkTap: onBookmarkTap,
-            ),
-          ),
-        ],
 
-        // Lock Toggle Button (always visible if locked, or if controls visible)
-        if (controller.locked || controller.controlsVisible)
-          Positioned(
-            top: 16,
-            left: 16, // RTL adjusted if needed, usually lock is on corner
-            child: IconButton(
-              style: IconButton.styleFrom(backgroundColor: Colors.black54),
-              onPressed: controller.toggleLock,
-              icon: Icon(
-                controller.locked ? Icons.lock : Icons.lock_open,
-                color: Colors.white,
+        // Actual Controls: a single Column in one layout pass — top bar,
+        // middle band (sliders + center controls), bottom bar. The middle
+        // band takes whatever vertical space REMAINS between the bars, so
+        // side sliders and center buttons can never overlap the top or
+        // bottom bars on any viewport (no fixed pixel heights).
+        if (controller.controlsVisible && !controller.locked)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header (top bar)
+              VideoHeader(controller: controller, onBack: onBack),
+
+              // Middle band: volume slider | center controls | brightness.
+              // Physical LTR order pinned (volume LEFT, brightness RIGHT)
+              // because the app RTL locale would otherwise mirror the Row.
+              Expanded(
+                child: Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        width: 64,
+                        child: VideoEdgeSlider.volume(
+                          controller: controller,
+                        ),
+                      ),
+                      Expanded(
+                        child: VideoCenterControls(controller: controller),
+                      ),
+                      SizedBox(
+                        width: 64,
+                        child: VideoEdgeSlider.brightness(
+                          controller: controller,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+
+              // Bottom Action Bar
+              VideoBottomActionBar(
+                controller: controller,
+                onLecturesTap: onLecturesTap,
+                onPdfTap: onPdfTap,
+                onQualityTap: onQualityTap,
+                onNextTap: onNextTap,
+                onBookmarkTap: onBookmarkTap,
+                sectionButtonLabel: sectionButtonLabel,
+              ),
+            ],
           ),
-          
+
+        // Lock control removed per design (reference player has no lock).
         // States (Loading, Error, Resume)
         if (controller.playbackStatus == PlayerPlaybackStatus.loading)
           const Positioned.fill(child: VideoLoadingState()),
@@ -118,8 +123,9 @@ class VideoOverlayControls extends StatelessWidget {
         if (controller.playbackStatus == PlayerPlaybackStatus.error)
           Positioned.fill(
             child: VideoErrorState(
-              message: controller.errorMessage ?? 'تعذر تشغيل الفيديو.',
+              message: controller.errorMessage ?? 'Video playback failed.',
               onRetry: controller.retry,
+              onBack: onBack,
             ),
           ),
         if (controller.showResumePrompt && controller.resumeRecord != null)
@@ -128,6 +134,7 @@ class VideoOverlayControls extends StatelessWidget {
           VideoUpgradePrompt(
             controller: controller,
             onUpgrade: onUpgradeTap ?? () {},
+            onBack: onBack,
           ),
       ],
     );

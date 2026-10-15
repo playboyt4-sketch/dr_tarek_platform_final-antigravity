@@ -1,0 +1,52 @@
+أنت تعمل داخل مشروع الداشبورد D:\antigravity\dr_tarek_platform_final\dashboard.
+المطلوب منك تحديث وتطابق شاشة تسجيل الدخول dashboard_login_screen.dart لتطابق فريم Figma المعتمد (# dashboard login) بدقة متناهية 100% وفق القياسات الهندسية التالية:
+
+1. أبعاد الصفحة والحاوية الرئيسية:
+   - الصفحة مصممة لعرض 1280x800px على خلفية بيضاء نقية #FFFFFF.
+   - الشعار العلوي Tarek el araby Platform:
+     * الأبعاد: W: 1120px, H: 120px متمركز عند Y: 0 (أو تباعد علوي مريح).
+     * الخط: Google Sans Flex بحجم 96px (كلمة Tarek el araby بوزن Regular 400 ولون #000000، وكلمة Platform بوزن Thin 100 ولون #9CA3AF أو شفافية هادئة).
+
+2. الكارت الزجاجي السائل (Liquid Glass Card - # login frame):
+   - الأبعاد الصريحة: Width: 480px, Height: 452px، متمركز أفقياً عند X: 400px ورأسياً عند Y: 136px.
+   - انحناء الحواف: Corner Radius: 28px.
+   - تأثير الزجاج (Liquid Glass):
+     * اللون: White 70% (Color(0xB3FFFFFF)).
+     * Background Blur: sigmaX: 20, sigmaY: 20 عبر BackdropFilter.
+     * الإطار: Stroke: 1.5px من نوع Inside بلون #E5E7EB.
+     * الظل المركب: BoxShadow(color: Color(0x1F000000), offset: Offset(0, 12), blurRadius: 30).
+
+3. العناصر الداخلية للكارت مرتبة من الأعلى للأسفل:
+   أ) العنوان الرئيسي (T Login):
+      - النص: "Login"، الموقع Y: 24px، المقاس 93x48px، بخط Google Sans Flex بحجم 32px بوزن SemiBold 600 ولون #111827.
+   ب) العنوان الفرعي (Subtitle):
+      - النص: "Welcome back please login your account"، الموقع Y: 80px، المقاس 311x24px، بخط Google Sans Flex بحجم 16px بوزن Regular 400 ولون #6B7280.
+   ج) حقل إدخال الهاتف (Phone Number Input):
+      - الموقع: Y: 128px، الأبعاد: W: 432px, H: 68px.
+      - انحناء الحواف: Radius 28px، إطار 1px بلون #E5E7EB، خلفية بيضاء.
+      - المحتوى: نص تلميحي "Phone Number" (16px #9CA3AF) على اليسار، وأيقونة Smartphone (مقاس 40x40px بلون #6B7280) على اليمين.
+   د) حقل إدخال كلمة المرور (Password Input):
+      - الموقع: Y: 212px، الأبعاد: W: 432px, H: 68px.
+      - انحناء الحواف: Radius 28px، إطار 1px بلون #E5E7EB، خلفية بيضاء.
+      - المحتوى: نص تلميحي "Password" مشفر، وأيقونة تبديل العين (Visibility Toggle) بمقاس 40x40px بلون #6B7280.
+   هـ) صف تذكر الحساب (Remember me):
+      - الموقع: Y: 288px، الأبعاد: W: 128px, H: 24px متمركز جهة اليمين.
+      - يحتوي على Checkbox أنيق + نص "Remember me" بخط 14px ولون #374151.
+   و) زر تسجيل الدخول (button):
+      - الموقع: Y: 344px، الأبعاد: W: 345px, H: 56px.
+      - انحناء الحواف: شكل كبسولة دائري كامل Corner Radius: 9999px.
+      - اللون: أزرق ملكي #1D4ED8.
+      - النص: "login" بخط Google Sans Flex بحجم 16px بوزن Medium 500 ولون أبيض ناصع #FFFFFF.
+   ز) تذييل التوقيع (Branding):
+      - الموقع: Y: 416px، المقاس 209x24px في أسفل الكارت.
+      - نص: "Created by Tarek el araby" بخط 14px ولون #9CA3AF (Created by بوزن Regular، و Tarek el araby بوزن Thin).
+
+4. المنطق والتحقق (Logic Integration):
+   - احتفظ بكافة منطق المصادقة والـ LoginController والتحقق من رقم الهاتف المصري وإظهار حالة التحميل (Loading State) عند الضغط على الزر.
+   - حافظ على التوجيه إلى الشاشة التالية عند نجاح تسجيل الدخول لمعلم أو مشرف.
+
+5. الفحص النهائي:
+   - شغّل داخل dashboard:
+     flutter analyze
+     flutter test
+   - تأكد من خلو الكود من أي خطأ ونجاح الاختبارات بالكامل.

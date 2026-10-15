@@ -10,7 +10,7 @@ void main() {
         id: 'r',
         title: 't',
         resourceType: 'video',
-        bunnyVideoId: 'b1',
+        bunnyVideoId: '44444444-4444-4444-8444-444444444444',
       );
       expect(PreviewCapPolicy.capFor(resource), isNull);
     });
@@ -20,7 +20,7 @@ void main() {
         id: 'r',
         title: 't',
         resourceType: 'video',
-        bunnyVideoId: 'b1',
+        bunnyVideoId: '44444444-4444-4444-8444-444444444444',
         isGuestPreview: true,
         guestPreviewSeconds: 0,
       );
@@ -32,7 +32,7 @@ void main() {
         id: 'r',
         title: 't',
         resourceType: 'video',
-        bunnyVideoId: 'b1',
+        bunnyVideoId: '44444444-4444-4444-8444-444444444444',
         isGuestPreview: true,
         guestPreviewSeconds: 300,
       );

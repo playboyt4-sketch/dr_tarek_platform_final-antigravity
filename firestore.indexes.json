@@ -47,6 +47,25 @@
       "density": "SPARSE_ALL"
     },
     {
+      "collectionGroup": "devices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "device_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
       "collectionGroup": "exam_attempts",
       "queryScope": "COLLECTION",
       "fields": [
@@ -98,6 +117,29 @@
         },
         {
           "fieldPath": "is_deleted",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "display_order",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "lecture_resources",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "lecture_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "is_visible",
           "order": "ASCENDING"
         },
         {
@@ -231,6 +273,25 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "is_read",
           "order": "ASCENDING"
         },
@@ -241,6 +302,44 @@
         {
           "fieldPath": "__name__",
           "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "plan_features",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "plan_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "feature_key",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "plan_features",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "plan_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "enabled",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
         }
       ],
       "density": "SPARSE_ALL"

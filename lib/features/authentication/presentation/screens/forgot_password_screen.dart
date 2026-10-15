@@ -1,9 +1,10 @@
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/errors/friendly_error_message.dart';
+import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_input.dart';
+import '../providers/password_reset_provider.dart';
 
 /// Password recovery per FINAL_DECISIONS Section 3 / 08 Development
 /// Standards Section 9: the student submits their registered phone; a
@@ -11,14 +12,19 @@ import '../../../../core/widgets/app_input.dart';
 /// `submitPasswordResetRequest` callable, which notifies Admin/Teacher.
 /// The password is then changed MANUALLY from the Dashboard — there is no
 /// automated self-reset and no PIN/verification code of any kind.
-class ForgotPasswordScreen extends StatefulWidget {
+///
+/// The request goes through [passwordResetControllerProvider] (data layer
+/// owns the callable invocation); this screen never touches Firebase
+/// directly and never resets passwords itself.
+class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
 
   @override
-  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+  ConsumerState<ForgotPasswordScreen> createState() =>
+      _ForgotPasswordScreenState();
 }
 
-class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   final _phoneController = TextEditingController();
 
   bool _sending = false;
@@ -42,20 +48,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _errorMessage = null;
     });
     try {
-      final callable = FirebaseFunctions.instance
-          .httpsCallable('submitPasswordResetRequest');
-      await callable.call(<String, dynamic>{'phoneNumber': phone});
+      final submitted = await ref
+          .read(passwordResetControllerProvider.notifier)
+          .submit(phoneNumber: phone);
       if (!mounted) return;
-      setState(() => _submitted = true);
-    } on FirebaseFunctionsException catch (error) {
+      setState(() => _submitted = submitted);
+    } catch (error) {
       if (!mounted) return;
-      setState(() => _errorMessage = friendlyFunctionErrorMessage(
-            error,
-            'تعذر إرسال الطلب. حاول مرة أخرى.',
-          ));
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'تعذر إرسال الطلب. حاول مرة أخرى.');
+      // Project-standard Failure mapping (e.g. backend per-phone throttling
+      // surfaces the cooldown message); raw errors never reach the UI.
+      setState(() => _errorMessage = friendlyErrorMessage(context, error));
     } finally {
       if (mounted) setState(() => _sending = false);
     }

@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../authentication/domain/entities/auth_user.dart';
 import '../../../bookmarks/presentation/screens/student_bookmarks_screen.dart';
-import '../../../exams/presentation/screens/published_exams_screen.dart';
 import '../../../membership/presentation/screens/membership_plans_screen.dart';
 import '../../../notes/presentation/screens/student_notes_screen.dart';
 import '../../../notifications/presentation/screens/notifications_list_screen.dart';
 import '../../../profile/presentation/screens/student_profile_screen.dart';
-import '../../../timeline_quizzes/presentation/screens/published_quizzes_screen.dart';
 
 /// Student feature hub — pure navigation shell.
 /// Every feature screen lives in its own feature module and talks to
@@ -24,16 +22,10 @@ class StudentFeatureHubScreen extends StatelessWidget {
 
   List<_FeatureItem> _buildFeatures(BuildContext context) {
     return <_FeatureItem>[
-      _FeatureItem(
-        'الاختبارات القصيرة',
-        Icons.quiz_outlined,
-        () => _open(context, QuizzesScreen(studentId: user.id)),
-      ),
-      _FeatureItem(
-        'الامتحانات',
-        Icons.assignment_outlined,
-        () => _open(context, ExamsScreen(studentId: user.id)),
-      ),
+      // Quizzes ("الاختبارات القصيرة") and Exams ("الامتحانات") are excluded
+      // from the current release by Project Owner scope decision. Their
+      // feature modules, backend callables and Firestore rules remain
+      // intact for future re-inclusion; only these hub entries are hidden.
       _FeatureItem(
         'ملاحظاتي',
         Icons.note_alt_outlined,

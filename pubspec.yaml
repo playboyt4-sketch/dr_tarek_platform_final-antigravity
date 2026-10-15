@@ -18,7 +18,11 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^3.4.2
-  firebase_core: ^4.13.0
+  # PINNED 4.13.0 (was ^4.13.0): firebase_auth 6.5.7's Android code reads
+  # FlutterFirebaseCorePlugin.customAuthDomain, which exists only in core
+  # 4.13.0 — core 4.14.0 moved it (Kotlin rewrite) and breaks the Android
+  # release build. Revert to ^ only after auth+core native pairing is verified.
+  firebase_core: 4.13.0
   firebase_auth: ^6.5.7
   cloud_functions: ^6.3.6
   cloud_firestore: ^6.8.0
@@ -29,6 +33,16 @@ dependencies:
   image_picker: ^1.2.3
   firebase_storage: ^13.4.6
   video_player: ^2.14.0
+  # Web-only HLS backend for video_player (federated web implementation).
+  # Activates ONLY for .m3u8 URLs on Flutter Web: attaches the hls.js
+  # global (loaded in web/index.html) to the plugin-owned <video> element
+  # and feeds it the signed playlist URL unmodified. Non-HLS URLs fall
+  # through to the stock video_player_web path; mobile is untouched
+  # (this package contains no Android/iOS code).
+  video_player_web_hls: ^1.3.0
+  # Direct reference: the Web HLS backend installer assigns
+  # VideoPlayerPlatform.instance explicitly (see core/web/).
+  video_player_platform_interface: ^6.9.0
   shared_preferences: ^2.5.3
   connectivity_plus: ^6.1.4
   uuid: ^4.5.1
@@ -44,7 +58,10 @@ dependencies:
   path_provider: ^2.1.2
   firebase_crashlytics: ^5.0.0
   firebase_messaging: ^16.1.1
-  firebase_app_check: ^0.4.7
+  # PINNED 0.4.6 (was ^0.4.7): 0.4.7 requires firebase_core ^4.14.0 (see
+  # firebase_core pin above); 0.4.6 accepts ^4.13.0 with the identical
+  # activate(providerWeb:) API used in lib/main.dart.
+  firebase_app_check: 0.4.6
   flutter_local_notifications: ^19.0.0
   state_notifier: ^1.0.0
   go_router: ^18.0.1
@@ -62,6 +79,7 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/icon/app-icon-1024.png
   fonts:
     - family: Gardenia Summer
       fonts:

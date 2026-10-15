@@ -113,9 +113,25 @@ check("isDirectThumbnailUrl rejects stored paths", () => {
   assert.equal(functions.isDirectThumbnailUrl(""), false);
 });
 
+// ---- Phase 2: soft-deleted rows are never served ------------------------
+// Dashboard soft-delete keeps is_visible:true by design, so the listing
+// filter below (not the indexed query) is what excludes them — including
+// from first-video candidacy. Remaining clauses stay in the query/checks.
+check("isServedLectureResource excludes soft-deleted rows", () => {
+  assert.equal(functions.isServedLectureResource({is_deleted: true}), false);
+  assert.equal(
+    functions.isServedLectureResource({is_deleted: true, is_visible: true}),
+    false,
+  );
+});
+check("isServedLectureResource keeps live and legacy rows", () => {
+  assert.equal(functions.isServedLectureResource({is_deleted: false}), true);
+  assert.equal(functions.isServedLectureResource({}), true);
+});
+
 test.cleanup();
 if (process.exitCode === 1) {
   console.error("resource_delivery tests FAILED");
   process.exit(1);
 }
-console.log(`resource_delivery tests passed (${passed}/6 groups).`);
+console.log(`resource_delivery tests passed (${passed}/8 groups).`);

@@ -11,7 +11,7 @@ async function run() {
     }
   });
 
-  const teacherDb = testEnv.authenticatedContext('teacher-1', {role: 'teacher', approved: true}).firestore();
+  const doctorDb = testEnv.authenticatedContext('doctor-1', {role: 'doctor', approved: true}).firestore();
   
   await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().collection('lectures').doc('lec-student-vis').set({

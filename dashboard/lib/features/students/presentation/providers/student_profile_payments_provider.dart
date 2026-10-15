@@ -185,7 +185,7 @@ class StudentPayment {
 /// The single student-level financial record
 /// (`student_financial_accounts/{studentId}`).
 ///
-/// Price/Discount are Teacher-entered for the student; Net = Price −
+/// Price/Discount are Doctor-entered for the student; Net = Price −
 /// Discount. Accounting is independent from membership/subscriptions.
 /// A missing record resolves to a zero Net instead of invented values.
 class StudentFinancialAccount {
@@ -394,11 +394,11 @@ final studentLedgerProvider =
 
 /// Payment writes for the Student Profile → Payments tab.
 ///
-/// Records via the approved `onPaymentLogged` callable (Teacher-only,
+/// Records via the approved `onPaymentLogged` callable (Doctor-only,
 /// transcription of external paper records) and corrects via the
-/// approved `correctPaymentLog` callable (Teacher-only, in-place).
+/// approved `correctPaymentLog` callable (Doctor-only, in-place).
 /// The financial account goes through `setStudentFinancialAccount`
-/// (Teacher-only, one account per student). Backend/callable failures
+/// (Doctor-only, one account per student). Backend/callable failures
 /// surface as [PaymentFailure] with the server message for graceful
 /// UI display.
 class StudentPaymentsController {
@@ -453,7 +453,7 @@ class StudentPaymentsController {
     }
   }
 
-  /// Teacher-only in-place correction. Only non-null fields are sent;
+  /// Doctor-only in-place correction. Only non-null fields are sent;
   /// student linkage and `created_by` are never touched.
   Future<void> correctPayment({
     required String paymentId,
@@ -489,7 +489,7 @@ class StudentPaymentsController {
     }
   }
 
-  /// Teacher-only create/update of the student's single financial
+  /// Doctor-only create/update of the student's single financial
   /// account via `setStudentFinancialAccount`.
   Future<void> setAccount({
     required String studentId,

@@ -11,6 +11,23 @@ import '../../data/services/video_source_resolver.dart';
 import '../../domain/entities/playback_entities.dart';
 import '../../domain/services/playback_session_coordinator.dart';
 
+/// Pre-tap first-video pointer lookup (Phase 5 fast path).
+///
+/// Pure lookup of the denormalized `FirstVideoRef` riding the already-loaded
+/// lecture list — no network, no authorization semantics. A non-null result
+/// only *attempts* the fast lane; the server verdict inside `resolve()`
+/// alone decides Full vs Guest, and any rejection falls back to the legacy
+/// listing path. Null when the episode is unknown or carries no pointer.
+FirstVideoRef? firstVideoForEpisode(
+  List<LectureSummary> episodes,
+  String lectureId,
+) {
+  for (final episode in episodes) {
+    if (episode.id == lectureId) return episode.firstVideo;
+  }
+  return null;
+}
+
 class VideoPlaybackController extends ChangeNotifier {
   final String userId;
   final String subjectId;
@@ -36,6 +53,13 @@ class VideoPlaybackController extends ChangeNotifier {
   String lectureId;
   String sectionId;
   String episodeTitle;
+
+  /// Display-only live video name from the authoritative resource listing
+  /// (`lecture_resources/title`). Adopted whenever the full listing loads
+  /// (legacy path + fast-lane background refresh) so the header never
+  /// sticks to a stale denormalized `first_video.title`. Never playback
+  /// state — safe to refresh mid-playback.
+  String? liveVideoTitle;
   String? episodeThumbnailUrl;
   Duration? skipIntroStart;
   Duration? skipIntroEnd;
@@ -54,6 +78,11 @@ class VideoPlaybackController extends ChangeNotifier {
 
   VideoPlayerController? _engine;
   VideoResource? _resource;
+
+  /// Whether the active lecture carries openable documents (PDF/attachment).
+  /// Drives the conditional PDF toolbar button (reference design shows PDF
+  /// only when a file is attached). Recomputed on every source prepare.
+  bool hasDocuments = false;
   VideoEntitlement? _entitlement;
   PlaybackProgressRecord? _resumeRecord;
 
@@ -61,12 +90,79 @@ class VideoPlaybackController extends ChangeNotifier {
   /// unlimited playback. Derived from the server-armed resource metadata —
   /// the client NEVER recomputes entitlement, it only enforces.
   Duration? _previewCap;
+
+  /// Messaging-only audience for the active Guest verdict ("guest" =
+  /// external Guest → Center-enrollment message; "center" = Center student
+  /// on an unauthorized device → device message). Read-only projection of
+  /// the server `previewAudience` discriminator; null/unknown preserves the
+  /// legacy generic wall. Never authorization logic.
+  String? previewAudience;
+
+  /// True while the upgrade wall is up because the Guest verdict carried
+  /// zero playable seconds (as opposed to a consumed positive cap or the
+  /// rolling-window wall). Drives the audience-specific wall copy.
+  bool get isPreviewBlockedAtZero =>
+      _previewCap != null &&
+      _previewCap == Duration.zero &&
+      showUpgradePrompt &&
+      !dailyWindowBlocked;
+
+  /// Issuance-side device signal (presentation only): set when
+  /// `generateBunnySignedUrl` declared this device Guest for the Subject
+  /// (Guest-tier throw with no preview, or a `center` preview audience).
+  /// Selects the device wall — never an upgrade CTA, since upgrading
+  /// cannot authorize a device. Cleared on every fresh source attempt.
+  bool deviceBlocked = false;
+
+  /// Test-only seam: arms the exact wall state reached through
+  /// [_loadEngine] (zero-preview verdict) or [_applyFreeWindowWall]
+  /// without requiring a video engine. Production code never calls this;
+  /// widget tests use it to render each wall variant deterministically.
+  @visibleForTesting
+  void debugArmUpgradeWall({
+    Duration? previewCap,
+    String? audience,
+    DateTime? windowExpiresAt,
+    bool deviceBlocked = false,
+  }) {
+    _previewCap = previewCap;
+    previewAudience = audience;
+    dailyWindowExpiresAt = windowExpiresAt;
+    this.deviceBlocked = deviceBlocked;
+    showUpgradePrompt = true;
+  }
+
+  /// Test-only seam: injects an engine whose [VideoPlayerValue] the test
+  /// sets directly (e.g. initialized with [Size.zero]) so surface/layout
+  /// fallbacks are widget-testable without platform channels. Production
+  /// code never calls this.
+  @visibleForTesting
+  void debugInjectEngine(VideoPlayerController engine) {
+    _engine?.removeListener(_onEngineUpdate);
+    _engine = engine;
+    _engine?.addListener(_onEngineUpdate);
+  }
   PlayerPlaybackStatus playbackStatus = PlayerPlaybackStatus.initial;
   VideoQuality selectedQuality = VideoQuality.auto;
   String? errorMessage;
-  bool controlsVisible = true;
+  // Cinematic playback: the student tapped a lecture expecting video only.
+  // All chrome (header, controls, sliders, toolbar) stays hidden until the
+  // first tap on the surface. Auto-hide after 4s of playback re-hides it.
+  bool controlsVisible = false;
   bool locked = false;
   bool fullscreen = false;
+
+  /// Per-video brightness factor (1.0 = unmodified). Used by the right-side
+  /// slider on platforms without system brightness control (e.g. web):
+  /// applied as a color filter on the video surface only.
+  double videoBrightness = 1.0;
+
+  /// Sets the per-video brightness from a 0..1 slider position, mirroring
+  /// the reference design mapping (0.2 dim .. 1.5 vivid).
+  void setVideoBrightness(double sliderValue) {
+    videoBrightness = 0.2 + sliderValue.clamp(0.0, 1.0) * 1.3;
+    _notify();
+  }
   bool showResumePrompt = false;
   bool showNextEpisodePrompt = false;
 
@@ -77,10 +173,17 @@ class VideoPlaybackController extends ChangeNotifier {
   bool _disposed = false;
   bool _initializing = false;
   int _operationId = 0;
-  DateTime? _lastProgressSave;
+  // P3 TTF instrumentation: tap-anchored start for the exact
+  // time-to-first-frame measurement. Read-only diagnostics only.
+  DateTime? _initStartedAt;
+  bool _firstFrameLogged = false;  DateTime? _lastProgressSave;
   DateTime? _lastCloudSave;
   DateTime? _sourceExpiresAt;
   DateTime? _bufferingStartedAt;
+  // Set once a buffering downgrade has been attempted for the active engine
+  // load: every downgrade is a full engine rebuild, so an unguarded trigger
+  // re-fires immediately after reload on still-slow networks (reload loop).
+  bool _downgradedThisEngine = false;
   bool _refreshingSource = false;
   bool _prefetchingNextEpisode = false;
   final Map<String, ResolvedVideoSource> _prefetchedSources = {};
@@ -128,8 +231,7 @@ class VideoPlaybackController extends ChangeNotifier {
         : _resource?.duration ?? Duration.zero;
   }
 
-  bool get isPlaying => _engine?.value.isPlaying == true;
-  bool get isBuffering => _engine?.value.isBuffering == true;
+  bool get isPlaying => _engine?.value.isPlaying == true;  bool get isBuffering => _engine?.value.isBuffering == true;
   bool get isReady => _engine?.value.isInitialized == true;
   bool get hasNextEpisode =>
       EpisodeNavigation.nextIndex(
@@ -140,6 +242,20 @@ class VideoPlaybackController extends ChangeNotifier {
   int get currentEpisodeIndex => episodes
       .indexWhere((item) => item.id == lectureId)
       .clamp(0, episodes.isEmpty ? 0 : episodes.length - 1);
+
+  /// Second header line: the Video Name from the dashboard.
+  /// Preference: live listing title (authoritative, self-heals a stale
+  /// denormalized `first_video.title`) → loaded resource → denormalized
+  /// pointer (instant, pre-issuance). Null when unset — the header then
+  /// shows only the lecture name with no automatic "حلقة X" numbering.
+  String? get videoTitle {
+    final live = liveVideoTitle?.trim();
+    if (live != null && live.isNotEmpty) return live;
+    final loaded = _resource?.title.trim();
+    if (loaded != null && loaded.isNotEmpty) return loaded;
+    return firstVideoForEpisode(episodes, lectureId)?.title;
+  }
+
   double get progress => ProgressMath.percent(position, duration);
   bool get canSkipIntro =>
       skipIntroStart != null &&
@@ -168,30 +284,87 @@ class VideoPlaybackController extends ChangeNotifier {
     playbackStatus = PlayerPlaybackStatus.loading;
     _notify();
     final operation = ++_operationId;
+    var stage = 'entitlement';
+    // P3 profiling: per-stage wall-clock from tap to first frame. Read the
+    // [VIDEO-TIMING] lines in order — the slowest stage is the one to fix.
+    final overallStopwatch = Stopwatch()..start();
+    _initStartedAt = DateTime.now();
     try {
-      _entitlement = await entitlementService.resolve(
+      // DIAGNOSIS-ONLY: identity + entry context for the failing op below.
+      debugPrint(
+        '[VIDEO-DIAG] player initialize start userId=$userId subjectId=$subjectId lectureId=$lectureId',
+      );
+      // Startup latency: entitlement (membership reads) and the lecture
+      // resources callable are independent — fire both at once instead of
+      // serially so open-to-first-frame costs a single round trip.
+      // Phase 5 fast path: when the lecture list already carries the
+      // denormalized first-video pointer, the full listing is NOT a
+      // startup prerequisite — issuance + entitlement decide everything.
+      // The listing still loads lazily for docs/art when the fast lane
+      // cannot serve them (see _refreshSupplementalResources).
+      final entitlementStopwatch = Stopwatch()..start();
+      final entitlementFuture = entitlementService.resolve(
         userId: userId,
         subjectId: subjectId,
       );
+      final preknown = firstVideoForEpisode(episodes, lectureId);
+      // Malformed pointers (empty id) fall back to the legacy path.
+      final bool fastLane =
+          preknown != null && preknown.bunnyVideoId.isNotEmpty;
+      final resourcesStopwatch = Stopwatch()..start();
+      final Future<List<VideoResource>>? resourcesFuture =
+          fastLane ? null : sourceResolver.loadResources(lectureId);
+      _entitlement = await entitlementFuture;
+      debugPrint(
+        '[VIDEO-TIMING] stage=entitlement lectureId=$lectureId '
+        'elapsedMs=${entitlementStopwatch.elapsedMilliseconds}',
+      );
       if (_disposed || operation != _operationId) return;
       if (_entitlement?.allowed != true) {
-        playbackStatus = PlayerPlaybackStatus.error;
-        errorMessage =
-            _entitlement?.message ?? 'لا تملك صلاحية مشاهدة هذا الفيديو.';
-        _notify();
+        // Loser future must not go unobserved.
+        unawaited(resourcesFuture?.then<void>((_) {}, onError: (_) {}));
+        _applyEntitlementDenial(
+          operation,
+          fallbackMessage:
+              'You do not have permission to watch this video.',
+        );
         return;
       }
+      stage = 'prepareSource';
+      final preloaded = fastLane
+          ? null
+          : await resourcesFuture!.then((resources) {
+              debugPrint(
+                '[VIDEO-TIMING] stage=loadResources lectureId=$lectureId '
+                'elapsedMs=${resourcesStopwatch.elapsedMilliseconds}',
+              );
+              return resources;
+            });
       await _prepareSource(
         operation: operation,
         restoreProgress: true,
-        autoplay: false,
+        // Autoplay on open: the student tapped a lecture expecting instant
+        // playback. Engine-level autoplay rejections (e.g. browser policy)
+        // are swallowed inside _loadEngine so they degrade to paused-ready.
+        autoplay: true,
+        preloadedResources: preloaded,
+        fastVideoRef: fastLane ? preknown : null,
+      );
+      debugPrint(
+        '[VIDEO-TIMING] stage=initializeTotal lectureId=$lectureId '
+        'elapsedMs=${overallStopwatch.elapsedMilliseconds}',
       );
     } catch (error) {
       if (!_disposed && operation == _operationId) {
+        // DIAGNOSIS-ONLY: full op context for the permission-denied hunt.
+        debugPrint(
+          '[VIDEO-DIAG] player initialize FAILED stage=$stage userId=$userId subjectId=$subjectId lectureId=$lectureId '
+          'errorType=${error.runtimeType} error=$error',
+        );
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'تعذر تهيئة مشغل الفيديو.';
+            : 'Could not initialize the video player. [stage=$stage ${error.runtimeType}: $error]';
         _notify();
       }
     } finally {
@@ -199,25 +372,207 @@ class VideoPlaybackController extends ChangeNotifier {
     }
   }
 
-  Future<void> _prepareSource({
-    required int operation,
-    required bool restoreProgress,
-    required bool autoplay,
-  }) async {
+  /// Pristine per-attempt source state shared by the legacy and fast lanes.
+  void _resetSourceState() {
     _resource = null;
+    liveVideoTitle = null;
+    hasDocuments = false;
+    _previewCap = null;
+    previewAudience = null;
+    deviceBlocked = false;
     // Fresh attempt: clear any previous §12 wall state (§11 state is
     // recomputed below exactly as before — the two gates are independent).
     dailyWindowExpiresAt = null;
     showUpgradePrompt = false;
-    final resources = await sourceResolver.loadResources(lectureId);
+  }
+
+  /// Fires the restore-progress read for concurrent overlap (D1). The
+  /// timing line is preserved; local-fallback tolerance lives in the
+  /// repository. Callers join the future where the record is consumed.
+  Future<PlaybackProgressRecord?> _fireProgressRead() {
+    final resumeStopwatch = Stopwatch()..start();
+    return playbackRepository.read(lectureId).then((record) {
+      debugPrint(
+        '[VIDEO-TIMING] stage=playbackRepositoryRead lectureId=$lectureId '
+        'elapsedMs=${resumeStopwatch.elapsedMilliseconds}',
+      );
+      return record;
+    });
+  }
+
+  /// Phase 5 fast lane: start playback from the pre-tap first-video pointer
+  /// without awaiting the full listing. Authorization is NOT skipped: the
+  /// entitlement gate already passed, `resolve()` runs the complete
+  /// server-side issuance validation for this exact video, and the Guest
+  /// verdict inside its response is enforced in [_loadEngine] exactly like
+  /// the listing-stamped cap. Listing-dependent UI (docs button, episode
+  /// art) refreshes in the background once playback is authoritative.
+  Future<void> _prepareFastSource({
+    required int operation,
+    required bool restoreProgress,
+    required bool autoplay,
+    required FirstVideoRef ref,
+  }) async {
+    final refTitle = ref.title;
+    _resource = VideoResource(
+      id: ref.resourceId,
+      title:
+          refTitle != null && refTitle.isNotEmpty ? refTitle : episodeTitle,
+      resourceType: 'video',
+      bunnyVideoId: ref.bunnyVideoId,
+    );
+    hasDocuments = false;
+    final Future<PlaybackProgressRecord?>? resumeFuture =
+        restoreProgress ? _fireProgressRead() : null;
+    await _loadEngine(
+      operation: operation,
+      resumeFuture: resumeFuture,
+      autoplay: autoplay,
+    );
+    unawaited(_refreshSupplementalResources(operation, lectureId));
+  }
+
+  /// Background listing refresh for the fast lane: fills in the docs
+  /// affordance, live video title, and episode artwork the full listing
+  /// would have provided. Never touches playback state (`_resource`,
+  /// caps, prompts, resume) — those are already authoritative from
+  /// issuance. Stale-guarded by both operation and lecture so episode
+  /// switches cannot cross-contaminate.
+  Future<void> _refreshSupplementalResources(
+    int operation,
+    String targetLectureId,
+  ) async {
+    try {
+      final resources = await sourceResolver.loadResources(targetLectureId);
+      if (_disposed ||
+          operation != _operationId ||
+          targetLectureId != lectureId) {
+        return;
+      }
+      hasDocuments = resources.any((item) => item.isDocument);
+      final liveVideo = firstPlayableVideo(resources);
+      final liveTitle = liveVideo?.title.trim();
+      if (liveTitle != null && liveTitle.isNotEmpty) {
+        liveVideoTitle = liveTitle;
+      }
+      final artwork = liveVideo?.thumbnailUrl;
+      if (artwork != null &&
+          artwork.isNotEmpty &&
+          artwork != episodeThumbnailUrl) {
+        episodeThumbnailUrl = artwork;
+        final index = episodes.indexWhere((item) => item.id == targetLectureId);
+        if (index >= 0 && episodes[index].thumbnailUrl != artwork) {
+          final updated = [...episodes];
+          updated[index] = updated[index].copyWith(thumbnailUrl: artwork);
+          episodes = List<LectureSummary>.unmodifiable(updated);
+        }
+      }
+      _notify();
+    } catch (_) {
+      // Nicety only — playback is already authoritative and unaffected.
+    }
+  }
+
+  /// FINAL_DECISIONS §12 wall shared by the legacy and fast lanes: a
+  /// DIFFERENT video was requested while the rolling window is active.
+  /// Surfaced BEFORE playback starts, never mid-playback.
+  void _applyFreeWindowWall(FreeWindowBlockedException blocked, int operation) {
     if (_disposed || operation != _operationId) return;
-    final videoResources = resources.where((item) => item.isVideo).toList();
-    if (videoResources.isEmpty) {
+    final expiresMs = blocked.windowExpiresAtMs;
+    dailyWindowExpiresAt =
+        expiresMs == null ? null : DateTime.fromMillisecondsSinceEpoch(expiresMs);
+    errorMessage = null;
+    showUpgradePrompt = true;
+    playbackStatus = PlayerPlaybackStatus.paused;
+    unawaited(refreshWatchWindowState());
+    _notify();
+  }
+
+  /// Presentation-only entitlement-denial routing (verdicts unchanged —
+  /// the allow/deny decision stays in the entitlement service / server):
+  /// - missing/inactive per-subject subscription → distinct message, never
+  ///   an upsell (the plan may already be correct; Subject Access itself
+  ///   may be off);
+  /// - genuine plan-tier gap → the upgrade wall (the only wall with a Pro
+  ///   CTA);
+  /// - anything else → the legacy error state, message untouched.
+  void _applyEntitlementDenial(int operation, {required String fallbackMessage}) {
+    if (_disposed || operation != _operationId) return;
+    final kind = _entitlement?.denialKind;
+    if (kind == VideoDenialKind.planUpsell) {
+      errorMessage = null;
+      showUpgradePrompt = true;
+      playbackStatus = PlayerPlaybackStatus.paused;
+      _notify();
+      return;
+    }
+    playbackStatus = PlayerPlaybackStatus.error;
+    errorMessage = kind == VideoDenialKind.subscriptionInactive
+        ? 'ليس لديك اشتراك فعال في هذه المادة.'
+        : (_entitlement?.message ?? fallbackMessage);
+    _notify();
+  }
+
+  /// Issuance-declared device block (Guest tier, no preview for this
+  /// lecture). Surfaces the device wall — contact the administration,
+  /// never an upgrade CTA. Reached only from the exact server sentinel
+  /// mapped to [DeviceNotAuthorizedException]; every other issuance
+  /// failure keeps its existing path.
+  void _applyDeviceBlockedWall(int operation) {
+    if (_disposed || operation != _operationId) return;
+    errorMessage = null;
+    deviceBlocked = true;
+    showUpgradePrompt = true;
+    playbackStatus = PlayerPlaybackStatus.paused;
+    _notify();
+  }
+
+  Future<void> _prepareSource({
+    required int operation,
+    required bool restoreProgress,
+    required bool autoplay,
+    List<VideoResource>? preloadedResources,
+    FirstVideoRef? fastVideoRef,
+  }) async {
+    _resetSourceState();
+    // Phase 5 fast lane: a pre-tap pointer with no preloaded listing starts
+    // playback without the full-listing round trip. The pointer authorizes
+    // nothing — issuance validates server-side; any rejection falls back
+    // to the authoritative legacy listing path with pristine state.
+    if (preloadedResources == null && fastVideoRef != null) {
+      try {
+        await _prepareFastSource(
+          operation: operation,
+          restoreProgress: restoreProgress,
+          autoplay: autoplay,
+          ref: fastVideoRef,
+        );
+        return;
+      } on FreeWindowBlockedException catch (blocked) {
+        _applyFreeWindowWall(blocked, operation);
+        return;
+      } on DeviceNotAuthorizedException {
+        _applyDeviceBlockedWall(operation);
+        return;
+      } catch (_) {
+        _resetSourceState();
+      }
+    }
+    final resources =
+        preloadedResources ?? await sourceResolver.loadResources(lectureId);
+    if (_disposed || operation != _operationId) return;
+    hasDocuments = resources.any((item) => item.isDocument);
+    // Canonical fallback selection (not a security boundary — the server
+    // filtered and ordered the listing). Null when nothing is playable.
+    final video = firstPlayableVideo(resources);
+    if (video == null) {
       throw const VideoSourceException(
-        'لا يوجد مصدر فيديو منشور لهذه المحاضرة.',
+        'No published video source found for this lecture.',
       );
     }
-    _resource = videoResources.first;
+    _resource = video;
+    final legacyTitle = video.title.trim();
+    if (legacyTitle.isNotEmpty) liveVideoTitle = legacyTitle;
     // Storage-delivery Fix 2: the callable now returns a SERVER-RESOLVED,
     // short-lived thumbnail URL (Firebase signed URL or Bunny token URL).
     // Adopt it for the active episode so episode cards and progress
@@ -237,36 +592,26 @@ class VideoPlaybackController extends ChangeNotifier {
     // reconciled the lecture minutes against the plan's
     // video.preview_duration default; here we only read the verdict.
     _previewCap = PreviewCapPolicy.capFor(_resource);
+    previewAudience = _resource?.previewAudience;
     showUpgradePrompt =
         _previewCap != null && _previewCap == Duration.zero;
 
-    if (restoreProgress) {
-      _resumeRecord = await playbackRepository.read(lectureId);
-      if (_disposed || operation != _operationId) return;
-      showResumePrompt =
-          ProgressMath.resumeAction(_resumeRecord) ==
-          ResumeAction.continueWatching;
-    }
+    // D1 overlap (shared helper): the restore-progress read runs
+    // concurrently with source resolution and is joined in _loadEngine.
+    final Future<PlaybackProgressRecord?>? resumeFuture =
+        restoreProgress ? _fireProgressRead() : null;
 
     try {
       await _loadEngine(
         operation: operation,
-        positionToRestore: restoreProgress ? _resumeRecord?.position : null,
+        resumeFuture: resumeFuture,
         autoplay: autoplay,
       );
     } on FreeWindowBlockedException catch (blocked) {
-      // FINAL_DECISIONS §12: a DIFFERENT video was requested while the
-      // rolling window is active. Surface the SAME upgrade wall used by §11
-      // — before playback starts, never mid-playback.
-      if (_disposed || operation != _operationId) return;
-      final expiresMs = blocked.windowExpiresAtMs;
-      dailyWindowExpiresAt =
-          expiresMs == null ? null : DateTime.fromMillisecondsSinceEpoch(expiresMs);
-      errorMessage = null;
-      showUpgradePrompt = true;
-      playbackStatus = PlayerPlaybackStatus.paused;
-      unawaited(refreshWatchWindowState());
-      _notify();
+      _applyFreeWindowWall(blocked, operation);
+      return;
+    } on DeviceNotAuthorizedException {
+      _applyDeviceBlockedWall(operation);
       return;
     }
     unawaited(refreshWatchWindowState());
@@ -300,18 +645,27 @@ class VideoPlaybackController extends ChangeNotifier {
   Future<void> _loadEngine({
     required int operation,
     Duration? positionToRestore,
+    Future<PlaybackProgressRecord?>? resumeFuture,
     required bool autoplay,
   }) async {
     final resource = _resource;
     if (resource == null) {
-      throw const VideoSourceException('مصدر الفيديو غير متاح.');
+      throw const VideoSourceException('Video source unavailable.');
     }
     _dropSession();
+    // Fresh engine attempt: exactly one firstFrame line will be logged for
+    // this initialization (see _onEngineUpdate). Buffering/downgrade state
+    // restarts here too so a previous stall cannot trigger an immediate
+    // downgrade of the new attempt.
+    _firstFrameLogged = false;
+    _bufferingStartedAt = null;
+    _downgradedThisEngine = false;
     _prefetchedSources.removeWhere((_, source) =>
         source.expiresAt.difference(DateTime.now()) <
         const Duration(seconds: 30));
     final cacheKey = _sourceCacheKey(lectureId, selectedQuality);
     final cachedSource = _prefetchedSources.remove(cacheKey);
+    final resolveStopwatch = Stopwatch()..start();
     final source =
         cachedSource != null &&
             cachedSource.expiresAt.difference(DateTime.now()) >
@@ -321,9 +675,50 @@ class VideoPlaybackController extends ChangeNotifier {
             resource: resource,
             quality: selectedQuality,
             subjectId: subjectId,
+            // Identity fix: the route lecture is the authorization
+            // identity (the video file only selects the bytes).
+            lectureId: lectureId,
           );
+    debugPrint(
+      '[VIDEO-TIMING] stage=signedUrl lectureId=$lectureId cached=${cachedSource != null} '
+      'elapsedMs=${resolveStopwatch.elapsedMilliseconds}',
+    );
+    // Issuance-verdict diagnostics (read-only): distinguishes a Full
+    // issuance from a Guest-tier preview verdict (device-blocked) and from
+    // denials, which throw before reaching this line.
+    debugPrint(
+      '[VIDEO-DIAG] issuance verdict lectureId=$lectureId '
+      'previewLimitSeconds=${source.previewLimitSeconds} '
+      'previewAudience=${source.previewAudience} '
+      'hasSession=${source.hasActiveSession}',
+    );
+    // A `center` preview audience means the server resolved this device to
+    // the Guest tier for the Subject: remember it for wall selection only
+    // (a consumed positive cap must render the device wall, not an upsell).
+    if (source.previewAudience == kPreviewAudienceCenter) {
+      deviceBlocked = true;
+    }
     _sourceExpiresAt = source.expiresAt;
     if (_disposed || operation != _operationId) return;
+
+    // Issuance-echoed Guest verdict (Phase 5): the server attaches
+    // previewLimitSeconds on Guest issuance only. Enforce it exactly like
+    // the listing-stamped cap (PreviewCapPolicy.capFor semantics). Absent
+    // on Full — no-op. On the legacy path the values are identical (same
+    // server verdict for the same student+lecture), so the shared
+    // _loadEngine callers (quality change, silent refresh) are unaffected.
+    if (source.previewLimitSeconds != null) {
+      final previewSeconds = source.previewLimitSeconds!;
+      _previewCap = previewSeconds <= 0
+          ? Duration.zero
+          : Duration(seconds: previewSeconds);
+      // A missing discriminator (older backend) must not wipe the
+      // listing-stamped audience adopted above — messaging falls back.
+      if (source.previewAudience != null) {
+        previewAudience = source.previewAudience;
+      }
+      showUpgradePrompt = _previewCap == Duration.zero;
+    }
 
     // Max session adoption (ADR-004 follow-up): only when the server
     // attached a session (2-allowance Subject, Full tier) and this is not
@@ -366,17 +761,60 @@ class VideoPlaybackController extends ChangeNotifier {
     _engine = null;
     await previous?.dispose();
 
-    final next = VideoPlayerController.networkUrl(source.url);
+    final next = VideoPlayerController.networkUrl(
+      source.url,
+      formatHint: source.url.path.toLowerCase().contains('.m3u8') ||
+              source.url.toString().toLowerCase().contains('.m3u8')
+          ? VideoFormat.hls
+          : null,
+    );
     _engine = next;
     next.addListener(_onEngineUpdate);
+    final engineStopwatch = Stopwatch()..start();
+    final initStart = _initStartedAt;
+    if (initStart != null) {
+      debugPrint(
+        '[VIDEO-TIMING] stage=engineInitStart lectureId=$lectureId '
+        'elapsedSinceInitMs=${DateTime.now().difference(initStart).inMilliseconds}',
+      );
+    }
     await next.initialize();
+    debugPrint(
+      '[VIDEO-TIMING] stage=engineInitialize lectureId=$lectureId '
+      'elapsedMs=${engineStopwatch.elapsedMilliseconds}',
+    );
     if (_disposed || operation != _operationId) {
       await next.dispose();
       return;
     }
+    // D1 join: the restore-progress read overlapped resolve() above, so this
+    // usually completes instantly. Same record, same prompt flag, same
+    // restore position as the serial path — set before the ready
+    // notification below, so observers see one consistent update.
+    // Other _loadEngine callers pass no future and are unaffected.
+    PlaybackProgressRecord? resumeRecord;
+    if (resumeFuture != null) {
+      try {
+        resumeRecord = await resumeFuture;
+      } catch (_) {
+        // Preserve the serial path's propagation: a restore-read failure
+        // surfaces from startup identically (the just-built engine is
+        // disposed first — at that point it did not exist yet).
+        await next.dispose();
+        rethrow;
+      }
+      if (_disposed || operation != _operationId) {
+        await next.dispose();
+        return;
+      }
+      _resumeRecord = resumeRecord;
+      showResumePrompt =
+          ProgressMath.resumeAction(resumeRecord) ==
+          ResumeAction.continueWatching;
+    }
     final effectiveRestore = adoptedSession != null
         ? adoptedSession.position
-        : positionToRestore;
+        : resumeRecord?.position ?? positionToRestore;
     if (effectiveRestore != null && effectiveRestore > Duration.zero) {
       await next.seekTo(
         ProgressMath.clampPosition(effectiveRestore, next.value.duration),
@@ -395,7 +833,19 @@ class VideoPlaybackController extends ChangeNotifier {
       // for the first interval tick.
       unawaited(coordinator.beatNow());
     }
-    if (autoplay) await play();
+    if (autoplay) {
+      // Autoplay must never fail the whole load: browsers (web) and OS
+      // policies can reject programmatic play without a user gesture.
+      // A rejection degrades to paused-ready; the student taps play once.
+      try {
+        await play();
+      } catch (_) {
+        if (!_disposed && operation == _operationId) {
+          playbackStatus = PlayerPlaybackStatus.paused;
+          _notify();
+        }
+      }
+    }
     unawaited(prefetchNextEpisode());
   }
 
@@ -414,7 +864,7 @@ class VideoPlaybackController extends ChangeNotifier {
     playbackStatus = PlayerPlaybackStatus.error;
     // Existing generic error state (no invented copy/layout).
     // BLOCKED (Figma): dedicated takeover-interruption visual state.
-    errorMessage = 'حدث خطأ أثناء تشغيل الفيديو. يمكنك إعادة المحاولة.';
+    errorMessage = 'A playback error occurred. Please retry.';
     _notify();
   }
 
@@ -464,14 +914,20 @@ class VideoPlaybackController extends ChangeNotifier {
       );
       if (nextIndex == null) return;
       final nextEpisode = episodes[nextIndex];
+      // §12: never mint (or cache) a signed URL the window will refuse —
+      // the switch path walls from the snapshot instead.
+      if (await _windowSnapshotBlocking(nextEpisode.id) != null) return;
       final resources = await sourceResolver.loadResources(nextEpisode.id);
-      final resource = resources.where((item) => item.isVideo).firstOrNull;
+      final resource = firstPlayableVideo(resources);
       if (resource == null || _disposed) return;
       final quality = selectedQuality;
       final source = await sourceResolver.resolve(
         resource: resource,
         quality: quality,
         subjectId: subjectId,
+        // Prefetched bytes belong to the NEXT episode: assert its lecture
+        // so the cached URL carries the correct authorization identity.
+        lectureId: nextEpisode.id,
       );
       if (!_disposed) {
         _prefetchedSources[_sourceCacheKey(nextEpisode.id, quality)] = source;
@@ -487,9 +943,19 @@ class VideoPlaybackController extends ChangeNotifier {
     if (_disposed) return;
     final value = _engine?.value;
     if (value == null || !value.isInitialized) return;
+    // Exact time-to-first-frame: first observed playing event per engine
+    // initialization. Logged once; behavior-neutral (read-only timestamp).
+    if (!_firstFrameLogged && value.isPlaying) {
+      _firstFrameLogged = true;
+      final initStart = _initStartedAt;
+      debugPrint(
+        '[VIDEO-TIMING] stage=firstFrame lectureId=$lectureId '
+        'tapToFirstFrameMs=${initStart == null ? -1 : DateTime.now().difference(initStart).inMilliseconds}',
+      );
+    }
     if (value.hasError) {
       playbackStatus = PlayerPlaybackStatus.error;
-      errorMessage = 'حدث خطأ أثناء تشغيل الفيديو. يمكنك إعادة المحاولة.';
+      errorMessage = 'A playback error occurred. Please retry.';
       _sessionCoordinator?.stopHeartbeat();
       _notify();
       return;
@@ -560,13 +1026,37 @@ class VideoPlaybackController extends ChangeNotifier {
   }
 
   Future<void> _downgradeAfterBuffering() async {
-    if (_disposed || _refreshingSource || _entitlement == null) return;
+    if (_disposed ||
+        _refreshingSource ||
+        _downgradedThisEngine ||
+        _entitlement == null) {
+      return;
+    }
+    // Startup-stall guard (TTFF fix): never rebuild the engine for buffering
+    // observed BEFORE the first frame. On slow networks the initial HLS
+    // attach + manifest + first segments can buffer >8s; downgrading there
+    // disposes the initializing engine and starts a second signed-URL +
+    // initialize cycle (2x engine init, 2x loading). Post-playback stalls
+    // (after first frame) still downgrade exactly once per engine load.
+    if (!_firstFrameLogged) return;
+    final activeEngine = _engine;
+    if (activeEngine == null || !activeEngine.value.isInitialized) return;
+    // `auto` (rank 0) means the server served the highest permitted
+    // rendition, so stepping down must reference the top of the allowed set
+    // — otherwise the filter below is empty and the default selection can
+    // never recover from sustained buffering.
+    final allowed = _entitlement!.allowedQualities;
+    final referenceRank = selectedQuality == VideoQuality.auto
+        ? allowed.fold<int>(
+            0,
+            (max, quality) => quality.rank > max ? quality.rank : max,
+          )
+        : selectedQuality.rank;
     final lower =
-        _entitlement!.allowedQualities
-            .where((quality) => quality.rank < selectedQuality.rank)
-            .toList()
+        allowed.where((quality) => quality.rank < referenceRank).toList()
           ..sort((left, right) => right.rank.compareTo(left.rank));
     if (lower.isEmpty) return;
+    _downgradedThisEngine = true;
     await changeQuality(lower.first);
   }
 
@@ -696,7 +1186,7 @@ class VideoPlaybackController extends ChangeNotifier {
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'تعذر تغيير الجودة.';
+            : 'Could not change the video quality.';
         _notify();
       }
       return false;
@@ -714,14 +1204,80 @@ class VideoPlaybackController extends ChangeNotifier {
     _notify();
   }
 
+  /// §12 pre-check shared by [switchEpisode] and [prefetchNextEpisode]:
+  /// returns the live window snapshot when it blocks [targetLectureId]
+  /// (active window owned by a DIFFERENT lecture), null otherwise.
+  /// Read-only projection of the server verdict (`getVideoWatchWindow`) —
+  /// never authorization logic; the issuance callable re-validates anyway.
+  /// Fail-open (null) on any error so a nicety read can never strand playback.
+  Future<WatchWindowSnapshot?> _windowSnapshotBlocking(
+    String targetLectureId,
+  ) async {
+    final gateway = watchWindowGateway;
+    if (_disposed || gateway == null) return null;
+    try {
+      final snapshot = await gateway.load();
+      if (_disposed) return null;
+      watchWindowActiveLectureId = snapshot.activeLectureId;
+      watchWindowExpiresAt = snapshot.expiresAt;
+      if (!snapshot.active) return null;
+      final activeId = snapshot.activeLectureId;
+      if (activeId == null || activeId.isEmpty) return null;
+      final expires = snapshot.expiresAt;
+      if (expires != null && !expires.isAfter(DateTime.now())) return null;
+      return activeId != targetLectureId ? snapshot : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> switchEpisode(
     LectureSummary episode, {
     String? newSectionId,
   }) async {
     if (_disposed || episode.id == lectureId) return;
+    final operation = ++_operationId;
+    // §12 pre-check (FINAL_DECISIONS): never tear down the current engine
+    // for a switch the server window will refuse — wall immediately for
+    // the target instead (no wasted issuance, no playback flicker).
+    final blocking = await _windowSnapshotBlocking(episode.id);
+    if (blocking != null) {
+      if (_disposed || operation != _operationId) return;
+      _dropSession();
+      _prefetchedSources.clear();
+      await _persistProgress(forceCloud: true);
+      final previous = _engine;
+      previous?.removeListener(_onEngineUpdate);
+      _engine = null;
+      await previous?.dispose();
+      lectureId = episode.id;
+      sectionId = episode.sectionId ?? sectionId;
+      episodeTitle = episode.title;
+      episodeThumbnailUrl = episode.thumbnailUrl;
+      liveVideoTitle = null;
+      skipIntroStart = episode.skipIntroStart;
+      skipIntroEnd = episode.skipIntroEnd;
+      _resumeRecord = null;
+      showResumePrompt = false;
+      showNextEpisodePrompt = false;
+      deviceBlocked = false;
+      _previewCap = null;
+      errorMessage = null;
+      playbackStatus = PlayerPlaybackStatus.loading;
+      _notify();
+      _applyFreeWindowWall(
+        FreeWindowBlockedException(
+          message: 'باقتك المجانية تسمح بمشاهدة فيديو واحد كل ٢٤ ساعة.',
+          windowExpiresAtMs:
+              blocking.expiresAt?.millisecondsSinceEpoch,
+          activeLectureId: blocking.activeLectureId,
+        ),
+        operation,
+      );
+      return;
+    }
     _dropSession();
     _prefetchedSources.clear();
-    final operation = ++_operationId;
     final shouldPlay = isPlaying;
     await _persistProgress(forceCloud: true);
     final previous = _engine;
@@ -732,17 +1288,35 @@ class VideoPlaybackController extends ChangeNotifier {
     sectionId = newSectionId ?? episode.sectionId ?? sectionId;
     episodeTitle = episode.title;
     episodeThumbnailUrl = episode.thumbnailUrl;
+    liveVideoTitle = null;
     skipIntroStart = episode.skipIntroStart;
     skipIntroEnd = episode.skipIntroEnd;
     _resumeRecord = null;
     showResumePrompt = false;
     showNextEpisodePrompt = false;
     showUpgradePrompt = false;
+    deviceBlocked = false;
     _previewCap = null; // recomputed by _prepareSource
     errorMessage = null;
     playbackStatus = PlayerPlaybackStatus.loading;
     _notify();
     try {
+      // Entitlement-first gate (parity with initialize/retry): the active
+      // subject's subscription is confirmed BEFORE any signed-URL issuance
+      // below, so an episode switch never mints a Bunny URL for a student
+      // who will be blocked anyway. The server re-validates on issuance
+      // regardless — this only avoids the wasted call.
+      _entitlement = await entitlementService.resolve(
+        userId: userId,
+        subjectId: subjectId,
+      );
+      if (_entitlement?.allowed != true) {
+        _applyEntitlementDenial(
+          operation,
+          fallbackMessage: 'You do not have permission to watch.',
+        );
+        return;
+      }
       await _prepareSource(
         operation: operation,
         restoreProgress: true,
@@ -753,7 +1327,7 @@ class VideoPlaybackController extends ChangeNotifier {
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'تعذر فتح الحلقة.';
+            : 'Could not open this episode.';
         _notify();
       }
     }
@@ -797,6 +1371,8 @@ class VideoPlaybackController extends ChangeNotifier {
     playbackStatus = PlayerPlaybackStatus.loading;
     errorMessage = null;
     showUpgradePrompt = false; // recomputed by _prepareSource
+    deviceBlocked = false;
+    _initStartedAt = DateTime.now();
     _notify();
     try {
       _entitlement ??= await entitlementService.resolve(
@@ -804,9 +1380,11 @@ class VideoPlaybackController extends ChangeNotifier {
         subjectId: subjectId,
       );
       if (_entitlement?.allowed != true) {
-        throw VideoSourceException(
-          _entitlement?.message ?? 'لا تملك صلاحية المشاهدة.',
+        _applyEntitlementDenial(
+          operation,
+          fallbackMessage: 'You do not have permission to watch.',
         );
+        return;
       }
       await _prepareSource(
         operation: operation,
@@ -818,7 +1396,7 @@ class VideoPlaybackController extends ChangeNotifier {
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'تعذر إعادة تشغيل الفيديو.';
+            : 'Could not restart the video. [${error.runtimeType}: $error]';
         _notify();
       }
     }
@@ -844,20 +1422,31 @@ class VideoPlaybackController extends ChangeNotifier {
   }
 
   Future<void> setFullscreen(bool value) async {
+    // The flag itself must ALWAYS apply (it drives the immersive layout);
+    // platform calls are individually best-effort because the web
+    // orientation lock can reject without a user gesture — previously that
+    // rejection aborted the whole call and fullscreen never engaged.
     fullscreen = value;
-    if (value) {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      await SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    } else {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      await SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-      ]);
-    }
+    try {
+      if (value) {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    } catch (_) {}
+    try {
+      if (value) {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+      }
+    } catch (_) {}
     if (!_disposed) _notify();
   }
 

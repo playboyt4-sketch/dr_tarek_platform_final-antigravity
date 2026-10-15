@@ -10,7 +10,7 @@ import '../entities/lecture_access.dart';
 ///
 /// Writes go through audited batch saves with deterministic ids; audit
 /// (`created_by`/`updated_by`, content-audit trigger) and permission
-/// enforcement (teacher / `admin_students` / `admin_content` delegation)
+/// enforcement (doctor / `admin_students` / `admin_content` delegation)
 /// live backend-side. The client never invents permission or audit
 /// identifiers beyond passing the session actor id.
 abstract interface class LectureAccessRepository {

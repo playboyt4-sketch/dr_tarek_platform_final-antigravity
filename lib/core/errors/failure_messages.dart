@@ -3,6 +3,17 @@ import 'package:flutter/material.dart';
 import '../../l10n/generated/app_localizations.dart';
 import 'failure.dart';
 
+/// Canonical Arabic copy for App Check attestation failures.
+///
+/// Deliberately neutral and flow-agnostic (NOT registration-specific):
+/// [FailureCode.appCheckFailed] is shared transport-level taxonomy, so a
+/// flow-specific string here would recreate the exact borrowed-copy bug
+/// class this fixes (e.g. Login showing a "registration" message). Kept as
+/// a const (same precedent as sectionHasActiveLectures below) so the legacy
+/// mapper in `friendly_error_message.dart` reuses it instead of drifting.
+const String appCheckFailureMessageAr =
+    'تعذر التحقق من سلامة التطبيق، تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+
 /// Translates a [FailureCode] into a localized, user-friendly message.
 /// This is the ONLY place where failure codes become display text.
 String failureMessage(AppLocalizations l10n, FailureCode code) {
@@ -41,6 +52,9 @@ String failureMessage(AppLocalizations l10n, FailureCode code) {
     FailureCode.noInternet => l10n.errorNoInternet,
     FailureCode.timeout => l10n.errorTimeout,
     FailureCode.server => l10n.errorServer,
+    // Attestation failure: neutral copy, never Login's wrongCredentials
+    // string (BUG-AUTH fix). See [appCheckFailureMessageAr].
+    FailureCode.appCheckFailed => appCheckFailureMessageAr,
     FailureCode.unknown => l10n.errorGeneric,
   };
 }

@@ -6,6 +6,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
 import '../providers/grade_pending_requests_provider.dart';
+import '../providers/grade_students_provider.dart';
 import 'grade_students_screen.dart' show gradeAccent;
 
 const List<({String key, String label})> _grades =
@@ -147,6 +148,7 @@ class _GradePendingRequestsViewScreenState
       subjects: subjects,
       initialToggles: _gradeToggles,
       initialPlans: _gradePlans,
+      hidePlans: !_isCenter,
     );
     if (updated == null || !mounted) return;
     setState(() {
@@ -170,6 +172,7 @@ class _GradePendingRequestsViewScreenState
       groups: groups,
       initialToggles: _otherToggles,
       initialPlans: _otherPlans,
+      hidePlans: !_isCenter,
     );
     if (updated == null || !mounted) return;
     setState(() {
@@ -184,32 +187,32 @@ class _GradePendingRequestsViewScreenState
   ) {
     // Defense in depth: only real loaded subject IDs may enter the
     // approve payload, even if a toggle map ever held a stale key.
+    // OFF / untouched rows produce NO write at all: an unregistered
+    // subject has no assignment document, so sending `enabled: false`
+    // would create clutter disabled rows in the Subjects tab while
+    // granting no entitlement. Only explicit ON enters the payload.
     final Set<String> liveIds = <String>{
       for (final SubjectOption subject in gradeSubjects) subject.id,
       for (final SubjectOption subject in otherSubjects) subject.id,
     };
     return <Map<String, Object>>[
       for (final SubjectOption subject in gradeSubjects)
-        <String, Object>{
-          'subjectId': subject.id,
-          // No default-ON: untouched rows stay disabled unless the
-          // reviewer explicitly switched them ON (05 Database: no
-          // default-all-subjects behavior is permitted).
-          'enabled': _gradeToggles[subject.id] ?? false,
-          'plan': _gradePlans[subject.id] ?? 'free',
-        },
+        if ((_gradeToggles[subject.id] ?? false) &&
+            liveIds.contains(subject.id))
+          <String, Object>{
+            'subjectId': subject.id,
+            'enabled': true,
+            'plan': _gradePlans[subject.id] ?? 'free',
+          },
       for (final SubjectOption subject in otherSubjects)
-        <String, Object>{
-          'subjectId': subject.id,
-          'enabled': _otherToggles[subject.id] ?? false,
-          'plan': _otherPlans[subject.id] ?? 'free',
-        },
-    ]
-        .where(
-          (Map<String, Object> item) =>
-              liveIds.contains(item['subjectId']),
-        )
-        .toList(growable: false);
+        if ((_otherToggles[subject.id] ?? false) &&
+            liveIds.contains(subject.id))
+          <String, Object>{
+            'subjectId': subject.id,
+            'enabled': true,
+            'plan': _otherPlans[subject.id] ?? 'free',
+          },
+    ].toList(growable: false);
   }
 
   Future<void> _approve() async {
@@ -244,6 +247,9 @@ class _GradePendingRequestsViewScreenState
           );
       if (!mounted) return;
       ref.invalidate(gradePendingRequestsProvider(_gradeKey));
+      // The approved student moves to the Students list: refresh every
+      // grade tab's student list so they appear without a manual reload.
+      ref.invalidate(gradeStudentsProvider);
       final bool hasPaidPlan = access.any(
         (Map<String, Object> item) =>
             item['enabled'] == true && (item['plan'] ?? 'free') != 'free',
@@ -298,6 +304,7 @@ class _GradePendingRequestsViewScreenState
           );
       if (!mounted) return;
       ref.invalidate(gradePendingRequestsProvider(_gradeKey));
+      ref.invalidate(gradeStudentsProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم رفض طلب الانضمام.')),
       );
@@ -1047,20 +1054,27 @@ Future<bool?> showStudentTypeDialog(
 
 /// Per-subject [ FREE | PRO | MAX ] capsule. The selected option fills
 /// orange (#F59E0B) with white text; the whole capsule is untappable
-/// while the subject switch is off.
+/// while the subject switch is off. When [freePlanEnabled] is false
+/// (system settings gate), the FREE segment is hidden entirely so the
+/// Admin cannot pick a plan the server will reject.
 class _PlanCapsule extends StatelessWidget {
   final String selected;
   final bool enabled;
+  final bool freePlanEnabled;
   final ValueChanged<String> onSelected;
 
   const _PlanCapsule({
     required this.selected,
     required this.enabled,
     required this.onSelected,
+    this.freePlanEnabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
+    final List<String> visiblePlans = freePlanEnabled
+        ? _subjectPlans
+        : _subjectPlans.where((p) => p != 'free').toList();
     return IgnorePointer(
       ignoring: !enabled,
       child: Opacity(
@@ -1074,7 +1088,7 @@ class _PlanCapsule extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              for (final String plan in _subjectPlans)
+              for (final String plan in visiblePlans)
                 GestureDetector(
                   onTap: () => onSelected(plan),
                   child: Container(
@@ -1115,9 +1129,13 @@ Widget _subjectRow({
   required ValueChanged<bool> onChanged,
   required String plan,
   required ValueChanged<String> onPlanChanged,
+  bool freePlanEnabled = true,
+  bool hidePlans = false,
 }) {
   // Figma order (left → right): name, green switch, plan capsule —
   // centered as one compact group (no spaceBetween).
+  // Guest students have no plans at all: the capsule is replaced by a
+  // static "ضيف" label so the Admin only toggles access.
   return SizedBox(
     height: 56,
     child: Row(
@@ -1148,12 +1166,35 @@ Widget _subjectRow({
           activeTrackColor: const Color(0xFF10B981),
         ),
         const SizedBox(width: 24),
-        // 3. Triple plan capsule.
-        _PlanCapsule(
-          selected: plan,
-          enabled: enabled,
-          onSelected: onPlanChanged,
-        ),
+        // 3. Triple plan capsule — hidden for Guest (no plans).
+        if (hidePlans)
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(9999),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: const Text(
+              'Guest',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          )
+        else
+          _PlanCapsule(
+            selected: plan,
+            enabled: enabled,
+            freePlanEnabled: freePlanEnabled,
+            onSelected: onPlanChanged,
+          ),
       ],
     ),
   );
@@ -1164,12 +1205,18 @@ Widget _subjectRow({
 /// per-subject [ FREE | PRO | MAX ] capsule (default FREE, untappable
 /// while the switch is off). The orange Save persists toggles + plans
 /// and closes the overlay.
+///
+/// When [freePlanEnabled] is false the FREE segment is hidden and rows
+/// without an explicit plan default to PRO — never to a known-disabled
+/// plan. The server check remains the true gate.
 Future<GradeSubjectsResult?> showGradeSubjectsDialog(
   BuildContext context, {
   required String gradeLabel,
   required List<SubjectOption> subjects,
   required Map<String, bool> initialToggles,
   required Map<String, String> initialPlans,
+  bool freePlanEnabled = true,
+  bool hidePlans = false,
 }) {
   final Map<String, bool> toggles = Map<String, bool>.from(initialToggles);
   final Map<String, String> plans = Map<String, String>.from(initialPlans);
@@ -1211,14 +1258,17 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
                               onChanged: (bool value) => setState(
                                 () => toggles[subject.id] = value,
                               ),
-                              plan: plans[subject.id] ?? 'free',
+                              plan: plans[subject.id] ??
+                                  (freePlanEnabled ? 'free' : 'pro'),
+                              freePlanEnabled: freePlanEnabled,
+                              hidePlans: hidePlans,
                               onPlanChanged: (String plan) => setState(
                                 () => plans[subject.id] = plan,
                               ),
                             ),
                         ],
                       ),
-               ),
+                ),
               const SizedBox(height: 8),
               Center(
                 child: _saveButton(
@@ -1240,6 +1290,9 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
 /// sections with switches + per-subject plans. Grade One students have
 /// no previous grades, so a clean empty state is shown. The fixed
 /// orange Save persists the makeup selection and closes the overlay.
+///
+/// Same FREE gating as [showGradeSubjectsDialog]: hidden FREE segment
+/// and PRO default when [freePlanEnabled] is false.
 Future<GradeSubjectsResult?> showOtherSubjectsDialog(
   BuildContext context, {
   required String gradeKey,
@@ -1247,6 +1300,8 @@ Future<GradeSubjectsResult?> showOtherSubjectsDialog(
   required Map<String, List<SubjectOption>> groups,
   required Map<String, bool> initialToggles,
   required Map<String, String> initialPlans,
+  bool freePlanEnabled = true,
+  bool hidePlans = false,
 }) {
   final Map<String, bool> toggles = Map<String, bool>.from(initialToggles);
   final Map<String, String> plans = Map<String, String>.from(initialPlans);
@@ -1312,7 +1367,10 @@ Future<GradeSubjectsResult?> showOtherSubjectsDialog(
                         onChanged: (bool value) => setState(
                           () => toggles[subject.id] = value,
                         ),
-                        plan: plans[subject.id] ?? 'free',
+                        plan: plans[subject.id] ??
+                            (freePlanEnabled ? 'free' : 'pro'),
+                        freePlanEnabled: freePlanEnabled,
+                        hidePlans: hidePlans,
                         onPlanChanged: (String plan) => setState(
                           () => plans[subject.id] = plan,
                         ),

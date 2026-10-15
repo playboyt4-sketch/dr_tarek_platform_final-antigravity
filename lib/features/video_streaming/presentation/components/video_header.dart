@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_typography.dart';
 import '../controllers/video_playback_controller.dart';
 import '../../domain/entities/playback_entities.dart';
 
@@ -22,75 +23,103 @@ class VideoHeader extends StatelessWidget {
             controller.selectedQuality.backendValue == null
         ? 'Auto'
         : controller.selectedQuality.backendValue!;
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.rs(30),
-        vertical: context.rsV(20),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          IconButton(
-            padding: EdgeInsets.zero,
-            icon: Icon(
-              Icons.chevron_left,
-              size: context.rsFont(32),
-              color: Colors.white,
-            ),
-            onPressed: onBack,
-          ),
-          SizedBox(width: context.rs(15)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  controller.episodeTitle,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: context.rsFont(18),
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: 0.5,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                SizedBox(height: context.rsV(2)),
-                Text(
-                  'حلقة ${controller.currentEpisodeIndex + 1}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: context.rsFont(13),
-                    color: const Color(0xFFCCCCCC),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          SizedBox(width: context.rs(15)),
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: context.rs(12),
-              vertical: context.rsV(4),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(context.rs(20)),
-            ),
-            child: Text(
-              qualityLabel,
-              style: TextStyle(
+    // Line 1 = lecture name (lectures/title).
+    // Line 2 = video name (lecture_resources/title via first_video/resource).
+    // No automatic "حلقة X" numbering: hidden when empty or identical to
+    // the lecture name to avoid duplication.
+    final rawVideoTitle = controller.videoTitle?.trim() ?? '';
+    final lectureTitle = controller.episodeTitle.trim();
+    final showSubtitle =
+        rawVideoTitle.isNotEmpty && rawVideoTitle != lectureTitle;
+    // Reference design is LTR (`docs/video player .html`, dir=ltr): back
+    // chevron on the LEFT, quality pill on the RIGHT. The app runs in an
+    // RTL locale which would mirror the Row, so the direction is pinned
+    // explicitly. Arabic title text inside keeps its own direction.
+    // DECIDED (Teacher/Platform Owner): the chevron stays LTR-left in all
+    // locales — same as the YouTube/Netflix player convention. No RTL
+    // mirroring of this bar.
+    // Type uses the resolved design-system font (Google Sans Flex per
+    // `docs/figma/app/design system.md`); the reference demo's Cairo face
+    // is intentionally not used.
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: context.rs(30),
+          vertical: context.rsV(20),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            IconButton(
+              padding: EdgeInsets.zero,
+              icon: Icon(
+                Icons.chevron_left,
+                size: context.rsFont(32),
                 color: Colors.white,
-                fontSize: context.rsFont(12),
-                fontWeight: FontWeight.w700,
+              ),
+              onPressed: onBack,
+            ),
+            SizedBox(width: context.rs(15)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    controller.episodeTitle,
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(
+                      fontFamily: AppFontFamilies.googleSansFlex,
+                      fontSize: context.rsFont(18),
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (showSubtitle) ...[
+                    SizedBox(height: context.rsV(2)),
+                    Text(
+                      rawVideoTitle,
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        fontFamily: AppFontFamilies.googleSansFlex,
+                        fontSize: context.rsFont(13),
+                        color: const Color(0xFFCCCCCC),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
               ),
             ),
-          ),
-        ],
+            SizedBox(width: context.rs(15)),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: context.rs(12),
+                vertical: context.rsV(4),
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(context.rs(20)),
+              ),
+              child: Text(
+                qualityLabel,
+                style: TextStyle(
+                  fontFamily: AppFontFamilies.googleSansFlex,
+                  color: Colors.white,
+                  fontSize: context.rsFont(12),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

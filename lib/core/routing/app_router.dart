@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin/presentation/screens/admin_home_screen.dart';
 import '../../features/authentication/domain/entities/session_state.dart';
 import '../../features/authentication/presentation/providers/session_provider.dart';
 import '../../features/authentication/presentation/screens/auth_gate.dart';
@@ -10,6 +11,7 @@ import '../../features/authentication/presentation/screens/new_student_welcome_s
 import '../../features/authentication/presentation/screens/splash_screen.dart';
 import '../../features/authentication/presentation/screens/teacher_admin_selection_screen.dart';
 import '../../features/authentication/presentation/screens/user_type_selection_screen.dart';
+import '../../features/student_home/presentation/screens/student_home_screen.dart';
 import 'app_routes.dart';
 
 /// Central declarative router.
@@ -42,6 +44,48 @@ String? resolveBootRedirect({
   return AppRoutes.splashPath;
 }
 
+/// Pure session-gate decision (side-effect free, testable).
+///
+/// - Authenticated users are sent to their role home when they land on a
+///   pre-login route (or on the other role's home).
+/// - Unauthenticated sessions landing directly on a home route (e.g. a
+///   restored web URL) are sent back to user-type selection.
+/// - A `null` session (still loading / no data yet) never redirects: the
+///   route's gate widget renders the loading state until it resolves.
+@visibleForTesting
+String? resolveSessionRedirect({
+  required SessionState? session,
+  required String location,
+}) {
+  const preLogin = {
+    AppRoutes.splashPath,
+    AppRoutes.userTypeSelectionPath,
+    AppRoutes.newStudentWelcomePath,
+    AppRoutes.loginPath,
+    AppRoutes.teacherAdminSelectionPath,
+  };
+  const homes = {
+    AppRoutes.studentHomePath,
+    AppRoutes.adminHomePath,
+  };
+
+  if (session is SessionAuthenticated) {
+    final dest =
+        authGateDestinationForRole(session.user.role) ==
+                AuthGateDestination.admin
+            ? AppRoutes.adminHomePath
+            : AppRoutes.studentHomePath;
+    if (location == dest) return null;
+    if (preLogin.contains(location)) return dest;
+    if (homes.contains(location)) return dest;
+    return null;
+  }
+
+  if (session == null) return null;
+  if (homes.contains(location)) return AppRoutes.userTypeSelectionPath;
+  return null;
+}
+
 final GoRouter appRouter = GoRouter(
   initialLocation: AppRoutes.splashPath, // or '/'
   redirect: (context, state) {
@@ -52,7 +96,20 @@ final GoRouter appRouter = GoRouter(
     if (next == null && state.matchedLocation == AppRoutes.splashPath) {
       _bootRedirectArmed = false;
     }
-    return next;
+    if (next != null) return next;
+    // Session gate: read synchronously (no listen) — post-login screens
+    // navigate explicitly via goNamed, so redirect only guards deep links,
+    // back-button landings, and restored web URLs.
+    final asyncSession = ProviderScope.containerOf(
+      context,
+    ).read(sessionProvider);
+    final session = asyncSession is AsyncData<SessionState>
+        ? asyncSession.value
+        : null;
+    return resolveSessionRedirect(
+      session: session,
+      location: state.matchedLocation,
+    );
   },
   routes: <GoRoute>[
     GoRoute(
@@ -92,6 +149,16 @@ final GoRouter appRouter = GoRouter(
       name: AppRoutes.teacherAdminSelection,
       builder: (context, state) => const TeacherAdminSelectionScreen(),
     ),
+    GoRoute(
+      path: AppRoutes.studentHomePath,
+      name: AppRoutes.studentHome,
+      builder: (context, state) => const _StudentHomeRoute(),
+    ),
+    GoRoute(
+      path: AppRoutes.adminHomePath,
+      name: AppRoutes.adminHome,
+      builder: (context, state) => const _AdminHomeRoute(),
+    ),
   ],
   errorBuilder: (context, state) => Scaffold(
     backgroundColor: const Color(0xFFFFFCF7),
@@ -103,6 +170,48 @@ final GoRouter appRouter = GoRouter(
     ),
   ),
 );
+
+/// Session-gated student home route: renders the home only for an
+/// authenticated student session, otherwise falls back to user-type
+/// selection (the redirect above also bounces direct URL hits).
+class _StudentHomeRoute extends ConsumerWidget {
+  const _StudentHomeRoute();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(sessionProvider);
+    return session.maybeWhen(
+      data: (state) =>
+          state is SessionAuthenticated &&
+                  authGateDestinationForRole(state.user.role) ==
+                      AuthGateDestination.student
+              ? StudentHomeScreen(user: state.user)
+              : const UserTypeSelectionScreen(),
+      orElse: () =>
+          const Scaffold(backgroundColor: Color(0xFFFFFCF7)),
+    );
+  }
+}
+
+/// Session-gated admin home route (mirrors [_StudentHomeRoute]).
+class _AdminHomeRoute extends ConsumerWidget {
+  const _AdminHomeRoute();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(sessionProvider);
+    return session.maybeWhen(
+      data: (state) =>
+          state is SessionAuthenticated &&
+                  authGateDestinationForRole(state.user.role) ==
+                      AuthGateDestination.admin
+              ? AdminHomeScreen(user: state.user)
+              : const UserTypeSelectionScreen(),
+      orElse: () =>
+          const Scaffold(backgroundColor: Color(0xFFFFFCF7)),
+    );
+  }
+}
 
 class AppRouter extends ConsumerWidget {
   const AppRouter({super.key});

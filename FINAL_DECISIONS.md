@@ -1,4 +1,6 @@
 
+> DEPRECATED POINTER (2026-10-14): authoritative content lives in `docs/notion/FINAL_DECISIONS.md` (v2.1, Approved). This root file is a partial fragment (§§11-15 plus ADR-003 excerpt), not the source of truth.
+
 ## Academic Term Lifecycle � ADR-003
 
 The platform uses four fixed academic periods: Term 1, Term 2, Summer Course, and Exceptional Period. Each period has start/end dates and is manually ended by Teacher (Platform Owner). Membership access follows the active academic period. See 16_ADR_003_Academic_Term_Lifecycle.md.

@@ -36,11 +36,33 @@ class _StudentProfileMembershipsTabState
   String get _gradeKey => GradeTheme.fromKey(widget.gradeKey).gradeId;
   Color get _accent => gradeAccent(_gradeKey);
 
+  /// Guest students have no plans at all — no Change Plan action.
+  bool get isGuest => !widget.student.isCenter;
+
   Future<void> _changePlan(StudentSubjectRegistration row) async {
+    // Guest: no plans — guard against any stray call.
+    if (isGuest) return;
+    // Fresh FREE-gate read for every dialog open:
+    // `freePlanAvailabilityProvider` is a one-shot auto-dispose fetch, so
+    // a Firestore change made outside the app would otherwise stay stale
+    // until a full reload. Fail-open on fetch failure (server gate
+    // remains the true boundary).
+    late final bool freeEnabled;
+    try {
+      freeEnabled = await ref.refresh(freePlanAvailabilityProvider.future);
+    } catch (_) {
+      if (!mounted) return;
+      freeEnabled = ref.read(freePlanAvailabilityProvider).maybeWhen(
+            data: (enabled) => enabled,
+            orElse: () => true,
+          );
+    }
+    if (!mounted) return;
     final String? updated = await showStudentPlanDialog(
       context,
       accent: _accent,
       currentPlan: row.planLabel,
+      freePlanEnabled: freeEnabled,
     );
     if (updated == null || !mounted) return;
     try {
@@ -67,6 +89,72 @@ class _StudentProfileMembershipsTabState
   Widget build(BuildContext context) {
     final AsyncValue<List<StudentSubjectRegistration>> rowsAsync =
         ref.watch(studentProfileSubjectsProvider(widget.student.id));
+
+    // Guest students have no plans: show a short notice above the table
+    // instead of plan actions.
+    if (isGuest) {
+      return SizedBox(
+        width: 830,
+        child: Column(
+          children: <Widget>[
+            Container(
+              width: 830,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: const Text(
+                'Guest student — no plans, guest access only.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  color: Color(0xFF6B7280),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            rowsAsync.when(
+              loading: () => const SizedBox(
+                height: 200,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (error, _) => SizedBox(
+                height: 200,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Text(
+                        'تعذّر تحميل مواد الطالب.',
+                        style: TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: () => ref.invalidate(
+                          studentProfileSubjectsProvider(widget.student.id),
+                        ),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              data: (rows) => _MembershipsTable(state: this, rows: rows),
+            ),
+          ],
+        ),
+      );
+    }
 
     return SizedBox(
       width: 830,
@@ -115,9 +203,12 @@ class _StudentProfileMembershipsTabState
 
 /// Memberships table (Figma Dev Mode: 830 wide): white card, 1 px
 /// #E5E7EB border, radius 16, black-25% shadow (blur 4, offset 0/4).
-/// Header 830 with 8 px padding — No. 56 | Subjects 306 | plan 116 |
-/// Status 116 | Action 156 — 1 px divider, then dynamic ~52 px data
-/// rows with 10 px padding. Row numbers are presentation-only.
+/// Header 830 with 8 px padding — No. 56 | Subjects 216 | Grade 146 |
+/// plan 116 | Status 116 | Action 156 (= 806, inside the 808 content
+/// width) — 1 px divider, then dynamic
+/// ~52 px data rows with 10 px padding. The Grade column shows each
+/// subject's OWN catalog grade (which may differ from the student's
+/// current grade). Row numbers are presentation-only.
 class _MembershipsTable extends StatelessWidget {
   final _StudentProfileMembershipsTabState state;
   final List<StudentSubjectRegistration> rows;
@@ -150,7 +241,8 @@ class _MembershipsTable extends StatelessWidget {
             child: Row(
               children: <Widget>[
                 SizedBox(width: 56, child: _MembershipHeaderLabel('No.')),
-                SizedBox(width: 306, child: _MembershipHeaderLabel('Subjects')),
+                SizedBox(width: 216, child: _MembershipHeaderLabel('Subjects')),
+                SizedBox(width: 146, child: _MembershipHeaderLabel('Grade')),
                 SizedBox(width: 116, child: _MembershipHeaderLabel('plan')),
                 SizedBox(width: 116, child: _MembershipHeaderLabel('Status')),
                 SizedBox(width: 156, child: _MembershipHeaderLabel('Action')),
@@ -218,6 +310,7 @@ class _MembershipDataRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final String number = (index + 1).toString().padLeft(2, '0');
+    final bool isGuest = state.isGuest;
     return Padding(
       padding: const EdgeInsets.all(10),
       child: Row(
@@ -229,7 +322,7 @@ class _MembershipDataRow extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontFamily: AppTypography.fontFamily,
-                fontSize: 24,
+                fontSize: 16,
                 fontWeight: FontWeight.w400,
                 fontVariations: <FontVariation>[FontVariation('wght', 400)],
                 color: Colors.black,
@@ -237,15 +330,31 @@ class _MembershipDataRow extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 306,
+            width: 216,
             child: Text(
               row.title,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
+                fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                color: Colors.black,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 146,
+            child: Text(
+              GradeTheme.subjectGradeLabel(row.gradeKey),
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontFamily: AppTypography.fontFamily,
-                fontSize: 24,
+                fontSize: 16,
                 fontWeight: FontWeight.w400,
                 fontVariations: <FontVariation>[FontVariation('wght', 400)],
                 color: Colors.black,
@@ -254,17 +363,30 @@ class _MembershipDataRow extends StatelessWidget {
           ),
           SizedBox(
             width: 116,
-            child: Text(
-              row.planLabel.isEmpty ? '—' : row.planLabel,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 24,
-                fontWeight: FontWeight.w400,
-                fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Colors.black,
-              ),
-            ),
+            child: isGuest
+                ? const Text(
+                    'Guest',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0xFF6B7280),
+                    ),
+                  )
+                : Text(
+                    row.planLabel.isEmpty ? '—' : row.planLabel,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                      fontVariations: <FontVariation>[
+                        FontVariation('wght', 400),
+                      ],
+                      color: Colors.black,
+                    ),
+                  ),
           ),
           SizedBox(
             width: 116,
@@ -275,31 +397,41 @@ class _MembershipDataRow extends StatelessWidget {
           SizedBox(
             width: 156,
             child: Center(
-              child: SizedBox(
-                width: 88,
-                height: 28,
-                child: ElevatedButton(
-                  onPressed: () => state._changePlan(row),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: state._accent,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.zero,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(9999),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Change Plan',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
-                      fontVariations: <FontVariation>[
-                        FontVariation('wght', 400),
-                      ],
+              child: isGuest
+                  ? const Text(
+                      '—',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 20,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                    )
+                  : SizedBox(
+                      width: 88,
+                      height: 28,
+                      child: ElevatedButton(
+                        onPressed: () => state._changePlan(row),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: state._accent,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9999),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'Change Plan',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                            fontVariations: <FontVariation>[
+                              FontVariation('wght', 400),
+                            ],
                       color: Color(0xFFFFFFFF),
                     ),
                   ),
@@ -350,15 +482,23 @@ class _StatusBadge extends StatelessWidget {
 /// Overlay 2 — Student Plan (328 x 220): FREE | PRO | MAX switch with
 /// the current plan preselected + Save. Returns the chosen plan key
 /// (lowercase) on save, null on dismiss.
+///
+/// When [freePlanEnabled] is false the FREE option is hidden and a stale
+/// FREE preselection falls back to PRO — the server check remains the
+/// true gate.
 Future<String?> showStudentPlanDialog(
   BuildContext context, {
   required Color accent,
   required String currentPlan,
+  bool freePlanEnabled = true,
 }) {
-  const List<String> plans = <String>['FREE', 'PRO', 'MAX'];
-  String temp = plans.contains(currentPlan.toUpperCase())
-      ? currentPlan.toUpperCase()
-      : 'FREE';
+  final List<String> plans = <String>[
+    if (freePlanEnabled) 'FREE',
+    'PRO',
+    'MAX',
+  ];
+  final String upper = currentPlan.toUpperCase();
+  String temp = plans.contains(upper) ? upper : 'PRO';
   return showGeneralDialog<String>(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.25),

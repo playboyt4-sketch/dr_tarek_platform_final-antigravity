@@ -2,13 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dr_tarek_platform/features/video_streaming/domain/entities/playback_entities.dart';
 
 void main() {
+  // VIDEO-ID-ONLY fixtures: bare Bunny GUIDs.
+  const String guid1 = '11111111-1111-4111-8111-111111111111';
+  const String guid2 = '22222222-2222-4222-8222-222222222222';
   group('VideoResource.fromCallablePayload (storage-delivery Fix 2 shape)', () {
     test('prefers the server-resolved thumbnailUrl over the raw path', () {
       final resource = VideoResource.fromCallablePayload({
         'id': 'res-1',
         'title': 'محاضرة',
         'resourceType': 'video',
-        'bunnyVideoId': 'vid-1',
+        'bunnyVideoId': guid1,
         // Server now returns BOTH: legacy raw path and resolved URL.
         'thumbnail': 'lecture_resources/lec-1/res-1/poster.jpg',
         'thumbnailUrl':
@@ -28,7 +31,7 @@ void main() {
         'id': 'res-2',
         'title': 'مرفق',
         'resourceType': 'video',
-        'bunnyVideoId': 'vid-2',
+        'bunnyVideoId': guid2,
         'thumbnailUrl': bunnyUrl,
         'thumbnailProvider': 'bunny',
       });
@@ -54,9 +57,14 @@ void main() {
       final attachment = VideoResource.fromCallablePayload(
           {'id': 'a', 'resourceType': 'attachment'});
       final video = VideoResource.fromCallablePayload(
-          {'id': 'v', 'resourceType': 'video', 'bunnyVideoId': 'x'});
+          {'id': 'v', 'resourceType': 'video', 'bunnyVideoId': guid1});
       final videoNoId = VideoResource.fromCallablePayload(
           {'id': 'w', 'resourceType': 'video'});
+      final videoUrl = VideoResource.fromCallablePayload({
+        'id': 'u',
+        'resourceType': 'video',
+        'bunnyVideoId': 'https://iframe.mediadelivery.net/embed/1/$guid1'
+      });
 
       expect(pdf.isDocument, isTrue);
       expect(pdf.resourceType, 'pdf');
@@ -65,6 +73,8 @@ void main() {
       expect(video.isDocument, isFalse);
       expect(video.isVideo, isTrue);
       expect(videoNoId.isVideo, isFalse);
+      // VIDEO-ID-ONLY: pasted player URLs are not playable.
+      expect(videoUrl.isVideo, isFalse);
     });
   });
 }

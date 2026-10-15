@@ -25,6 +25,14 @@ import { getFirestore } from "firebase-admin/firestore";
  *
  * Auth: Application Default Credentials
  * (gcloud auth application-default login) + project dr-tarek-platform.
+ *
+ * QUARANTINE NOTE (post ADR-005 Doctor migration) — documentation only, no
+ * behavior change. The preserved identity below is pinned by UID/phone (not
+ * by role), so it still matches the same owner person post-migration, but
+ * the "teacher account" wording is stale. Retargeting these constants or
+ * renaming them requires an owner decision — do not do it silently. This
+ * script remains DESTRUCTIVE (--live deletes every other users doc plus
+ * owned data across 10 collections); dry run is the default for a reason.
  */
 
 const PROJECT_ID =

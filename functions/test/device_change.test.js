@@ -24,14 +24,14 @@ try {
   process.exit(1);
 }
 
-const TEACHER = "tcf11_teacher";
+const DOCTOR = "tcf11_doctor";
 const ADMIN_NODEV = "tcf11_admin_nodev";
 const ADMIN_DEV = "tcf11_admin_dev";
 const STUDENT = "tcf11_student";
 const SUB_1 = "tcf11_sub1";
 const SUB_2 = "tcf11_sub2";
 
-const teacherCtx = {uid: TEACHER, token: {role: "teacher"}};
+const doctorCtx = {uid: DOCTOR, token: {role: "doctor"}};
 const adminNoDevCtx = {uid: ADMIN_NODEV, token: {role: "admin"}};
 const adminDevCtx = {uid: ADMIN_DEV, token: {role: "admin"}};
 const studentCtx = {uid: STUDENT, token: {role: "student"}};
@@ -128,14 +128,14 @@ async function run() {
       .where("student_id", "==", STUDENT).where("status", "==", "active").get()).size;
   }
 
-  // 1. Teacher approval revokes the old device's authorizations everywhere.
+  // 1. Doctor approval revokes the old device's authorizations everywhere.
   await seedRequest("tcf11-req1", {
     old_device_id: "tcf11-old-doc",
     new_device_id: "tcf11-new",
   });
   const res1 = await approveDeviceChange(
     {data: {requestId: "tcf11-req1", approve: true}},
-    teacherCtx,
+    doctorCtx,
   );
   assert.equal(res1.approved, true);
   assert.equal(res1.revokedCount, 2, "Both Subject authorizations revoked");
@@ -143,14 +143,14 @@ async function run() {
   const revoked = await db.collection("subject_device_authorizations").doc("tcf11-auth-1").get();
   assert.equal(revoked.data().status, "revoked");
   assert.equal(revoked.data().revoke_reason, "device_change");
-  assert.equal(revoked.data().revoked_by, TEACHER);
+  assert.equal(revoked.data().revoked_by, DOCTOR);
   const req1 = await db.collection("device_change_requests").doc("tcf11-req1").get();
   assert.equal(req1.data().status, "approved");
-  assert.equal(req1.data().resolved_by, TEACHER);
+  assert.equal(req1.data().resolved_by, DOCTOR);
   const audit1 = await db.collection("admin_audit_log").where("target_id", "==", "tcf11-req1").get();
   assert.equal(audit1.size, 1);
   assert.equal(audit1.docs[0].data().action, "device_change_approved");
-  assert.equal(audit1.docs[0].data().permission_basis, "teacher");
+  assert.equal(audit1.docs[0].data().permission_basis, "doctor");
   const analytics1 = await db.collection("analytics_events").where("reference_id", "==", "tcf11-req1").get();
   assert.ok(
     analytics1.docs.some((d) => d.data().event_type === "Device Replaced"),
@@ -161,7 +161,7 @@ async function run() {
   assert.equal((await auth.getUser(STUDENT)).uid, STUDENT, "Auth session intact");
   const studentAfter = await db.collection("users").doc(STUDENT).get();
   assert.ok(!("current_device_id" in studentAfter.data()), "No legacy pointer written");
-  console.log("ok - Teacher approval revokes old-device authorizations + audits");
+  console.log("ok - Doctor approval revokes old-device authorizations + audits");
 
   // 2. Student caller is denied.
   await seedRequest("tcf11-req2", {old_device_id: "tcf11-old-doc", new_device_id: "tcf11-evil"});
@@ -191,18 +191,18 @@ async function run() {
 
   // 4. Invalid requests: nonexistent, non-pending, incomplete.
   await expectCode(
-    approveDeviceChange({data: {requestId: "tcf11-missing", approve: true}}, teacherCtx),
+    approveDeviceChange({data: {requestId: "tcf11-missing", approve: true}}, doctorCtx),
     "not-found",
     "nonexistent request",
   );
   await expectCode(
-    approveDeviceChange({data: {requestId: "tcf11-req1", approve: true}}, teacherCtx),
+    approveDeviceChange({data: {requestId: "tcf11-req1", approve: true}}, doctorCtx),
     "failed-precondition",
     "already-approved request",
   );
   await seedRequest("tcf11-req5", {old_device_id: "tcf11-old-doc"});
   await expectCode(
-    approveDeviceChange({data: {requestId: "tcf11-req5", approve: true}}, teacherCtx),
+    approveDeviceChange({data: {requestId: "tcf11-req5", approve: true}}, doctorCtx),
     "failed-precondition",
     "incomplete request",
   );
@@ -215,7 +215,7 @@ async function run() {
   });
   await seedRequest("tcf11-req7", {old_device_id: "tcf11-old-doc", new_device_id: "tcf11-new3"});
   const res7 = await approveDeviceChange(
-    {data: {requestId: "tcf11-req7", approve: false}}, teacherCtx,
+    {data: {requestId: "tcf11-req7", approve: false}}, doctorCtx,
   );
   assert.equal(res7.approved, false);
   const req7 = await db.collection("device_change_requests").doc("tcf11-req7").get();

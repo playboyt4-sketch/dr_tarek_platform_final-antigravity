@@ -69,55 +69,20 @@ class AssessmentTakingController extends Notifier<AssessmentTakingState> {
     }
   }
 
+  /// O6-B: records the selected answer locally only. There is intentionally
+  /// no per-question server evaluation — correctness is computed solely by
+  /// the backend at final submission ([finalizeAttempt]). The returned future
+  /// exists to preserve the established async call convention at call sites.
   Future<void> submitAnswer(String answer) async {
     if (state.isSubmitting || state.isFinished) return;
-    
+
     final currentQ = state.currentQuestion;
     if (currentQ == null) return;
-    
+
     if (state.selectedAnswers.containsKey(currentQ.id)) return; // Already answered
 
-    state = state.copyWith(isSubmitting: true, errorMessage: null);
-    try {
-      dynamic result;
-      if (params.type == 'quiz') {
-        final repo = ref.read(timelineQuizzesRepositoryProvider);
-        result = await repo.evaluateAnswer(
-          attemptId: params.attemptId,
-          questionId: currentQ.id,
-          answer: answer,
-        );
-      } else {
-        final repo = ref.read(examsRepositoryProvider);
-        result = await repo.evaluateAnswer(
-          attemptId: params.attemptId,
-          questionId: currentQ.id,
-          answer: answer,
-        );
-      }
-
-      final isCorrect = result.correct;
-      final explanation = result.explanation;
-
-      final newAnswers = Map<String, String>.from(state.selectedAnswers)..[currentQ.id] = answer;
-      final newStatuses = Map<String, bool>.from(state.correctStatuses)..[currentQ.id] = isCorrect;
-      final newExplanations = Map<String, String>.from(state.explanations);
-      if (explanation != null) {
-        newExplanations[currentQ.id] = explanation;
-      }
-
-      state = state.copyWith(
-        isSubmitting: false,
-        selectedAnswers: newAnswers,
-        correctStatuses: newStatuses,
-        explanations: newExplanations,
-      );
-    } catch (e) {
-      state = state.copyWith(
-        isSubmitting: false,
-        errorMessage: 'Failed to submit answer: $e',
-      );
-    }
+    final newAnswers = Map<String, String>.from(state.selectedAnswers)..[currentQ.id] = answer;
+    state = state.copyWith(selectedAnswers: newAnswers);
   }
 
   void nextQuestion() {
@@ -128,32 +93,47 @@ class AssessmentTakingController extends Notifier<AssessmentTakingState> {
     );
   }
 
+  /// O6-B: final submission. The authoritative score is computed
+  /// server-side by `submitAssessmentAttempt`; the client only displays the
+  /// returned typed result and never calculates or trusts its own score.
+  /// The backend rejects repeated submissions (started-status gate), so a
+  /// second finalize cannot alter the persisted grade.
   Future<void> finalizeAttempt() async {
     if (state.isSubmitting || state.isFinished) return;
 
     state = state.copyWith(isSubmitting: true, errorMessage: null);
     try {
-      dynamic result;
+      // Strongly typed per branch (quiz/exam result classes are distinct
+      // types with an identical shape) — never `dynamic` property access.
+      int? score;
+      int? totalMarks;
+      bool? needsManualGrading;
       if (params.type == 'quiz') {
         final repo = ref.read(timelineQuizzesRepositoryProvider);
-        result = await repo.submitQuizAnswers(
+        final result = await repo.submitQuizAnswers(
           attemptId: params.attemptId,
           answers: state.selectedAnswers,
         );
+        score = result.score;
+        totalMarks = result.totalMarks;
+        needsManualGrading = result.needsManualGrading;
       } else {
         final repo = ref.read(examsRepositoryProvider);
-        result = await repo.submitExamAnswers(
+        final result = await repo.submitExamAnswers(
           attemptId: params.attemptId,
           answers: state.selectedAnswers,
         );
+        score = result.score;
+        totalMarks = result.totalMarks;
+        needsManualGrading = result.needsManualGrading;
       }
 
       state = state.copyWith(
         isSubmitting: false,
         isFinished: true,
-        finalScore: result.score,
-        totalMarks: result.totalMarks,
-        needsManualGrading: result.needsManualGrading,
+        finalScore: score,
+        totalMarks: totalMarks,
+        needsManualGrading: needsManualGrading,
       );
     } catch (e) {
       state = state.copyWith(

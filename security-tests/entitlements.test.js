@@ -133,9 +133,9 @@ async function run() {
     // Without access (no assignment doc)
     await assertFails(dbFor('student-no-access', {role: 'student', approved: true}).doc('lecture_resources/resource-test').get());
 
-    // Test 2: Teacher reads remain unaffected
-    console.log("Test: Teacher/Admin reads unaffected");
-    await assertSucceeds(dbFor('teacher-1', {role: 'teacher'}).doc('lecture_resources/resource-test').get());
+    // Test 2: Doctor reads remain unaffected
+    console.log("Test: Doctor/Admin reads unaffected");
+    await assertSucceeds(dbFor('doctor-1', {role: 'doctor'}).doc('lecture_resources/resource-test').get());
 
     // Test 3: Notes & Bookmarks (entitlement + ownership)
     console.log("Test: Notes & Bookmarks access (entitlement + ownership)");

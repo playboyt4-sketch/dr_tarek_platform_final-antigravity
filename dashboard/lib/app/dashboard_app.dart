@@ -13,7 +13,12 @@ class DashboardApp extends ConsumerWidget {
       title: 'Dr Tarek Dashboard',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: const DashboardRouter(),
+      // Deep-link support: on web the live URL path (`/doctor`, `/admin`)
+      // becomes the initial route via the Hosting SPA rewrite; elsewhere
+      // this falls back to `/`. Path selection is UX-only — the session
+      // role rendered by [DashboardRouter] decides actual access.
+      initialRoute: Uri.base.path,
+      onGenerateRoute: buildDashboardRoute,
     );
   }
 }

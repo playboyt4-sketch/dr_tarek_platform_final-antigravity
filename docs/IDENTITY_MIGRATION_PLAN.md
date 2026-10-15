@@ -1,22 +1,21 @@
 # IDENTITY MIGRATION PLAN
 
-Status: **EXECUTED 2026-08-22 — Final identity adopted by owner delegation: com.drtarek.platform**
-Version: 1.0
-Date: 2026-08-22
-Owner decision required: **Final Identifier value** (see Section 2). This plan
-must NOT be executed until the Project Owner selects the Final Identifier.
-No identifier value is proposed or chosen here.
+Status: **DECIDED 2026-10-14 — Owner-ratified final identity: `com.drtarek.platform`** (technical migration executed 2026-08-22; this v1.1 closes the decision gate, keeps the execution log below).
+Version: 1.1
+Date: 2026-08-22 (v1.1 decision close-out: 2026-10-14)
+Owner decision: **RECORDED — see Section 2**. No new identifier value is proposed here.
 
 ---
 
 ## 1. Current State (verified 2026-08-22)
 
-### 1.1 Display names — ALREADY CORRECT (do not touch)
+### 1.1 Display names — CORRECTED v1.1 (2026-10-14 audit: v1.0 misstated the
+brand prefix; actual files carry the owner-selected store name without "Dr.")
 
 | Platform | Key | Value | File |
 |---|---|---|---|
-| Android | `android:label` | Dr. Tarek El Araby Platform | `android/app/src/main/AndroidManifest.xml:6` |
-| iOS | `CFBundleDisplayName` | Dr. Tarek El Araby Platform | `ios/Runner/Info.plist:9-10` |
+| Android | `android:label` | Tarek El Araby Platform | `android/app/src/main/AndroidManifest.xml:6` |
+| iOS | `CFBundleDisplayName` | Tarek El Araby Platform | `ios/Runner/Info.plist:9-10` |
 | iOS | `CFBundleName` | DrTarekElArabyPlatform | `ios/Runner/Info.plist:17-18` |
 | Web | `<title>` / apple title / manifest name+short_name | Dr. Tarek El Araby Platform | fixed during Final Verification phase |
 
@@ -53,16 +52,23 @@ listed only for completeness.
 - iOS app registered under OLD Bundle ID (appId `1:606744934510:ios:…`)
 - Web app registered (unaffected by this migration)
 
-## 2. Required Owner Decision
+## 2. Owner Decision (RECORDED 2026-10-14 — supersedes the pre-decision gate below)
 
-The Project Owner must supply exactly two values:
+Owner-ratified finals (do not change without explicit approval):
 
-1. **Android Application ID** (final, permanent after first Play upload).
-   Convention: reverse-domain owned by the business.
-2. **iOS/macOS Bundle ID** (final). May equal the Android application id;
-   that is an owner choice, not an assumption of this plan.
+1. **Android Application ID (final):** `com.drtarek.platform`
+2. **iOS Bundle ID (final):** `com.drtarek.platform`
+3. **Store-facing app name:** `Tarek El Araby Platform`
+4. **App Store Connect SKU:** `TAREK-PLATFORM-IOS-001`
+5. **Primary category:** `Education`
+6. **Versioning:** keep `1.0.0+1` temporarily; final build-number policy still open (see `13_Releases.md`).
+7. **TestFlight backend:** isolated Firebase Staging (not production).
+8. **Role migration:** `teacher` → `doctor` atomic, before iOS publication.
+9. **iOS screenshot behavior:** detection-only (correct the product promise).
 
-Until these values arrive, NO file listed above is modified.
+Pre-decision gate text (historical, kept for audit trail): the owner values
+above were pending at v1.0. Execution in Section 3 was performed against the
+candidate that the owner has now ratified as final.
 
 ## 3. Execution Steps (after owner supplies values)
 

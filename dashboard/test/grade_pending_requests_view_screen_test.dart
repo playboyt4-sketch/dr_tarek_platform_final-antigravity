@@ -20,7 +20,6 @@ const GradeStudentsData _shellGradeOneData = GradeStudentsData(
       id: 'a1',
       name: 'Ahmed gamal mousa',
       isCenter: true,
-      plan: 'PRO',
       isActive: true,
       lastSignIn: '12/8/2026',
     ),
@@ -30,7 +29,7 @@ const GradeStudentsData _shellGradeOneData = GradeStudentsData(
     PlanBreakdownRow(label: 'Free', count: 0, share: 0),
     PlanBreakdownRow(label: 'PRO', count: 1, share: 100),
     PlanBreakdownRow(label: 'MAX', count: 0, share: 0),
-    PlanBreakdownRow(label: 'Guest', count: 0, share: 0),
+    PlanBreakdownRow(label: 'No active plan', count: 0, share: 0),
   ],
   isFallback: false,
 );
@@ -532,15 +531,39 @@ void main() {
       expect(backend.lastSubjectAccess, isEmpty);
     });
 
-    testWidgets('live subjects flow with real IDs only, never fallback IDs',
+    testWidgets('live subjects flow sends only explicitly enabled IDs',
         (WidgetTester tester) async {
       final _RecordingDecisionController backend =
           _RecordingDecisionController();
       await _pumpView(tester, decisionController: backend);
 
+      // No subject toggled ON: nothing is registered, so the payload is
+      // empty — OFF / untouched rows never create disabled assignments.
       await tester.tap(find.text('Approve'));
       // Success path shows a SnackBar: settle with bounded pumps instead
       // of pumpAndSettle.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+
+      expect(backend.approveCalls, 1);
+      expect(backend.lastSubjectAccess, isEmpty);
+    });
+
+    testWidgets('enabled subjects are the only IDs submitted',
+        (WidgetTester tester) async {
+      final _RecordingDecisionController backend =
+          _RecordingDecisionController();
+      await _pumpView(tester, decisionController: backend);
+
+      await tester.tap(find.text('Student Subjects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CupertinoSwitch).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Approve'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
@@ -550,11 +573,10 @@ void main() {
         for (final Map<String, Object> item in backend.lastSubjectAccess)
           item['subjectId'],
       };
-      expect(ids, <Object?>{'s1', 's2'});
+      expect(ids, <Object?>{'s1'});
       expect(
         backend.lastSubjectAccess.every(
-          (Map<String, Object> item) =>
-              !(item['subjectId'] as String).startsWith('fallback-'),
+          (Map<String, Object> item) => item['enabled'] == true,
         ),
         isTrue,
       );

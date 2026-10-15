@@ -20,13 +20,6 @@ class InMemoryExamsRepository implements ExamsRepository {
   Future<AssessmentSubmitResult> submitExamAnswers({required String attemptId, required Map<String, String> answers}) => throw UnimplementedError();
 
   @override
-  Future<Map<String, dynamic>> evaluateAnswer({
-    required String attemptId,
-    required String questionId,
-    required String answer,
-  }) => throw UnimplementedError();
-
-  @override
   Future<List<Map<String, dynamic>>> getAssessmentQuestions({
     required String attemptId,
   }) => throw UnimplementedError();

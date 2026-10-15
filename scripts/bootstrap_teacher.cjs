@@ -1,8 +1,20 @@
 #!/usr/bin/env node
 /**
- * bootstrap_teacher.cjs — ONE-TIME Platform Owner (Teacher) bootstrap.
+ * bootstrap_teacher.cjs — ONE-TIME Platform Owner bootstrap (HISTORICAL).
  *
- * Run locally by the Teacher (Platform Owner) with a service-account key.
+ * This script created the original Platform Owner when the technical role
+ * was `teacher`. Per ADR-005 the Platform Owner role is now `doctor`
+ * ("Doctor (Platform Owner)"), and the live owner is migrated by the
+ * dedicated operator script scripts/migrate_teacher_to_doctor.cjs —
+ * THIS FILE IS NOT THE MIGRATION MECHANISM and must not be used as one.
+ *
+ * Post-migration safety: the self-lock below aborts when ANY owner-role
+ * account (`teacher` OR `doctor`) exists, so this script can never create
+ * a second Platform Owner under the legacy `teacher` role. New accounts
+ * created through this script (only possible when NO owner exists at all)
+ * use the current `doctor` role.
+ *
+ * Run locally by the Platform Owner with a service-account key.
  * This file lives at <repo>/scripts/ which is OUTSIDE the deployed
  * `functions/` source directory (firebase.json -> functions.source =
  * "functions"), so it can never be deployed as a callable endpoint. It is
@@ -11,8 +23,8 @@
  * What it creates (mirroring registerNewStudent's write pattern exactly):
  *   1. Firebase Auth user          admin.auth().createUser({displayName}) — no email,
  *                                  per the Custom Tokens architecture (FINAL_DECISIONS §3).
- *   2. Custom claims               { role: "teacher", approved: true }   (15 Admin Permissions §2.1)
- *   3. users/{uid}                 role: "teacher", approval_status: "approved",
+ *   2. Custom claims               { role: "doctor", approved: true }   (15 Admin Permissions §2.1, ADR-005)
+ *   3. users/{uid}                 role: "doctor", approval_status: "approved",
  *                                  account_status: "active", full 05 Database field set.
  *   4. user_secrets/{uid}          password_hash in the EXACT hashPassword() format of
  *                                  functions/src/index.ts ("scrypt$salt$hash$16384",
@@ -20,7 +32,7 @@
  *                                  Firestore batch together with the users doc.
  *
  * Safety properties:
- *   - Self-locking: aborts if ANY users doc with role == "teacher" exists.
+ *   - Self-locking: aborts if ANY owner-role users doc exists.
  *     No delete/recreate convenience is provided on purpose.
  *   - Rollback: if any step after Auth-user creation fails, the Auth user is
  *     deleted so no half-created owner can linger.
@@ -144,7 +156,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("=== Dr. Tarek Platform — one-time Teacher (Platform Owner) bootstrap ===");
+  console.log("=== Dr. Tarek Platform — one-time Doctor (Platform Owner) bootstrap ===");
   const fullName = await ask(rl, "full_name (this is your LOGIN name): ");
   const displayHandle = await ask(rl, "display_handle (public identity, e.g. Dr/tarekelaraby): ");
   const phoneNumber = await ask(rl, "phone_number (Egypt format 01001234567): ");
@@ -169,16 +181,18 @@ async function main() {
   const auth = admin.auth();
   const db = admin.firestore();
 
-  // ---- Guard 1: self-locking (Master Architecture §6 — exactly ONE teacher) ----
-  const existingTeachers = await db
+  // ---- Guard 1: self-locking (Master Architecture §6 — exactly ONE owner).
+  // Post ADR-005: lock on EITHER legacy `teacher` or current `doctor` so
+  // this script can never mint a second owner under the old role.
+  const existingOwners = await db
     .collection("users")
-    .where("role", "==", "teacher")
+    .where("role", "in", ["teacher", "doctor"])
     .limit(1)
     .get();
-  if (!existingTeachers.empty) {
+  if (!existingOwners.empty) {
     console.error(
-      "ABORT: a Teacher account already exists (users/" +
-        existingTeachers.docs[0].id +
+      "ABORT: a Platform Owner account already exists (users/" +
+        existingOwners.docs[0].id +
         "). This bootstrap can only ever run once.",
     );
     process.exit(1);
@@ -201,8 +215,8 @@ async function main() {
     // 1) Auth user — mirrors registerNewStudent (no email, Custom Tokens flow).
     authUser = await auth.createUser({ displayName: name });
 
-    // 2) Claims (15 §2.1: role:"teacher", approved:true).
-    await auth.setCustomUserClaims(authUser.uid, { role: "teacher", approved: true });
+    // 2) Claims (15 §2.1 as updated by ADR-005: role:"doctor", approved:true).
+    await auth.setCustomUserClaims(authUser.uid, { role: "doctor", approved: true });
 
     // 3) Atomic Firestore writes: users + user_secrets in ONE batch.
     const now = admin.firestore.FieldValue.serverTimestamp();
@@ -213,7 +227,7 @@ async function main() {
       display_handle: handle,
       profile_photo: "",
       phone_number: phone,
-      role: "teacher",
+      role: "doctor",
       student_type: null,
       grade: null,
       custom_group_id: null,

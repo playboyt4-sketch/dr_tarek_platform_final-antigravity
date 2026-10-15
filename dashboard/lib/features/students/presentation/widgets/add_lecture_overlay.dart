@@ -15,6 +15,74 @@ import '../../../../core/errors/failure.dart';
 import '../../domain/entities/lecture_access.dart';
 import '../providers/subject_details_provider.dart';
 
+/// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
+bool isValidBunnyVideoId(String raw) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(raw.trim());
+}
+
+/// One staged (not yet saved) lecture resource in the Add/Edit dialog
+/// session. Carries the full detail payload — not just the display
+/// title — so Edit reopens the same values and Save persists them:
+/// Video keeps its Bunny ID, External Link keeps its URL, and
+/// file-backed types (PDF/Attachment) keep the picked bytes in memory
+/// until the lecture-creation batch uploads them.
+class _StagedResource {
+  String title;
+  String type;
+  String no;
+  String? videoId;
+  String? url;
+  String? fileName;
+  Uint8List? fileBytes;
+  String? contentType;
+
+  _StagedResource({
+    required this.title,
+    required this.type,
+    required this.no,
+    this.videoId,
+    this.url,
+    this.fileName,
+    this.fileBytes,
+    this.contentType,
+  });
+}
+
+/// One already-persisted `lecture_resources` row shown in Edit mode.
+/// Keeps the stored detail payload (Bunny id / URL / storage path) so
+/// the Edit pill can reopen the real values, plus an in-memory dirty
+/// flag + optional replacement file staged until Save commits them via
+/// `updateLectureFull(updatedResources: ...)`.
+class _ExistingResourceEntry {
+  final String id;
+  String title;
+  String typeDisplay;
+  String wireType;
+  String no;
+  int order;
+  String? videoId;
+  String? url;
+  String? storagePath;
+  Uint8List? newFileBytes;
+  String? newFileName;
+  String? newContentType;
+  bool dirty = false;
+
+  _ExistingResourceEntry({
+    required this.id,
+    required this.title,
+    required this.typeDisplay,
+    required this.wireType,
+    required this.no,
+    required this.order,
+    this.videoId,
+    this.url,
+    this.storagePath,
+  });
+}
+
 class AddLectureOverlay extends ConsumerStatefulWidget {
   final String subjectId;
   final String gradeKey;
@@ -23,6 +91,13 @@ class AddLectureOverlay extends ConsumerStatefulWidget {
   final Color gradeColor;
   final VoidCallback? onClose;
   final VoidCallback? onSave;
+
+  /// Edit mode: the existing lecture id to load and update. Null (default)
+  /// keeps the original Add behavior. Grade/Subject/Section lock to the
+  /// lecture's context; every other field (name, order, resources,
+  /// publish state, guest access, per-student access) stays editable on
+  /// this same page.
+  final String? lectureId;
 
   const AddLectureOverlay({
     super.key,
@@ -33,6 +108,7 @@ class AddLectureOverlay extends ConsumerStatefulWidget {
     required this.gradeColor,
     this.onClose,
     this.onSave,
+    this.lectureId,
   });
 
   static Future<void> show(
@@ -42,6 +118,7 @@ class AddLectureOverlay extends ConsumerStatefulWidget {
     required SubjectContentTab tab,
     required int initialOrder,
     required Color gradeColor,
+    String? lectureId,
   }) {
     return showDialog<void>(
       context: context,
@@ -53,6 +130,7 @@ class AddLectureOverlay extends ConsumerStatefulWidget {
         tab: tab,
         initialOrder: initialOrder,
         gradeColor: gradeColor,
+        lectureId: lectureId,
       ),
     );
   }
@@ -134,13 +212,63 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
   DateTime? _publishDate;
   TimeOfDay? _publishTime;
 
+  /// Edit mode only: true once the doctor re-picks or clears the
+  /// schedule since load. The stored `publish_date` is prefilled for
+  /// display, but an untouched picker must NEVER count as a fresh
+  /// schedule — otherwise plain Save on a published lecture would
+  /// demote it to draft (مسودة) on every edit.
+  bool _scheduleTouched = false;
+
   bool _saving = false;
   String? _formError;
 
   /// Staged lecture resources for this dialog session. Starts empty;
   /// entries are appended as the user saves them via the
   /// "+ Add Resource" sub-dialogs (no backend involved until Save).
-  final List<Map<String, String>> _resources = [];
+  /// Each entry keeps its full detail payload (video id, URL, picked
+  /// file bytes) so Edit reopens real values and Save persists them.
+  final List<_StagedResource> _resources = <_StagedResource>[];
+
+  /// True when opened from Subject Details (grade + subject already known).
+  /// Grade/Subject are then prefilled and locked; the flow starts at Section.
+  /// Edit mode is always context-locked: a lecture never moves grade,
+  /// subject, or section through this form.
+  bool get _isEditMode => widget.lectureId != null;
+
+  bool get _isContextLocked =>
+      widget.subjectId.isNotEmpty || _isEditMode;
+
+  /// Edit-mode load state: the persisted snapshot fills every field
+  /// (name, order, publish date/time, guest access, minutes, access
+  /// overrides, existing resources) once delivered.
+  bool _loadingEdit = false;
+  String? _editStatus;
+
+  /// Persisted resources of the edited lecture (full detail payload).
+  /// Deleting one stages a soft-delete committed on Save; editing one
+  /// marks it dirty so Save commits an in-place update instead.
+  final List<_ExistingResourceEntry> _existingResources = [];
+  final Set<String> _deleteResourceIds = <String>{};
+
+  static const Map<String, String> _wireToDisplayType = <String, String>{
+    'video': 'Video',
+    'pdf': 'PDF',
+    'attachment': 'Attachment',
+    'external_link': 'External Link',
+  };
+
+  static String _sectionForTab(SubjectContentTab tab) {
+    switch (tab) {
+      case SubjectContentTab.revisions:
+        return 'Revision';
+      case SubjectContentTab.finalTab:
+        return 'Final';
+      case SubjectContentTab.online:
+        return 'Online';
+      case SubjectContentTab.lectures:
+        return 'Lecture';
+    }
+  }
 
   @override
   void initState() {
@@ -154,12 +282,24 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       selectedGrade = displayGrade;
       availableSubjects = gradeSubjects[displayGrade]!;
     } else {
-      selectedGrade = null;
+      selectedGrade = displayGrade == 'غير محددة' ? null : displayGrade;
       availableSubjects = const [];
     }
-    selectedSection = null;
+    // Locked context (Subject Details: grade + subject already known):
+    // start from Section with the working tab preselected and the
+    // display order prefilled. Quick-Add (home, no subject) keeps the
+    // old behavior: Section unpicked and order empty until a subject
+    // is chosen (order is then recomputed live).
+    if (widget.subjectId.isNotEmpty) {
+      selectedSection = _sectionForTab(widget.tab);
+      _orderController = TextEditingController(
+        text: widget.initialOrder.toString().padLeft(2, '0'),
+      );
+    } else {
+      selectedSection = null;
+      _orderController = TextEditingController();
+    }
     _nameController = TextEditingController();
-    _orderController = TextEditingController();
     _minutesController = TextEditingController();
 
     _nameFocus = FocusNode();
@@ -172,7 +312,94 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
         if (mounted) _resolveCatalogSubject();
       });
     }
+    // Edit mode: load the persisted snapshot and prefill the whole page.
+    if (_isEditMode) {
+      _loadingEdit = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadEditData();
+      });
+    }
   }
+
+  /// Edit-mode load: fills every field from the persisted snapshot so
+  /// the doctor edits the real lecture (name, order, publish schedule,
+  /// guest access, minutes, access overrides, existing resources).
+  Future<void> _loadEditData() async {
+    final String? lectureId = widget.lectureId;
+    if (lectureId == null) return;
+    try {
+      final LectureEditData data = await ref
+          .read(subjectDetailsControllerProvider)
+          .getLectureForEdit(lectureId);
+      if (!mounted) return;
+      setState(() {
+        _loadingEdit = false;
+        _editStatus = data.status;
+        _nameController.text = data.title;
+        _orderController.text =
+            data.displayOrder.toString().padLeft(2, '0');
+        _guestAccess = data.guestEnabled;
+        _minutesController.text =
+            data.previewMinutes == null ? '' : '${data.previewMinutes}';
+        if (data.publishDate != null) {
+          _publishDate = DateTime(
+            data.publishDate!.year,
+            data.publishDate!.month,
+            data.publishDate!.day,
+          );
+          _publishTime = TimeOfDay(
+            hour: data.publishDate!.hour,
+            minute: data.publishDate!.minute,
+          );
+        } else {
+          _publishDate = null;
+          _publishTime = null;
+        }
+        // Prefilled for display only — untouched pickers keep the
+        // stored schedule/status as is on Save.
+        _scheduleTouched = false;
+        _accessByStudent = Map<String, bool>.from(data.accessOverrides);
+        _existingResources.clear();
+        _deleteResourceIds.clear();
+        for (final LectureEditResource resource in data.resources) {
+          final String displayType =
+              _wireToDisplayType[resource.type] ?? resource.type;
+          final String title = resource.title.isEmpty
+              ? displayType
+              : resource.title;
+          _existingResources.add(_ExistingResourceEntry(
+            id: resource.id,
+            title: title,
+            typeDisplay: displayType,
+            wireType: resource.type,
+            no: '${resource.displayOrder.toString().padLeft(2, '0')}.',
+            order: resource.displayOrder,
+            videoId: resource.bunnyVideoId,
+            url: resource.externalUrl,
+            storagePath: resource.storagePath,
+          ));
+        }
+        _formError = null;
+      });
+    } on DecisionFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEdit = false;
+        _formError = failure.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEdit = false;
+        _formError = 'Could not load the lecture. Please try again.';
+      });
+    }
+  }
+
+  /// Total attachable content in edit mode (kept existing + staged):
+  /// Publish Now requires at least one.
+  int get _editResourceTotal =>
+      _existingResources.length + _resources.length;
 
   /// Best-effort bridge from the backend [_subjectId] to a static
   /// catalog title, keeping the dropdown in sync for entry-context
@@ -183,22 +410,70 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       final List<SubjectOption> options =
           ref.read(gradeSubjectsProvider(_gradeKey)).value ??
               const <SubjectOption>[];
+      // Also try the unfiltered stream: the subject may carry a legacy
+      // grade spelling that normalizeGradeKey folds differently.
+      List<SubjectOption> searchSpace = options;
+      if (searchSpace.isEmpty) {
+        searchSpace = ref.read(gradeSubjectsProvider(null)).value ??
+            const <SubjectOption>[];
+      }
       SubjectOption? match;
-      for (final SubjectOption s in options) {
+      for (final SubjectOption s in searchSpace) {
         if (s.id == _subjectId) {
           match = s;
           break;
         }
       }
-      if (match == null) return;
-      // Only adopt titles present in the catalog options so the
-      // dropdown display stays consistent with its menu items.
-      for (final String t in availableSubjects) {
-        if (t.trim() == match.title.trim()) {
-          setState(() => selectedSubject = t);
-          return;
-        }
+      if (match == null) {
+        // Fallback: live Subject Details title (works even while the
+        // subjects list stream is still loading).
+        try {
+          final SubjectDetails? details =
+              ref.read(subjectDetailsProvider(_subjectId)).value;
+          final String? liveTitle = details?.title.trim();
+          if (liveTitle != null && liveTitle.isNotEmpty) {
+            setState(() {
+              selectedSubject = liveTitle;
+              if (!availableSubjects.contains(liveTitle)) {
+                availableSubjects = <String>[...availableSubjects, liveTitle];
+              }
+            });
+          }
+        } catch (_) {}
+        // No timer-based retry here: the build() sync below picks up
+        // late stream data via post-frame callbacks (timer-free, so
+        // widget tests never see a pending Timer).
+        return;
       }
+      final String backendTitle = match.title.trim();
+      setState(() {
+        selectedSubject = backendTitle;
+        // The static catalog is outdated (e.g. missing اخلاقيات مهنة
+        // المحاسبة): append the backend title so the prefilled value
+        // is actually visible instead of "Select Subject".
+        if (!availableSubjects.contains(backendTitle)) {
+          // Match loosely against catalog entries to avoid duplicates
+          // with different whitespace.
+          bool dup = false;
+          for (final String t in availableSubjects) {
+            if (t.trim() == backendTitle) {
+              selectedSubject = t;
+              dup = true;
+              break;
+            }
+          }
+          if (!dup) {
+            availableSubjects = <String>[...availableSubjects, backendTitle];
+          }
+        } else {
+          for (final String t in availableSubjects) {
+            if (t.trim() == backendTitle) {
+              selectedSubject = t;
+              break;
+            }
+          }
+        }
+      });
     } catch (_) {
       // Offline-safe: keep the entry-context subject id as-is.
     }
@@ -220,7 +495,9 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
 
   /// Grade change from the static catalog: refresh subjects, reset the
   /// subject and section picks, and keep the backend working state in sync.
+  /// Ignored when the dialog was opened with a known subject context.
   void _handleStaticGradeChanged(String? grade) {
+    if (_isContextLocked) return;
     setState(() {
       selectedGrade = grade;
       availableSubjects = grade == null ? const [] : (gradeSubjects[grade] ?? const []);
@@ -235,7 +512,9 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
 
   /// Subject change from the static catalog: resolve the backend
   /// subject id by title match when available, then recompute order.
+  /// Ignored when the dialog was opened with a known subject context.
   Future<void> _handleStaticSubjectChanged(String? subjectTitle) async {
+    if (_isContextLocked) return;
     setState(() => selectedSubject = subjectTitle);
     if (subjectTitle == null) {
       setState(() => _subjectId = '');
@@ -272,7 +551,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
   }
 
   Future<void> _handleStaticSectionChanged(String? section) async {
-    if (section == null) return;
+    if (section == null || _isEditMode) return;
     setState(() => selectedSection = section);
     await _handleTabChanged(_tabForSection(section));
   }
@@ -374,8 +653,8 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
               onTap: _closeDropdown,
               child: const ColoredBox(color: Colors.transparent),
             ),
-          ),
-          Positioned(
+              ),
+              Positioned(
             left: left,
             top: top,
             width: menuWidth,
@@ -476,7 +755,10 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       builder: (ctx) => const _CustomCalendarDialog(),
     );
     if (picked != null && mounted) {
-      setState(() => _publishDate = picked);
+      setState(() {
+        _publishDate = picked;
+        _scheduleTouched = true;
+      });
     }
   }
 
@@ -490,8 +772,24 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       ),
     );
     if (picked != null && mounted) {
-      setState(() => _publishTime = picked);
+      setState(() {
+        _publishTime = picked;
+        _scheduleTouched = true;
+      });
     }
+  }
+
+  /// Clearing a picker in edit mode is an explicit schedule change too
+  /// (remove the schedule, keep the publish status).
+  void _handleClearScheduleValue(bool isDate) {
+    setState(() {
+      if (isDate) {
+        _publishDate = null;
+      } else {
+        _publishTime = null;
+      }
+      _scheduleTouched = true;
+    });
   }
 
   static String formatPublishDate(DateTime date) {
@@ -519,47 +817,221 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
 
     if (selectedType == null || !mounted) return;
 
-    Map<String, String>? newResourceData;
-
-    if (selectedType == 'Video') {
-      newResourceData = await showDialog<Map<String, String>>(
-        context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
-        builder: (ctx) => const _AddVideoDialog(),
-      );
-    } else if (selectedType == 'PDF') {
-      newResourceData = await showDialog<Map<String, String>>(
-        context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
-        builder: (ctx) => const _AddPdfDialog(),
-      );
-    } else if (selectedType == 'Attachment') {
-      newResourceData = await showDialog<Map<String, String>>(
-        context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
-        builder: (ctx) => const _AddAttachmentDialog(),
-      );
-    } else if (selectedType == 'External Link') {
-      newResourceData = await showDialog<Map<String, String>>(
-        context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
-        builder: (ctx) => const _AddExternalLinkDialog(),
-      );
-    }
+    final Map<String, Object?>? newResourceData =
+        await _openResourceDialog(type: selectedType);
 
     if (newResourceData != null && mounted) {
       setState(() {
-        final orderStr = newResourceData!['order']?.isNotEmpty == true
-            ? newResourceData['order']!
-            : (_resources.length + 1).toString().padLeft(2, '0');
+        final Object? rawOrder = newResourceData['order'];
+        final String orderStr =
+            rawOrder is String && rawOrder.isNotEmpty
+                ? rawOrder
+                : (_resources.length + 1).toString().padLeft(2, '0');
 
-        _resources.add({
-          'no': '$orderStr.',
-          'title': newResourceData['title']!,
-          'type': selectedType,
-        });
+        _resources.add(_StagedResource(
+          title: (newResourceData['title'] as String?)?.trim().isNotEmpty == true
+              ? (newResourceData['title'] as String).trim()
+              : selectedType,
+          type: selectedType,
+          no: '$orderStr.',
+          videoId: newResourceData['videoId'] as String?,
+          url: newResourceData['url'] as String?,
+          fileName: newResourceData['fileName'] as String?,
+          fileBytes: newResourceData['fileBytes'] as Uint8List?,
+          contentType: newResourceData['contentType'] as String?,
+        ));
       });
     }
+  }
+
+  /// Opens the add/edit sub-dialog for one resource [type], optionally
+  /// prefilled from [initial] for the Edit flow. Returns the dialog
+  /// payload, or null when the doctor cancels.
+  Future<Map<String, Object?>?> _openResourceDialog({
+    required String type,
+    _StagedResource? initial,
+  }) {
+    final String orderHint =
+        initial?.no.replaceAll('.', '').trim().isNotEmpty == true
+            ? initial!.no.replaceAll('.', '').trim()
+            : '';
+    if (type == 'Video') {
+      return showDialog<Map<String, Object?>>(
+        context: context,
+        barrierColor: Colors.black.withOpacity(0.25),
+        builder: (ctx) => _AddVideoDialog(
+          initialName: initial?.title ?? '',
+          initialOrder: orderHint,
+          initialVideoId: initial?.videoId ?? '',
+        ),
+      );
+    } else if (type == 'PDF') {
+      return showDialog<Map<String, Object?>>(
+        context: context,
+        barrierColor: Colors.black.withOpacity(0.25),
+        builder: (ctx) => _AddPdfDialog(
+          initialName: initial?.title ?? '',
+          initialOrder: orderHint,
+          initialFileName: initial?.fileName,
+        ),
+      );
+    } else if (type == 'Attachment') {
+      return showDialog<Map<String, Object?>>(
+        context: context,
+        barrierColor: Colors.black.withOpacity(0.25),
+        builder: (ctx) => _AddAttachmentDialog(
+          initialName: initial?.title ?? '',
+          initialOrder: orderHint,
+          initialFileName: initial?.fileName,
+        ),
+      );
+    } else if (type == 'External Link') {
+      return showDialog<Map<String, Object?>>(
+        context: context,
+        barrierColor: Colors.black.withOpacity(0.25),
+        builder: (ctx) => _AddExternalLinkDialog(
+          initialName: initial?.title ?? '',
+          initialOrder: orderHint,
+          initialUrl: initial?.url ?? '',
+        ),
+      );
+    }
+    return Future.value(null);
+  }
+
+  static String _baseNameOf(String? path) {
+    if (path == null || path.isEmpty) return '';
+    final List<String> parts = path.split('/');
+    return parts.isEmpty ? path : parts.last;
+  }
+
+  /// Edit flow for one persisted row: reopens its own dialog prefilled
+  /// with the stored details (Bunny video id, URL, stored file name)
+  /// and stages an in-place update committed on Save. This is what
+  /// unlocks editing the video name / data / ID of a published lecture
+  /// without deleting + re-uploading it.
+  Future<void> _handleEditExistingResource(int index) async {
+    if (_saving || index < 0 || index >= _existingResources.length) return;
+    final _ExistingResourceEntry current = _existingResources[index];
+    final String storedFileName = current.newFileName?.isNotEmpty == true
+        ? current.newFileName!
+        : _baseNameOf(current.storagePath);
+    final _StagedResource initial = _StagedResource(
+      title: current.title,
+      type: current.typeDisplay,
+      no: current.no.replaceAll('.', '').trim(),
+      videoId: current.videoId,
+      url: current.url,
+      fileName: storedFileName.isEmpty ? null : storedFileName,
+    );
+    final Map<String, Object?>? updated = await _openResourceDialog(
+      type: current.typeDisplay,
+      initial: initial,
+    );
+    if (updated == null || !mounted) return;
+    setState(() {
+      final Object? rawOrder = updated['order'];
+      final String orderStr = rawOrder is String && rawOrder.isNotEmpty
+          ? rawOrder.trim()
+          : current.no.replaceAll('.', '').trim().isEmpty
+              ? (index + 1).toString().padLeft(2, '0')
+              : current.no.replaceAll('.', '').trim();
+      final int? parsedOrder = int.tryParse(orderStr);
+      current.title =
+          (updated['title'] as String?)?.trim().isNotEmpty == true
+              ? (updated['title'] as String).trim()
+              : current.title;
+      current.no = '$orderStr.';
+      if (parsedOrder != null) current.order = parsedOrder;
+      if (updated.containsKey('videoId')) {
+        current.videoId = (updated['videoId'] as String?)?.trim();
+      }
+      if (updated.containsKey('url')) {
+        current.url = (updated['url'] as String?)?.trim();
+      }
+      // Replacement file picked now: new bytes staged for upload on Save.
+      // Null bytes = kept the stored file (title/order/video-id/URL edit).
+      if (updated['fileBytes'] is Uint8List) {
+        current.newFileBytes = updated['fileBytes'] as Uint8List;
+        current.newContentType = updated['contentType'] as String?;
+        current.newFileName = updated['fileName'] as String?;
+      } else if ((updated['fileName'] as String?)?.isNotEmpty == true &&
+          current.newFileBytes == null) {
+        // Kept file but dialog echoed its name — no upload needed.
+        current.newFileName = current.newFileName;
+      }
+      current.dirty = true;
+    });
+  }
+
+  /// In-place updates staged for persisted rows (dirty only, and never
+  /// rows already staged for deletion).
+  List<UpdatedLectureResource> _commitUpdatedResources() {
+    final List<UpdatedLectureResource> out = <UpdatedLectureResource>[];
+    for (final _ExistingResourceEntry entry in _existingResources) {
+      if (!entry.dirty) continue;
+      if (_deleteResourceIds.contains(entry.id)) continue;
+      out.add(UpdatedLectureResource(
+        id: entry.id,
+        title: entry.title.trim(),
+        displayOrder: entry.order,
+        // Null = keep stored value; non-null = doctor edited it.
+        // Title/order edits always send the current row values, while
+        // video-id/URL send the current text (edited or not) so a
+        // reopened dialog never silently clears them.
+        bunnyVideoId:
+            entry.wireType == 'video' ? (entry.videoId ?? '') : null,
+        externalUrl: entry.wireType == 'external_link'
+            ? (entry.url ?? '')
+            : null,
+        fileBytes: entry.newFileBytes,
+        fileName: entry.newFileName,
+        contentType: entry.newContentType,
+      ));
+    }
+    return out;
+  }
+
+  /// Edit flow for one staged row: reopens its own dialog prefilled
+  /// with the stored details (video id, URL, file name) and writes the
+  /// result back into the same row. Persisted (_existingResources) rows
+  /// use [_handleEditExistingResource] instead.
+  Future<void> _handleEditResource(int index) async {
+    if (_saving || index < 0 || index >= _resources.length) return;
+    final _StagedResource current = _resources[index];
+    final Map<String, Object?>? updated = await _openResourceDialog(
+      type: current.type,
+      initial: current,
+    );
+    if (updated == null || !mounted) return;
+    setState(() {
+      final Object? rawOrder = updated['order'];
+      final String orderStr =
+          rawOrder is String && (rawOrder).isNotEmpty
+              ? rawOrder
+              : current.no.replaceAll('.', '').trim().isEmpty
+                  ? (index + 1).toString().padLeft(2, '0')
+                  : current.no.replaceAll('.', '').trim();
+      current.title =
+          (updated['title'] as String?)?.trim().isNotEmpty == true
+              ? (updated['title'] as String).trim()
+              : current.title;
+      current.no = '$orderStr.';
+      if (updated.containsKey('videoId')) {
+        current.videoId = updated['videoId'] as String?;
+      }
+      if (updated.containsKey('url')) {
+        current.url = updated['url'] as String?;
+      }
+      if (updated.containsKey('fileName')) {
+        current.fileName = updated['fileName'] as String?;
+      }
+      // Null bytes = file unchanged (edit kept the staged/picked file).
+      if (updated['fileBytes'] is Uint8List) {
+        current.fileBytes = updated['fileBytes'] as Uint8List;
+        current.contentType = updated['contentType'] as String?;
+      }
+    });
   }
 
   Future<void> _handleConfigureAccess() async {
@@ -638,7 +1110,8 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       return null;
     }
     final int? order = int.tryParse(_orderController.text.trim());
-    if (order == null || order < 1) {
+    // Numbering starts at 00: 0 is a valid display order.
+    if (order == null || order < 0) {
       setState(() => _formError = 'Enter a valid display order.');
       return null;
     }
@@ -656,6 +1129,21 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       }
     }
     setState(() => _formError = null);
+    // VIDEO-ID-ONLY: every staged video row must carry a bare GUID.
+    for (final _StagedResource row in _resources) {
+      if (row.type == 'Video') {
+        final String vid = (row.videoId ?? '').trim();
+        if (vid.isEmpty) {
+          setState(() => _formError = 'Video ID is required.');
+          return null;
+        }
+        if (!isValidBunnyVideoId(vid)) {
+          setState(() => _formError =
+              'الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.');
+          return null;
+        }
+      }
+    }
     return (title: title, order: order, minutes: minutes);
   }
 
@@ -668,26 +1156,64 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     };
     final List<NewLectureResource> out = <NewLectureResource>[];
     for (int i = 0; i < _resources.length; i++) {
-      final Map<String, String> row = _resources[i];
+      final _StagedResource row = _resources[i];
+      final String? videoId = row.videoId?.trim().isNotEmpty == true
+          ? row.videoId!.trim()
+          : null;
+      final String? url =
+          row.url?.trim().isNotEmpty == true ? row.url!.trim() : null;
       out.add(NewLectureResource(
-        type: wireType[row['type']] ?? 'video',
-        title: (row['title'] ?? '').trim(),
+        type: wireType[row.type] ?? 'video',
+        title: row.title.trim(),
         displayOrder: i + 1,
+        bunnyVideoId: videoId,
+        externalUrl: url,
+        fileBytes: row.fileBytes,
+        fileName: row.fileName,
+        contentType: row.contentType,
       ));
     }
     return out;
   }
 
+  /// Builds the scheduled publish moment from the picked date + time
+  /// (midnight when no time was picked). Null when no date was picked.
+  DateTime? _scheduledDateTime() {
+    if (_publishDate == null) return null;
+    final TimeOfDay time = _publishTime ?? const TimeOfDay(hour: 0, minute: 0);
+    return DateTime(
+      _publishDate!.year,
+      _publishDate!.month,
+      _publishDate!.day,
+      time.hour,
+      time.minute,
+    );
+  }
+
+  /// Whether a publish path may proceed: at least one resource overall.
+  /// Add mode counts staged rows; edit mode also counts kept existing
+  /// rows so publishing a lecture to add a title fix never demands a
+  /// redundant re-upload.
+  bool get _hasAnyResource =>
+      _isEditMode ? _editResourceTotal > 0 : _resources.isNotEmpty;
+
   /// The single commit point for the whole workflow: one controller call
   /// carrying lecture fields + staged resources + staged access
   /// overrides. [publishNow] and [publishDateTime] are mutually
   /// exclusive; drafts pass both as null/false.
+  ///
+  /// Edit mode updates the existing lecture instead of creating one:
+  /// plain Save preserves the stored publish status unless a new date
+  /// was picked (reschedule → scheduled draft); Save Draft forces
+  /// `draft` and clears any schedule; Publish Now publishes.
   Future<void> _commit({
     required String title,
     required int order,
     required bool publishNow,
     required DateTime? publishDateTime,
     required int? minutes,
+    bool preserveStatus = false,
+    bool clearPublishDate = false,
   }) async {
     setState(() {
       _saving = true;
@@ -699,19 +1225,40 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                 data: (DashboardSession? s) => s,
                 orElse: () => null,
               );
-      await ref.read(subjectDetailsControllerProvider).createLectureFull(
-            subjectId: _subjectId,
-            tab: _tab,
-            title: title,
-            displayOrder: order,
-            publishDateTime: publishDateTime,
-            publishNow: publishNow,
-            guestEnabled: _guestAccess,
-            previewMinutes: minutes,
-            resources: _commitResources(),
-            accessByStudent: Map<String, bool>.from(_accessByStudent),
-            actorId: session?.userId ?? 'dashboard',
-          );
+      final String actorId = session?.userId ?? 'dashboard';
+      final String? lectureId = widget.lectureId;
+      if (_isEditMode && lectureId != null) {
+        await ref.read(subjectDetailsControllerProvider).updateLectureFull(
+              lectureId: lectureId,
+              title: title,
+              displayOrder: order,
+              publishNow: publishNow,
+              publishDateTime: publishDateTime,
+              preserveStatus: preserveStatus,
+              clearPublishDate: clearPublishDate,
+              guestEnabled: _guestAccess,
+              previewMinutes: minutes,
+              newResources: _commitResources(),
+              deleteResourceIds: _deleteResourceIds.toList(),
+              updatedResources: _commitUpdatedResources(),
+              accessByStudent: Map<String, bool>.from(_accessByStudent),
+              actorId: actorId,
+            );
+      } else {
+        await ref.read(subjectDetailsControllerProvider).createLectureFull(
+              subjectId: _subjectId,
+              tab: _tab,
+              title: title,
+              displayOrder: order,
+              publishDateTime: publishDateTime,
+              publishNow: publishNow,
+              guestEnabled: _guestAccess,
+              previewMinutes: minutes,
+              resources: _commitResources(),
+              accessByStudent: Map<String, bool>.from(_accessByStudent),
+              actorId: actorId,
+            );
+      }
       if (!mounted) return;
       widget.onSave?.call();
       Navigator.of(context).pop(true);
@@ -735,7 +1282,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     if (_saving) return;
     final validated = _validateCommon();
     if (validated == null) return;
-    if (_resources.isEmpty) {
+    if (!_hasAnyResource) {
       setState(
           () => _formError = 'Add at least one resource to publish.');
       return;
@@ -749,7 +1296,8 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     );
   }
 
-  /// Save Draft: unpublished, no date, zero resources allowed.
+  /// Save Draft: unpublished, no date, zero resources allowed. In edit
+  /// mode this unpublishes the lecture and clears its schedule.
   Future<void> _saveDraft() async {
     if (_saving) return;
     final validated = _validateCommon();
@@ -760,30 +1308,31 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       publishNow: false,
       publishDateTime: null,
       minutes: validated.minutes,
+      clearPublishDate: _isEditMode,
     );
   }
 
   /// Final Save: scheduled publish when a date was picked (requires at
-  /// least one resource), otherwise a draft save.
+  /// least one resource). Add mode without a date stays a draft.
+  ///
+  /// Edit mode: untouched schedule pickers (prefilled for display)
+  /// preserve the stored publish status AND date — plain field edits
+  /// apply immediately without demoting a published lecture to draft.
+  /// Re-picking reschedules (scheduled draft); clearing removes the
+  /// schedule while keeping the status.
   Future<void> _saveFinal() async {
     if (_saving) return;
     final validated = _validateCommon();
     if (validated == null) return;
-    DateTime? publishDateTime;
-    if (_publishDate != null) {
-      if (_resources.isEmpty) {
-        setState(
-            () => _formError = 'Add at least one resource to publish.');
-        return;
-      }
-      final TimeOfDay time = _publishTime ?? const TimeOfDay(hour: 0, minute: 0);
-      publishDateTime = DateTime(
-        _publishDate!.year,
-        _publishDate!.month,
-        _publishDate!.day,
-        time.hour,
-        time.minute,
-      );
+    final DateTime? picked = _scheduledDateTime();
+    // Add mode: the picked date (or none) decides. Edit mode: only a
+    // re-picked/cleared schedule counts; otherwise keep everything.
+    final bool touched = !_isEditMode || _scheduleTouched;
+    final DateTime? publishDateTime = touched ? picked : null;
+    if (publishDateTime != null && !_hasAnyResource) {
+      setState(
+          () => _formError = 'Add at least one resource to publish.');
+      return;
     }
     await _commit(
       title: validated.title,
@@ -791,6 +1340,9 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       publishNow: false,
       publishDateTime: publishDateTime,
       minutes: validated.minutes,
+      preserveStatus: _isEditMode && publishDateTime == null,
+      clearPublishDate:
+          _isEditMode && touched && picked == null && _scheduleTouched,
     );
   }
 
@@ -799,6 +1351,61 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     // Dialog shell: max 640px wide, max 88% of viewport height (capped at
     // 750px). Sticky white header + divider, scrollable body below so
     // nothing clips or overflows.
+    // Locked context (Subject Details): keep Grade/Subject in sync with
+    // the live backend streams so the prefilled values appear even if
+    // initState ran before Firestore delivered data.
+    if (_isContextLocked && selectedSubject == null) {
+      try {
+        final List<SubjectOption>? liveOptions =
+            ref.watch(gradeSubjectsProvider(_gradeKey)).value;
+        final List<SubjectOption>? allOptions =
+            ref.watch(gradeSubjectsProvider(null)).value;
+        SubjectOption? liveMatch;
+        for (final List<SubjectOption>? pool in <List<SubjectOption>?>[
+          liveOptions,
+          allOptions
+        ]) {
+          if (pool == null) continue;
+          for (final SubjectOption s in pool) {
+            if (s.id == _subjectId) {
+              liveMatch = s;
+              break;
+            }
+          }
+          if (liveMatch != null) break;
+        }
+        if (liveMatch != null) {
+          final String t = liveMatch.title.trim();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || selectedSubject != null) return;
+            setState(() {
+              selectedSubject = t;
+              if (!availableSubjects.contains(t)) {
+                availableSubjects = <String>[...availableSubjects, t];
+              }
+            });
+          });
+        } else {
+          final SubjectDetails? liveDetails =
+              ref.watch(subjectDetailsProvider(_subjectId)).value;
+          final String? liveTitle = liveDetails?.title.trim();
+          if (liveTitle != null && liveTitle.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || selectedSubject != null) return;
+              setState(() {
+                selectedSubject = liveTitle;
+                if (!availableSubjects.contains(liveTitle)) {
+                  availableSubjects = <String>[
+                    ...availableSubjects,
+                    liveTitle
+                  ];
+                }
+              });
+            });
+          }
+        }
+      } catch (_) {}
+    }
     final Size viewport = MediaQuery.of(context).size;
     final double dialogWidth =
         (viewport.width - 48) < 640 ? (viewport.width - 48) : 640;
@@ -835,16 +1442,30 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                     horizontal: 32, vertical: 20),
                 child: Row(
                   children: [
-                    const Expanded(
-                      child: Text(
-                        'Quick Upload',
-                        style: TextStyle(
-                          fontFamily: 'Google Sans Flex',
-                          fontSize: 24,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                          color: Colors.black,
-                        ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _isEditMode
+                                  ? 'Edit Lecture'
+                                  : 'Quick Upload',
+                              style: const TextStyle(
+                                fontFamily: 'Google Sans Flex',
+                                fontSize: 24,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                          if (_isEditMode &&
+                              _editStatus != null) ...[
+                            const SizedBox(width: 12),
+                            _EditStatusPill(
+                                status: _editStatus!),
+                          ],
+                        ],
                       ),
                     ),
                     InkWell(
@@ -878,6 +1499,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                         hint: 'Select Grade',
                         options: gradeSubjects.keys.toList(),
                         kind: _DropdownKind.grade,
+                        enabled: !_isContextLocked,
                       ),
                       const SizedBox(height: 12),
                       _buildDropdownRow(
@@ -886,6 +1508,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                         hint: 'Select Subject',
                         options: availableSubjects,
                         kind: _DropdownKind.subject,
+                        enabled: !_isContextLocked,
                       ),
                       const SizedBox(height: 12),
                       _buildDropdownRow(
@@ -894,6 +1517,10 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                         hint: 'Select Section',
                         options: sectionOptions,
                         kind: _DropdownKind.section,
+                        // Edit mode never moves a lecture across
+                        // grade/subject/section: the stored section is
+                        // shown locked just like Grade/Subject.
+                        enabled: !_isEditMode,
                       ),
                       const SizedBox(height: 16),
                       // Compact Name + Display order row.
@@ -910,7 +1537,45 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      if (_resources.isEmpty)
+                      if (_isEditMode && _loadingEdit)
+                        const Padding(
+                          padding:
+                              EdgeInsets.only(bottom: 8),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                      // Persisted resources of the edited lecture: Edit
+                      // reopens the stored details (video id / URL / file)
+                      // and stages an in-place update; Delete stages a
+                      // soft-delete. Both commit on Save.
+                      for (int i = 0;
+                          i < _existingResources.length;
+                          i++)
+                        Padding(
+                          padding:
+                              const EdgeInsets.only(bottom: 8),
+                          child: _buildResourceRow(
+                            no: _existingResources[i].no,
+                            title: _existingResources[i].title,
+                            onEdit: () =>
+                                _handleEditExistingResource(i),
+                            onDelete: () => setState(() {
+                              final String id =
+                                  _existingResources[i].id;
+                              _deleteResourceIds.add(id);
+                              _existingResources.removeAt(i);
+                            }),
+                          ),
+                        ),
+                      if (_resources.isEmpty &&
+                          _existingResources.isEmpty &&
+                          !_loadingEdit)
                         const Padding(
                           padding:
                               EdgeInsets.only(bottom: 8),
@@ -931,9 +1596,9 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                           padding:
                               const EdgeInsets.only(bottom: 8),
                           child: _buildResourceRow(
-                            no: _resources[i]['no'] ?? '',
-                            title:
-                                _resources[i]['title'] ?? '',
+                            no: _resources[i].no,
+                            title: _resources[i].title,
+                            onEdit: () => _handleEditResource(i),
                             onDelete: () => setState(
                                 () => _resources.removeAt(i)),
                           ),
@@ -990,8 +1655,8 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                                       _publishDate!),
                               hint: 'Select Date',
                               onTap: _handlePickDate,
-                              onClear: () => setState(
-                                  () => _publishDate = null),
+                              onClear: () =>
+                                  _handleClearScheduleValue(true),
                             ),
                             const SizedBox(width: 16),
                             _buildDateTimeColumn(
@@ -1002,8 +1667,8 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                                       _publishTime!),
                               hint: 'Select Time',
                               onTap: _handlePickTime,
-                              onClear: () => setState(
-                                  () => _publishTime = null),
+                              onClear: () =>
+                                  _handleClearScheduleValue(false),
                             ),
                             const SizedBox(width: 16),
                             SizedBox(
@@ -1241,8 +1906,10 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     required String hint,
     required List<String> options,
     required _DropdownKind kind,
+    bool enabled = true,
   }) {
     final bool isOpen = _isKindOpen(kind);
+    final bool interactive = enabled && !_saving;
     return Row(
       children: [
         SizedBox(
@@ -1263,7 +1930,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
             constraints: const BoxConstraints(maxWidth: 360),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: _saving ? null : () => _toggleDropdown(kind, options),
+              onTap: interactive ? () => _toggleDropdown(kind, options) : null,
               child: Container(
                 key: _boxKeyFor(kind),
                 width: double.infinity,
@@ -1271,7 +1938,9 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: enabled
+                      ? Colors.white
+                      : const Color(0xFFF5F5F5),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                       color: const Color(0xFFE0E0E0)),
@@ -1297,10 +1966,14 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                     AnimatedRotation(
                       turns: isOpen ? 0.5 : 0.0,
                       duration: const Duration(milliseconds: 200),
-                      child: const Icon(
-                        Icons.keyboard_arrow_down,
+                      child: Icon(
+                        enabled
+                            ? Icons.keyboard_arrow_down
+                            : Icons.lock_outline,
                         size: 20,
-                        color: Colors.black87,
+                        color: enabled
+                            ? Colors.black87
+                            : const Color(0xFF9CA3AF),
                       ),
                     ),
                   ],
@@ -1399,7 +2072,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
               color: Colors.black,
             ),
             decoration: InputDecoration(
-              hintText: '01',
+              hintText: '00',
               hintStyle: const TextStyle(
                   color: Color(0xFFBDBDBD), fontSize: 13),
               contentPadding: EdgeInsets.zero,
@@ -1428,13 +2101,19 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     );
   }
 
+  /// One staged/persisted resource row: title on the left, Edit/Delete
+  /// pills on the right. [onEdit] reopens the stored details (video id,
+  /// URL, file) — staged rows via [_handleEditResource], persisted rows
+  /// via [_handleEditExistingResource] — so the doctor can change them.
   Widget _buildResourceRow({
     required String no,
     required String title,
+    required VoidCallback? onEdit,
     required VoidCallback onDelete,
   }) {
     final String displayTitle =
         no.isNotEmpty ? '$no $title' : title;
+    final bool canEdit = onEdit != null && !_saving;
     return Row(
       children: [
         Expanded(
@@ -1452,19 +2131,20 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
         ),
         const SizedBox(width: 8),
         InkWell(
-          onTap: () {},
+          onTap: canEdit ? onEdit : null,
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.black,
+              color: canEdit ? Colors.black : const Color(0xFFE0E0E0),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Text(
+            child: Text(
               'Edit',
               style: TextStyle(
-                  color: Colors.white, fontSize: 13),
+                  color: canEdit ? Colors.white : const Color(0xFF9E9E9E),
+                  fontSize: 13),
             ),
           ),
         ),
@@ -1620,6 +2300,39 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
 
 }
 
+/// Current publish-state pill shown in the Edit Lecture header so the
+/// doctor sees at a glance whether students can see the lecture now.
+class _EditStatusPill extends StatelessWidget {
+  final String status;
+
+  const _EditStatusPill({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool published = status == 'published';
+    final Color foreground =
+        published ? const Color(0xFF15803D) : const Color(0xFFB45309);
+    final Color background =
+        published ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Text(
+        published ? 'منشور' : 'مسودة',
+        style: TextStyle(
+          fontFamily: 'Google Sans Flex',
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+          color: foreground,
+        ),
+      ),
+    );
+  }
+}
+
 /// ===========================================================================
 /// Dialog 1: Select Resource Type (# add Resource - 411x309)
 /// Direct tap opens specific overlay immediately, ZERO checkmarks
@@ -1729,30 +2442,76 @@ class _SelectResourceDialog extends StatelessWidget {
 /// ALL FIELDS EMPTY BY DEFAULT
 /// ===========================================================================
 class _AddVideoDialog extends StatefulWidget {
-  const _AddVideoDialog();
+  final String initialName;
+  final String initialOrder;
+  final String initialVideoId;
+
+  const _AddVideoDialog({
+    this.initialName = '',
+    this.initialOrder = '',
+    this.initialVideoId = '',
+  });
+
+  /// True when reopened from a staged row's Edit pill (prefilled).
+  bool get isEdit =>
+      initialName.isNotEmpty ||
+      initialOrder.isNotEmpty ||
+      initialVideoId.isNotEmpty;
 
   @override
   State<_AddVideoDialog> createState() => _AddVideoDialogState();
 }
 
 class _AddVideoDialogState extends State<_AddVideoDialog> {
-  final _name = TextEditingController(text: '');
-  final _order = TextEditingController(text: '');
-  final _id = TextEditingController(text: '');
+  late final TextEditingController _name;
+  late final TextEditingController _order;
+  late final TextEditingController _id;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+    _order = TextEditingController(text: widget.initialOrder);
+    _id = TextEditingController(text: widget.initialVideoId);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _order.dispose();
+    _id.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return _buildResourceModal(
-      title: 'Add New Video',
+      title: widget.isEdit ? 'Edit Video' : 'Add New Video',
       fields: [
         _ResourceFieldItem(label: 'Video Name', controller: _name, hint: 'Video Title'),
         _ResourceFieldItem(label: 'Video Display order', controller: _order, hint: '01'),
         _ResourceFieldItem(label: 'Video ID', controller: _id, hint: 'video-id'),
       ],
       onSave: () {
-        Navigator.of(context).pop({
+        final String vid = _id.text.trim();
+        if (vid.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Video ID is required.')),
+          );
+          return;
+        }
+        if (!isValidBunnyVideoId(vid)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content:
+                    Text('الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.')),
+          );
+          return;
+        }
+        Navigator.of(context).pop(<String, Object?>{
           'title': _name.text.trim().isEmpty ? 'Video' : _name.text.trim(),
           'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
+          'videoId': vid,
         });
       },
     );
@@ -1764,15 +2523,39 @@ class _AddVideoDialogState extends State<_AddVideoDialog> {
 /// ALL FIELDS EMPTY BY DEFAULT
 /// ===========================================================================
 class _AddPdfDialog extends StatefulWidget {
-  const _AddPdfDialog();
+  final String initialName;
+  final String initialOrder;
+
+  /// Staged file name when reopened from a staged row's Edit pill.
+  /// The staged bytes are kept unless the doctor picks a new file.
+  final String? initialFileName;
+
+  const _AddPdfDialog({
+    this.initialName = '',
+    this.initialOrder = '',
+    this.initialFileName,
+  });
+
+  /// True when reopened from a staged row's Edit pill (prefilled).
+  bool get isEdit =>
+      initialName.isNotEmpty ||
+      initialOrder.isNotEmpty ||
+      initialFileName != null;
 
   @override
   State<_AddPdfDialog> createState() => _AddPdfDialogState();
 }
 
 class _AddPdfDialogState extends State<_AddPdfDialog> {
-  final _name = TextEditingController(text: '');
-  final _order = TextEditingController(text: '');
+  late final TextEditingController _name;
+  late final TextEditingController _order;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+    _order = TextEditingController(text: widget.initialOrder);
+  }
 
   /// Native-picked PDF (file_picker v12 API). Bytes are loaded via
   /// [PlatformFile.readAsBytes] into [_pickedPdfBytes] so the web
@@ -1786,6 +2569,20 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
   /// In-memory PDF bytes for the backend storage upload
   /// (Firebase Storage `putData`). Kept so `readAsBytes` is called once.
   Uint8List? get pickedPdfBytes => _pickedPdfBytes;
+
+  /// Edit flow: the staged file counts as chosen until cleared.
+  bool _initialCleared = false;
+
+  bool get _hasFile =>
+      _pickedPdfFile != null ||
+      (widget.initialFileName?.isNotEmpty == true && !_initialCleared);
+
+  String get _displayFileName =>
+      _pickedPdfFile?.name ?? widget.initialFileName ?? '';
+
+  String get _displayFileSize => _pickedPdfFile == null
+      ? ''
+      : ' • ${_formatSize(_pickedPdfSize)}';
 
   @override
   void dispose() {
@@ -1855,21 +2652,26 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
       _pickedPdfFile = null;
       _pickedPdfBytes = null;
       _pickedPdfSize = 0;
+      // Clearing the staged file too: saving now requires a fresh pick.
+      _initialCleared = true;
     });
   }
 
   void _handleSave() {
-    if (_pickedPdfFile == null) {
+    if (!_hasFile) {
       setState(() => _fileError = 'Please select a PDF file first');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a PDF file first')),
       );
       return;
     }
-    Navigator.of(context).pop(<String, String>{
+    Navigator.of(context).pop(<String, Object?>{
       'title': _name.text.trim().isEmpty ? 'PDF' : _name.text.trim(),
       'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
-      'file': _pickedPdfFile!.name,
+      'fileName': _displayFileName,
+      // Null bytes = staged file unchanged (edit kept the picked file).
+      'fileBytes': _pickedPdfBytes,
+      'contentType': 'application/pdf',
     });
   }
 
@@ -1992,9 +2794,9 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
                                               size: 16),
                                         const SizedBox(width: 6),
                                         Text(
-                                          _pickedPdfFile == null
-                                              ? 'Upload PDF'
-                                              : 'Replace PDF',
+                                          _hasFile
+                                              ? 'Replace PDF'
+                                              : 'Upload PDF',
                                           style: const TextStyle(
                                               fontFamily:
                                                   'Google Sans Flex',
@@ -2006,7 +2808,7 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                if (_pickedPdfFile == null)
+                                if (!_hasFile)
                                   const Text(
                                     'No file chosen (PDF only)',
                                     maxLines: 1,
@@ -2040,7 +2842,7 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
-                                            '${_pickedPdfFile!.name} • ${_formatSize(_pickedPdfSize)}',
+                                            '$_displayFileName$_displayFileSize',
                                             maxLines: 1,
                                             overflow:
                                                 TextOverflow.ellipsis,
@@ -2182,15 +2984,39 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
 /// ALL FIELDS EMPTY BY DEFAULT
 /// ===========================================================================
 class _AddAttachmentDialog extends StatefulWidget {
-  const _AddAttachmentDialog();
+  final String initialName;
+  final String initialOrder;
+
+  /// Staged file name when reopened from a staged row's Edit pill.
+  /// The staged bytes are kept unless the doctor picks a new file.
+  final String? initialFileName;
+
+  const _AddAttachmentDialog({
+    this.initialName = '',
+    this.initialOrder = '',
+    this.initialFileName,
+  });
+
+  /// True when reopened from a staged row's Edit pill (prefilled).
+  bool get isEdit =>
+      initialName.isNotEmpty ||
+      initialOrder.isNotEmpty ||
+      initialFileName != null;
 
   @override
   State<_AddAttachmentDialog> createState() => _AddAttachmentDialogState();
 }
 
 class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
-  final _name = TextEditingController(text: '');
-  final _order = TextEditingController(text: '');
+  late final TextEditingController _name;
+  late final TextEditingController _order;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+    _order = TextEditingController(text: widget.initialOrder);
+  }
 
   /// Native-picked attachment (file_picker v12 API). Bytes are loaded via
   /// [PlatformFile.readAsBytes] into [_pickedAttachmentBytes] so the web
@@ -2203,6 +3029,42 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
 
   /// In-memory bytes for the backend storage upload (`putData`).
   Uint8List? get pickedAttachmentBytes => _pickedAttachmentBytes;
+
+  /// Edit flow: the staged file counts as chosen until cleared.
+  bool _initialCleared = false;
+
+  bool get _hasFile =>
+      _pickedAttachmentFile != null ||
+      (widget.initialFileName?.isNotEmpty == true && !_initialCleared);
+
+  String get _displayFileName =>
+      _pickedAttachmentFile?.name ?? widget.initialFileName ?? '';
+
+  String get _displayFileSize => _pickedAttachmentFile == null
+      ? ''
+      : ' • ${_formatSize(_pickedAttachmentSize)}';
+
+  static String _contentTypeFor(String fileName) {
+    final String lower = fileName.trim().toLowerCase();
+    final int dot = lower.lastIndexOf('.');
+    final String ext = dot >= 0 ? lower.substring(dot + 1) : '';
+    return switch (ext) {
+      'pdf' => 'application/pdf',
+      'doc' => 'application/msword',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls' => 'application/vnd.ms-excel',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'ppt' => 'application/vnd.ms-powerpoint',
+      'pptx' =>
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'zip' => 'application/zip',
+      'rar' => 'application/vnd.rar',
+      'txt' => 'text/plain',
+      _ => 'application/octet-stream',
+    };
+  }
 
   @override
   void dispose() {
@@ -2274,11 +3136,13 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
       _pickedAttachmentFile = null;
       _pickedAttachmentBytes = null;
       _pickedAttachmentSize = 0;
+      // Clearing the staged file too: saving now requires a fresh pick.
+      _initialCleared = true;
     });
   }
 
   void _handleSave() {
-    if (_pickedAttachmentFile == null) {
+    if (!_hasFile) {
       setState(() => _fileError = 'Please select an attachment file first');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2286,11 +3150,14 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
       );
       return;
     }
-    Navigator.of(context).pop(<String, String>{
+    Navigator.of(context).pop(<String, Object?>{
       'title':
           _name.text.trim().isEmpty ? 'Attachment' : _name.text.trim(),
       'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
-      'file': _pickedAttachmentFile!.name,
+      'fileName': _displayFileName,
+      // Null bytes = staged file unchanged (edit kept the picked file).
+      'fileBytes': _pickedAttachmentBytes,
+      'contentType': _contentTypeFor(_displayFileName),
     });
   }
 
@@ -2413,9 +3280,9 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
                                               size: 16),
                                         const SizedBox(width: 6),
                                         Text(
-                                          _pickedAttachmentFile == null
-                                              ? 'Upload Attachment'
-                                              : 'Replace File',
+                                          _hasFile
+                                              ? 'Replace File'
+                                              : 'Upload Attachment',
                                           style: const TextStyle(
                                               fontFamily:
                                                   'Google Sans Flex',
@@ -2427,7 +3294,7 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                if (_pickedAttachmentFile == null)
+                                if (!_hasFile)
                                   const Text(
                                     'No file chosen (PDF, Word, Excel, ZIP, etc.)',
                                     maxLines: 1,
@@ -2460,7 +3327,7 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
-                                            '${_pickedAttachmentFile!.name} • ${_formatSize(_pickedAttachmentSize)}',
+                                            '$_displayFileName$_displayFileSize',
                                             maxLines: 1,
                                             overflow:
                                                 TextOverflow.ellipsis,
@@ -2602,21 +3469,51 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
 /// ALL FIELDS EMPTY BY DEFAULT
 /// ===========================================================================
 class _AddExternalLinkDialog extends StatefulWidget {
-  const _AddExternalLinkDialog();
+  final String initialName;
+  final String initialOrder;
+  final String initialUrl;
+
+  const _AddExternalLinkDialog({
+    this.initialName = '',
+    this.initialOrder = '',
+    this.initialUrl = '',
+  });
+
+  /// True when reopened from a staged row's Edit pill (prefilled).
+  bool get isEdit =>
+      initialName.isNotEmpty ||
+      initialOrder.isNotEmpty ||
+      initialUrl.isNotEmpty;
 
   @override
   State<_AddExternalLinkDialog> createState() => _AddExternalLinkDialogState();
 }
 
 class _AddExternalLinkDialogState extends State<_AddExternalLinkDialog> {
-  final _name = TextEditingController(text: '');
-  final _order = TextEditingController(text: '');
-  final _url = TextEditingController(text: '');
+  late final TextEditingController _name;
+  late final TextEditingController _order;
+  late final TextEditingController _url;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+    _order = TextEditingController(text: widget.initialOrder);
+    _url = TextEditingController(text: widget.initialUrl);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _order.dispose();
+    _url.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return _buildResourceModal(
-      title: 'Add New External Link',
+      title: widget.isEdit ? 'Edit External Link' : 'Add New External Link',
       labelWidth: 180,
       fields: [
         _ResourceFieldItem(label: 'External Link Name', controller: _name, hint: 'Link Title'),
@@ -2624,9 +3521,10 @@ class _AddExternalLinkDialogState extends State<_AddExternalLinkDialog> {
         _ResourceFieldItem(label: 'External Link URL', controller: _url, hint: 'https://...'),
       ],
       onSave: () {
-        Navigator.of(context).pop({
+        Navigator.of(context).pop(<String, Object?>{
           'title': _name.text.trim().isEmpty ? 'External Link' : _name.text.trim(),
           'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
+          'url': _url.text.trim(),
         });
       },
     );

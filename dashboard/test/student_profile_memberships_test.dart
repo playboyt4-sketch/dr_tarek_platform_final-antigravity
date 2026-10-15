@@ -10,7 +10,6 @@ const GradeStudent _student = GradeStudent(
   id: 'stu_001',
   name: 'ahmed mohamed gamal',
   isCenter: true,
-  plan: 'PRO',
   isActive: true,
   lastSignIn: '12/8/2026',
   phone: '01115800180',
@@ -100,9 +99,35 @@ void main() {
       expect(find.text('02.'), findsOneWidget);
       expect(find.text('محاسبة مالية'), findsOneWidget);
       expect(find.text('PRO'), findsWidgets);
+      expect(find.text('Grade'), findsOneWidget);
+      expect(find.text('Grade One'), findsWidgets);
       expect(find.text('Active'), findsOneWidget);
       expect(find.text('Inactive'), findsOneWidget);
       expect(find.text('Change Plan'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('grade column follows the subject, not the student',
+        (WidgetTester tester) async {
+      // Grade-one student view holding a grade-two subject row: the
+      // Grade cell must show the subject's own catalog grade.
+      await _pumpMemberships(
+        tester,
+        rows: const <StudentSubjectRegistration>[
+          StudentSubjectRegistration(
+            subjectId: 'sub_other',
+            title: 'علوم الصف الثاني',
+            gradeKey: 'grade_two',
+            planLabel: 'FREE',
+            enabled: true,
+          ),
+        ],
+      );
+
+      expect(find.text('Grade'), findsOneWidget);
+      // Also labels a grade-nav pill; exact per-row mapping is pinned by
+      // the buildStudentSubjectRegistrations unit test.
+      expect(find.text('Grade Two'), findsWidgets);
       expect(tester.takeException(), isNull);
     });
 

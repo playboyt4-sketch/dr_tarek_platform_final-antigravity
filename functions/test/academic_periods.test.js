@@ -3,7 +3,7 @@
  *
  * Covers the mandatory cases from the Phase-1 brief:
  *  - setAcademicPeriodStatus / setSubscriptionDisciplinaryStatus reject any
- *    caller that is not the Teacher (Platform Owner).
+ *    caller that is not the Doctor (Platform Owner).
  *  - Starting a period stamps started_at; ending it stamps ended_at and
  *    automatically expires every subscription bound to the period with
  *    end_date = ended_at in the same batch.
@@ -142,8 +142,8 @@ try {
   Module.prototype.require = originalRequire;
 }
 
-function teacherRequest(data) {
-  return {auth: {uid: "teacher-1", token: {role: "teacher"}}, data};
+function doctorRequest(data) {
+  return {auth: {uid: "doctor-1", token: {role: "doctor"}}, data};
 }
 
 function adminRequest(data) {
@@ -159,8 +159,8 @@ async function expectPermissionDenied(promise, label) {
     await promise;
     assert.fail(`${label}: expected rejection but call succeeded`);
   } catch (error) {
-    // requireTeacher rejects unauthenticated callers with "unauthenticated"
-    // and authenticated non-teacher callers with "permission-denied".
+    // requireDoctor rejects unauthenticated callers with "unauthenticated"
+    // and authenticated non-doctor callers with "permission-denied".
     assert.ok(
       ["permission-denied", "unauthenticated"].includes(error.code),
       `${label}: unexpected error code ${error.code}`,
@@ -169,7 +169,7 @@ async function expectPermissionDenied(promise, label) {
 }
 
 async function run() {
-  // 1) Teacher-only guards.
+  // 1) Doctor-only guards.
   await expectPermissionDenied(
     functions.setAcademicPeriodStatus.run(
       adminRequest({periodId: "term_1", status: "active"}),
@@ -212,7 +212,7 @@ async function run() {
   });
 
   await functions.setAcademicPeriodStatus.run(
-    teacherRequest({periodId: "term_1", status: "active"}),
+    doctorRequest({periodId: "term_1", status: "active"}),
   );
   const started = firestoreState.get("academic_periods/term_1");
   assert.equal(started.status, "active");
@@ -228,7 +228,7 @@ async function run() {
   });
 
   await functions.setAcademicPeriodStatus.run(
-    teacherRequest({periodId: "term_1", status: "ended"}),
+    doctorRequest({periodId: "term_1", status: "ended"}),
   );
   const ended = firestoreState.get("academic_periods/term_1");
   assert.equal(ended.status, "ended");
@@ -246,14 +246,14 @@ async function run() {
 
   // 3) Exceptional period creation writes the approved schema.
   const result = await functions.createExceptionalAcademicPeriod.run(
-    teacherRequest({label: "تدريب فردي"}),
+    doctorRequest({label: "تدريب فردي"}),
   );
   assert.equal(result.success, true);
   const created = firestoreState.get(`academic_periods/${result.periodId}`);
   assert.equal(created.is_core, false);
   assert.equal(created.label, "تدريب فردي");
   assert.equal(created.status, "ended");
-  assert.equal(created.created_by, "teacher-1");
+  assert.equal(created.created_by, "doctor-1");
 
   // 4) Audit log entries were recorded for lifecycle changes.
   const periodAudits = auditLog.filter(

@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>The app uses the camera so you can take a profile photo during registration and from your profile. / يستخدم التطبيق الكاميرا لالتقاط صورة الملف الشخصي أثناء التسجيل ومن صفحة الملف الشخصي.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The app accesses your photo library so you can choose a profile photo and upload images where the app offers image selection (such as subject images). / يصل التطبيق إلى مكتبة الصور لاختيار صورة الملف الشخصي ورفع الصور حيث يتيح التطبيق اختيار الصور (مثل صور المواد).</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>

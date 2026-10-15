@@ -11,6 +11,8 @@ import '../../../../core/widgets/app_input.dart';
 import '../../../lecture/domain/entities/lecture_resource.dart'
     show LectureResourceType;
 import '../../domain/entities/admin_content_entities.dart';
+import '../../domain/use_cases/resource_use_cases.dart'
+    show isValidBunnyVideoId;
 import '../providers/admin_content_providers.dart';
 
 /// Shared Add/Edit resource forms for the approved Lecture Creation flow.
@@ -201,6 +203,11 @@ Future<void> showVideoResourceDialog(
   if (bunnyId.text.trim().isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Bunny Video ID is required.')));
+    return;
+  }
+  if (!isValidBunnyVideoId(bunnyId.text)) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.')));
     return;
   }
   if (existing == null) {

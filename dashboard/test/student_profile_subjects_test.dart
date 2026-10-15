@@ -7,12 +7,12 @@ import 'package:drtarek_dashboard/features/applications/presentation/providers/a
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_students_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/student_profile_subjects_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/screens/student_profile_overview_screen.dart';
+import 'package:drtarek_dashboard/features/students/presentation/widgets/grade_theme.dart';
 
 const GradeStudent _student = GradeStudent(
   id: 'stu_001',
   name: 'ahmed mohamed gamal',
   isCenter: true,
-  plan: 'PRO',
   isActive: true,
   lastSignIn: '12/8/2026',
   phone: '01115800180',
@@ -144,6 +144,43 @@ void main() {
 
       expect(rows, isEmpty);
     });
+
+    test('rows keep each subject\'s OWN catalog grade (mixed grades)', () {
+      // A grade_three student still holding a grade_two subject: the row
+      // grade comes from the subject document, never the student record.
+      final rows = buildStudentSubjectRegistrations(
+        subjects: const <SubjectOption>[
+          SubjectOption(id: 'a', title: 'A', gradeKey: 'grade_two'),
+          SubjectOption(id: 'b', title: 'B', gradeKey: 'grade_three'),
+        ],
+        assignments: const <StudentSubjectAssignment>[
+          StudentSubjectAssignment(subjectId: 'a', enabled: true),
+          StudentSubjectAssignment(subjectId: 'b', enabled: true),
+        ],
+        subscriptions: const <StudentSubjectSubscription>[
+          StudentSubjectSubscription(subjectId: 'a', planId: 'free'),
+          StudentSubjectSubscription(subjectId: 'b', planId: 'pro'),
+        ],
+        planLabels: const <String, String>{'free': 'FREE', 'pro': 'PRO'},
+      );
+
+      expect(rows.map((r) => r.subjectId), <String>['a', 'b']);
+      expect(rows.map((r) => r.gradeKey), <String>['grade_two', 'grade_three']);
+      expect(GradeTheme.subjectGradeLabel(rows[0].gradeKey), 'Grade Two');
+      expect(GradeTheme.subjectGradeLabel(rows[1].gradeKey), 'Grade Three');
+    });
+  });
+
+  group('GradeTheme.subjectGradeLabel', () {
+    test('resolves catalog ids, dashes unknown or missing grades', () {
+      expect(GradeTheme.subjectGradeLabel('grade_one'), 'Grade One');
+      expect(GradeTheme.subjectGradeLabel('grade_two'), 'Grade Two');
+      expect(GradeTheme.subjectGradeLabel('grade_three'), 'Grade Three');
+      expect(GradeTheme.subjectGradeLabel('grade_four'), 'Grade Four');
+      expect(GradeTheme.subjectGradeLabel(null), '—');
+      expect(GradeTheme.subjectGradeLabel(''), '—');
+      expect(GradeTheme.subjectGradeLabel('grade_9'), '—');
+    });
   });
 
   group('planDisplayForKey', () {
@@ -199,6 +236,41 @@ void main() {
 
       expect(find.text('Add Subject'), findsOneWidget);
       expect(find.text('Add Other Subject'), findsOneWidget);
+    });
+
+    testWidgets('grade column shows each subject\'s own catalog grade', (
+      WidgetTester tester,
+    ) async {
+      // Grade-three student holding a grade-two subject: the Grade
+      // column must follow the SUBJECT, not the student record.
+      await _pumpSubjects(
+        tester,
+        gradeKey: 'grade_three',
+        rows: const <StudentSubjectRegistration>[
+          StudentSubjectRegistration(
+            subjectId: 'sub_old',
+            title: 'رياضيات الصف الثاني',
+            gradeKey: 'grade_two',
+            planLabel: 'FREE',
+            enabled: true,
+          ),
+          StudentSubjectRegistration(
+            subjectId: 'sub_new',
+            title: 'رياضيات الصف الثالث',
+            gradeKey: 'grade_three',
+            planLabel: 'PRO',
+            enabled: true,
+          ),
+        ],
+      );
+
+      expect(find.text('Grade'), findsOneWidget);
+      // 'Grade Two'/'Grade Three' also label the grade-nav pills, so the
+      // cell assertions below use findsWidgets; exact per-row mapping is
+      // pinned by the buildStudentSubjectRegistrations unit test above.
+      expect(find.text('Grade Two'), findsWidgets);
+      expect(find.text('Grade Three'), findsWidgets);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('empty registrations keep add actions available', (
@@ -269,13 +341,14 @@ void main() {
       expect(find.text('محاسبة ضريبية'), findsOneWidget);
     });
 
-    testWidgets('Save with untouched rows reaches persistence (no silent drop)', (
+    testWidgets('Save with untouched rows writes nothing (no spurious rows)', (
       WidgetTester tester,
     ) async {
-      // Full wiring check: overlay Save must invoke the commit path even
-      // when the user touches nothing (rows resolve OFF, still committed).
-      // Without a Firebase backend in tests the write fails — the failure
-      // must surface via SnackBar instead of vanishing silently.
+      // Regression guard for the whole-scope commit bug: opening the
+      // overlay and saving without toggling anything ON must NOT create
+      // disabled assignment rows. Without a Firebase backend in tests a
+      // real write would fail — after the fix there is no write at all,
+      // so no SnackBar and no summary dialog appear.
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -318,7 +391,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Grade One Subjects'), findsNothing);
-      expect(find.byType(SnackBar), findsOneWidget);
+      // Nothing was toggled ON → no write → no persistence feedback.
+      expect(find.byType(SnackBar), findsNothing);
     });
 
     testWidgets('reopened overlay reflects persisted toggles', (
@@ -390,11 +464,10 @@ void main() {
       SubjectOption(id: 'b', title: 'B', gradeKey: 'grade_one'),
     ];
 
-    test('untouched rows resolve to OFF, never default-ON', () {
-      // No persisted relationship and no explicit touch: every row
-      // resolves OFF (test/design students therefore open all-OFF).
-      // Rows are still committed with their displayed OFF state —
-      // nothing is silently dropped.
+    test('untouched rows produce NO write (never default-ON, never OFF rows)', () {
+      // No persisted relationship and no explicit touch: nothing enters
+      // the commit list. The old whole-scope behavior created disabled
+      // assignment rows for these — that is the bug this guards against.
       final picked = buildNewStudentSubjects(
         scope: scope,
         toggles: const <String, bool>{},
@@ -402,12 +475,10 @@ void main() {
         alreadyRegistered: const <String>{},
       );
 
-      expect(picked.map((p) => p.subjectId), <String>['a', 'b']);
-      expect(picked.every((p) => !p.enabled), isTrue);
-      expect(picked.every((p) => p.plan == 'free'), isTrue);
+      expect(picked, isEmpty);
     });
 
-    test('explicit toggle and plan choices are honored', () {
+    test('explicit toggle and plan choices are honored (only the ON row)', () {
       final picked = buildNewStudentSubjects(
         scope: scope,
         toggles: const <String, bool>{'a': true},
@@ -415,17 +486,37 @@ void main() {
         alreadyRegistered: const <String>{},
       );
 
-      expect(picked, hasLength(2));
-      expect(picked[0].enabled, isTrue);
-      expect(picked[0].plan, 'pro');
-      expect(picked[1].enabled, isFalse);
-      expect(picked[1].plan, 'free');
+      expect(picked.map((p) => p.subjectId), <String>['a']);
+      expect(picked.single.enabled, isTrue);
+      expect(picked.single.plan, 'pro');
+    });
+
+    test('explicit-OFF rows produce NO write', () {
+      final picked = buildNewStudentSubjects(
+        scope: scope,
+        toggles: const <String, bool>{'a': false, 'b': false},
+        plans: const <String, String>{},
+        alreadyRegistered: const <String>{},
+      );
+
+      expect(picked, isEmpty);
+    });
+
+    test('plans-only entries without a toggle produce NO write', () {
+      final picked = buildNewStudentSubjects(
+        scope: scope,
+        toggles: const <String, bool>{},
+        plans: const <String, String>{'b': 'max'},
+        alreadyRegistered: const <String>{},
+      );
+
+      expect(picked, isEmpty);
     });
 
     test('already-registered subjects are excluded', () {
       final picked = buildNewStudentSubjects(
         scope: scope,
-        toggles: const <String, bool>{},
+        toggles: const <String, bool>{'a': true, 'b': true},
         plans: const <String, String>{},
         alreadyRegistered: const <String>{'a'},
       );
@@ -433,7 +524,7 @@ void main() {
       expect(picked.map((p) => p.subjectId), <String>['b']);
     });
 
-    test('stale map entries outside the scope are still honored', () {
+    test('stale ON entries outside the scope are still honored', () {
       final picked = buildNewStudentSubjects(
         scope: scope,
         toggles: const <String, bool>{'stale': true},
@@ -441,7 +532,39 @@ void main() {
         alreadyRegistered: const <String>{},
       );
 
-      expect(picked.map((p) => p.subjectId), <String>['a', 'b', 'stale']);
+      expect(picked.map((p) => p.subjectId), <String>['stale']);
+    });
+
+    test(
+        'Add Other Subject regression: one ON in a multi-grade scope '
+        'yields exactly that row (asmaa mohamed incident)', () {
+      // Mirrors the incident: Grade One (2 subjects) + Grade Two
+      // (3 subjects) displayed, only one toggled ON with FREE.
+      // The old code committed all 5 (1 grant + 4 disabled rows).
+      const List<SubjectOption> otherScope = <SubjectOption>[
+        SubjectOption(
+            id: 'fin1', title: 'subject-fin', gradeKey: 'grade_one'),
+        SubjectOption(
+            id: 'eth1', title: 'subject-eth', gradeKey: 'grade_one'),
+        SubjectOption(
+            id: 'part2', title: 'subject-part', gradeKey: 'grade_two'),
+        SubjectOption(
+            id: 'cost2', title: 'subject-cost', gradeKey: 'grade_two'),
+        SubjectOption(
+            id: 'mid2', title: 'subject-mid', gradeKey: 'grade_two'),
+      ];
+
+      final picked = buildNewStudentSubjects(
+        scope: otherScope,
+        toggles: const <String, bool>{'fin1': true},
+        plans: const <String, String>{'fin1': 'free'},
+        alreadyRegistered: const <String>{},
+      );
+
+      // ONLY the toggled-ON subject results in a write — no sibling rows.
+      expect(picked.map((p) => p.subjectId), <String>['fin1']);
+      expect(picked.single.enabled, isTrue);
+      expect(picked.single.plan, 'free');
     });
   });
 }

@@ -104,7 +104,7 @@ async function run() {
 
     // Staff retains read access for support/analytics.
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher'})
+      dbFor('doctor-1', {role: 'doctor'})
         .collection('quiz_attempts')
         .doc('rr-pending')
         .get(),

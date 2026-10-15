@@ -10,33 +10,48 @@ const adminMock = {
   initializeApp: () => ({}),
   getFirestore: () => ({
     collection: (collPath) => ({
-      doc: (docId) => ({
-        get: async () => {
-          const docData = dbMockData[`${collPath}/${docId}`];
-          if (docData === undefined) return { exists: false };
-          return { exists: true, data: () => docData };
-        },
-        update: async () => {},
-        // Honor {merge:true} so permission-key migration is observable;
-        // update() stays a no-op so shared fixtures (req-1) remain pending.
-        set: async (data, options) => {
-          const key = `${collPath}/${docId}`;
-          if (options && options.merge && dbMockData[key] !== undefined) {
-            dbMockData[key] = {...dbMockData[key], ...data};
-          } else {
-            dbMockData[key] = data;
+      doc: (docId) => {
+        const key = `${collPath}/${docId}`;
+        const ref = {
+          get: async () => {
+            const docData = dbMockData[key];
+            if (docData === undefined) return { exists: false };
+            return { exists: true, data: () => docData };
+          },
+          update: async () => {},
+          // Honor {merge:true} so permission-key migration is observable;
+          // update() stays a no-op so shared fixtures (req-1) remain pending.
+          set: async (data, options) => {
+            if (options && options.merge && dbMockData[key] !== undefined) {
+              dbMockData[key] = {...dbMockData[key], ...data};
+            } else {
+              dbMockData[key] = data;
+            }
           }
-        }
-      }),
+        };
+        return ref;
+      },
       add: async () => {}
-    })
+    }),
+    // Passthrough runner for the reset single-flight claim transaction
+    // (added when onPasswordResetApproved gained transactional claiming;
+    // no contention semantics — see reset_claim.test.js).
+    runTransaction: async (fn) => {
+      const txRef = (ref) => ref;
+      return fn({
+        get: (ref) => txRef(ref).get(),
+        update: (ref, data) => txRef(ref).update(data),
+        set: (ref, data, options) => txRef(ref).set(data, options),
+      });
+    },
   }),
   FieldValue: {serverTimestamp: () => ({_serverTimestamp: true})},
   Timestamp: {now: () => ({toMillis: () => Date.now()})},
   getAuth: () => ({
     updateUser: async () => {},
     getUser: async () => ({ customClaims: {} }),
-    setCustomUserClaims: async () => {}
+    setCustomUserClaims: async () => {},
+    revokeRefreshTokens: async () => {}
   }),
   getMessaging: () => ({}),
   getStorage: () => ({}),
@@ -93,14 +108,30 @@ async function run() {
     }
   }
 
-  // Set up mock DB data (canonical key is `password.reset`).
+  async function checkFailCode(name, authContext, data, code) {
+    try {
+      await wrapped({ data, auth: authContext });
+      console.error(`FAIL - ${name}: expected failure, got success`);
+      process.exitCode = 1;
+    } catch (err) {
+      if (err.code !== code) {
+        console.error(`FAIL - ${name}: expected code ${code}, got ${err.code}: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      passed++;
+      console.log(`ok - ${name}`);
+    }
+  }
+
+  // Set up mock DB data (sole key is `password_reset`).
   dbMockData["admin_permissions/admin_with_reset"] = {
     is_active: true,
-    permissions: { "password.reset": true }
+    permissions: { "password_reset": true }
   };
   dbMockData["admin_permissions/admin_without_reset"] = {
     is_active: true,
-    permissions: { "password.reset": false }
+    permissions: { "password_reset": false }
   };
   dbMockData["admin_permissions/admin_legacy"] = {
     is_active: true,
@@ -108,31 +139,57 @@ async function run() {
   };
   dbMockData["admin_permissions/admin_revoke"] = {
     is_active: true,
-    permissions: { "password.reset": true }
+    permissions: { "password_reset": true }
   };
   dbMockData["password_reset_requests/req-1"] = {
     status: "pending",
     student_id: "student-123"
   };
+  dbMockData["password_reset_requests/req-2"] = {
+    status: "pending",
+    student_id: "student-123"
+  };
+  // Target-role hardening (item 11): approval re-validates the target user
+  // exists with a student-kind role; the fixture target is a student.
+  dbMockData["users/student-123"] = {
+    role: "student",
+    approval_status: "approved",
+    account_status: "active"
+  };
 
-  const requestData = { requestId: "req-1", newPassword: "new_password" };
+  // Fixture must satisfy the strong policy (>=8 + upper/lower/digit/special),
+  // shared with changePassword via STRONG_PASSWORD_REGEX.
+  const requestData = { requestId: "req-1", newPassword: "Aa1!bcde" };
 
-  await checkPass("Teacher reset -> PASS", { uid: "t1", token: { role: "teacher" } }, requestData);
-  await checkPass("Admin with password.reset -> PASS", { uid: "admin_with_reset", token: { role: "admin" } }, requestData);
-  await checkFail("Admin without password.reset -> DENIED", { uid: "admin_without_reset", token: { role: "admin" } }, requestData);
+  await checkPass("Doctor reset -> PASS", { uid: "t1", token: { role: "doctor" } }, requestData);
+  await checkPass("Admin with password_reset -> PASS", { uid: "admin_with_reset", token: { role: "admin" } }, requestData);
+  await checkFail("Admin without password_reset -> DENIED", { uid: "admin_without_reset", token: { role: "admin" } }, requestData);
   await checkFail("Student -> DENIED", { uid: "s1", token: { role: "student" } }, requestData);
   await checkFail("Unauthenticated -> DENIED", null, requestData);
 
-  // Legacy `password_reset` grant is honored once and migrated.
-  await checkPass("Admin with legacy key -> PASS (migrated)", { uid: "admin_legacy", token: { role: "admin" } }, requestData);
-  assert.equal(dbMockData["admin_permissions/admin_legacy"].permissions["password.reset"], true);
-  assert.equal(dbMockData["admin_permissions/admin_legacy"].permissions["password_reset"], false);
-  console.log("ok - Legacy key migrated to password.reset");
+  // Sole `password_reset` grant authorizes (no migration exists in the
+  // backend — the key is enforced at read time by requirePasswordResetManager).
+  await checkPass("Admin with password_reset -> PASS", { uid: "admin_legacy", token: { role: "admin" } }, requestData);
+  assert.equal(dbMockData["admin_permissions/admin_legacy"].permissions["password_reset"], true);
+  console.log("ok - password_reset grant honored");
 
   // Revoked grant is denied even though it previously passed.
   await checkPass("Admin before revoke -> PASS", { uid: "admin_revoke", token: { role: "admin" } }, requestData);
-  dbMockData["admin_permissions/admin_revoke"].permissions["password.reset"] = false;
+  dbMockData["admin_permissions/admin_revoke"].permissions["password_reset"] = false;
   await checkFail("Admin after revoke -> DENIED", { uid: "admin_revoke", token: { role: "admin" } }, requestData);
+
+  // Temporary-password policy (approved product decision): SIMPLE by design —
+  // min 6 chars (Firebase Auth floor), no complexity, because the student
+  // must replace it on next login (force_password_change) and all sessions
+  // are revoked. The strong policy lives on in changePassword for the
+  // student-chosen permanent password. Validation runs before the request
+  // lookup, so the reject case uses req-1 with an authorized doctor actor.
+  const doctorAuth = { uid: "t1", token: { role: "doctor" } };
+  await checkFailCode("5-char temp -> REJECTED", doctorAuth, { requestId: "req-1", newPassword: "a1234" }, "invalid-argument");
+  await checkPass("6-char simple temp (letter+digits) -> ACCEPTED", doctorAuth, { requestId: "req-2", newPassword: "a12345" });
+  await checkPass("6-digit temp -> ACCEPTED", doctorAuth, { requestId: "req-2", newPassword: "123456" });
+  await checkPass("8-char weak temp (no complexity) -> ACCEPTED", doctorAuth, { requestId: "req-2", newPassword: "abcdefgh" });
+  await checkPass("8+ strong temp -> ACCEPTED", doctorAuth, { requestId: "req-2", newPassword: "Aa1!bcde" });
 
   test.cleanup();
 

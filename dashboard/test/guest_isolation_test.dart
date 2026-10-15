@@ -50,7 +50,6 @@ void main() {
         id: 'g1',
         name: 'Guest One',
         isCenter: false,
-        plan: 'FREE',
         isActive: true,
         lastSignIn: '1/9/2026',
       );
@@ -58,7 +57,6 @@ void main() {
         id: 'c1',
         name: 'Center One',
         isCenter: true,
-        plan: 'FREE',
         isActive: true,
         lastSignIn: '1/9/2026',
       );
@@ -82,9 +80,9 @@ void main() {
       for (final String id in <String>['free', 'pro', 'max']) {
         expect(id, isNot('guest'));
       }
-      expect(subscriptionPlanLabels['free'], 'Free');
-      expect(subscriptionPlanLabels['pro'], 'Pro');
-      expect(subscriptionPlanLabels['max'], 'Max');
+      expect(subscriptionPlanLabels['free'], 'FREE');
+      expect(subscriptionPlanLabels['pro'], 'PRO');
+      expect(subscriptionPlanLabels['max'], 'MAX');
     });
 
     test('isolation matrix: planId + studentType jointly identify Guest', () {

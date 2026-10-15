@@ -16,6 +16,13 @@
  * Usage:
  *   npx ts-node scripts/verify_teacher_login.ts [phone] [password]
  * Defaults: phone=01115800180 password=12345678
+ *
+ * QUARANTINE NOTE (post ADR-005 Doctor migration) — documentation only, no
+ * behavior change. This script is READ-ONLY (writes nothing) and needs no
+ * safety fix, but its name/defaults predate the migration: post-migration
+ * the owner signs in with role "doctor", and a "teacher" claim (if ever seen
+ * here) is inert by design. Updating defaults or renaming requires an owner
+ * decision.
  */
 import * as https from "node:https";
 

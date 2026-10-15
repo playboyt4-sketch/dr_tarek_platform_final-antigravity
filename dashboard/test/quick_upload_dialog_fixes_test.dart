@@ -133,7 +133,7 @@ void main() {
       final TextField orderField =
           tester.widget<TextField>(find.byType(TextField).at(1));
       expect(orderField.controller?.text, '');
-      expect(orderField.decoration?.hintText, '01');
+      expect(orderField.decoration?.hintText, '00');
       expect(orderField.decoration?.hintStyle?.color,
           const Color(0xFFBDBDBD));
       final TextField minutesField =

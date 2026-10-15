@@ -33,7 +33,7 @@ const DEV_B = "drm-test-device-B";
 const DEV_C = "drm-test-device-C";
 
 const studentCtx = {uid: STUDENT, token: {role: "student", approved: true}};
-const teacherCtx = {uid: "drm_teacher", token: {role: "teacher"}};
+const doctorCtx = {uid: "drm_doctor", token: {role: "doctor"}};
 
 function expectCode(promise, code, label) {
   return promise.then(
@@ -161,14 +161,14 @@ async function run() {
 
   // 11/12. Per-Subject revoke blocks that Subject only.
   await unbindRaw({data: {studentId: STUDENT, subjectId: SUB_A, deviceId: DEV_A},
-    auth: teacherCtx});
+    auth: doctorCtx});
   res = await reval(DEV_A, [SUB_A, SUB_B]);
   assert.equal(resultFor(res, SUB_A).allowed, false, "Revoked device wipes on A");
   assert.equal(resultFor(res, SUB_B).allowed, true, "B unaffected by A revoke");
   console.log("ok 11/12 - Revoke scoped to its Subject");
 
   // 13/14. Global reset invalidates authority; authentication intact.
-  await resetRaw({data: {studentId: STUDENT, reason: "drm-test13"}, auth: teacherCtx});
+  await resetRaw({data: {studentId: STUDENT, reason: "drm-test13"}, auth: doctorCtx});
   res = await reval(DEV_A, [SUB_A, SUB_B, SUB_C]);
   assert.ok(res.results.every((r) => r.allowed === false && r.wipeRequired === true),
     "All Subjects wipe after reset");

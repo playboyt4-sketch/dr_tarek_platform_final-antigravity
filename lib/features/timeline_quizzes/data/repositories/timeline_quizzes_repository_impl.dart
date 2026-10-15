@@ -22,19 +22,6 @@ class TimelineQuizzesRepositoryImpl implements TimelineQuizzesRepository {
   }
 
   @override
-  Future<Map<String, dynamic>> evaluateAnswer({
-    required String attemptId,
-    required String questionId,
-    required String answer,
-  }) {
-    return remoteDataSource.evaluateAnswer(
-      attemptId: attemptId,
-      questionId: questionId,
-      answer: answer,
-    );
-  }
-
-  @override
   Future<List<Map<String, dynamic>>> getAssessmentQuestions({required String attemptId}) {
     return remoteDataSource.getAssessmentQuestions(attemptId: attemptId);
   }

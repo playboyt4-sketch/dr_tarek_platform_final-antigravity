@@ -15,34 +15,43 @@ class MockProtectedOfflineStorage implements ProtectedOfflineStorage {
   final Map<String, String> _keys = {};
   final Map<String, DateTime> _expiry = {};
 
+  static String _scoped(String subjectId, String resourceId) =>
+      '${subjectId}_$resourceId';
+
   @override
   Future<void> saveEncryptedContentKey({
+    required String subjectId,
     required String resourceId,
     required String keyData,
     required DateTime expiresAt,
   }) async {
-    _keys[resourceId] = keyData;
-    _expiry[resourceId] = expiresAt;
+    final scoped = _scoped(subjectId, resourceId);
+    _keys[scoped] = keyData;
+    _expiry[scoped] = expiresAt;
   }
 
   @override
   Future<String?> getValidContentKey({
+    required String subjectId,
     required String resourceId,
   }) async {
-    final expires = _expiry[resourceId];
+    final scoped = _scoped(subjectId, resourceId);
+    final expires = _expiry[scoped];
     if (expires == null || DateTime.now().isAfter(expires)) {
-      await purgeOfflineResource(resourceId: resourceId);
+      await purgeOfflineResource(subjectId: subjectId, resourceId: resourceId);
       return null;
     }
-    return _keys[resourceId];
+    return _keys[scoped];
   }
 
   @override
   Future<void> purgeOfflineResource({
+    required String subjectId,
     required String resourceId,
   }) async {
-    _keys.remove(resourceId);
-    _expiry.remove(resourceId);
+    final scoped = _scoped(subjectId, resourceId);
+    _keys.remove(scoped);
+    _expiry.remove(scoped);
   }
 
   @override
@@ -55,8 +64,22 @@ class MockProtectedOfflineStorage implements ProtectedOfflineStorage {
       }
     });
     for (final exp in expired) {
-      await purgeOfflineResource(resourceId: exp);
+      _keys.remove(exp);
+      _expiry.remove(exp);
     }
+  }
+
+  @override
+  Future<void> purgeSubjectResources({required String subjectId}) async {
+    final prefix = '${subjectId}_';
+    _keys.removeWhere((key, _) => key.startsWith(prefix));
+    _expiry.removeWhere((key, _) => key.startsWith(prefix));
+  }
+
+  @override
+  Future<void> purgeAllSubjectResources() async {
+    _keys.clear();
+    _expiry.clear();
   }
 }
 
@@ -128,10 +151,12 @@ void main() {
     test('H. Offline encryption/decryption with AES-256-GCM', () async {
       final plaintext = 'This is a protected PDF file content.'.codeUnits;
       const resourceId = 'test_resource_1';
+      const subjectId = 'subject-test';
       const userId = 'student_user_123';
       final expiresAt = DateTime.now().add(const Duration(days: 1));
 
       await drmRepo.saveEncryptedFile(
+        subjectId: subjectId,
         resourceId: resourceId,
         plaintextBytes: plaintext,
         userId: userId,
@@ -139,24 +164,36 @@ void main() {
       );
 
       // Verify key is saved securely in storage
-      final key = await mockStorage.getValidContentKey(resourceId: resourceId);
+      final key = await mockStorage.getValidContentKey(
+        subjectId: subjectId,
+        resourceId: resourceId,
+      );
       expect(key, isNotNull);
 
       // Verify file is saved in protected path
-      final hasFile = await drmRepo.hasEncryptedFile(resourceId: resourceId);
+      final hasFile = await drmRepo.hasEncryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+      );
       expect(hasFile, isTrue);
 
       // Decrypt and compare
-      final decrypted = await drmRepo.getDecryptedFile(resourceId: resourceId, userId: userId);
+      final decrypted = await drmRepo.getDecryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+        userId: userId,
+      );
       expect(decrypted, equals(plaintext));
     });
 
     test('I. Decryption fails with wrong key', () async {
       final plaintext = 'Sample PDF bytes'.codeUnits;
       const resourceId = 'test_wrong_key';
+      const subjectId = 'subject-test';
       const userId = 'user_123';
 
       await drmRepo.saveEncryptedFile(
+        subjectId: subjectId,
         resourceId: resourceId,
         plaintextBytes: plaintext,
         userId: userId,
@@ -172,16 +209,22 @@ void main() {
         loadMasterSecret: () async => _deviceSecretB,
       );
 
-      final decrypted = await foreignDeviceRepo.getDecryptedFile(resourceId: resourceId, userId: userId);
+      final decrypted = await foreignDeviceRepo.getDecryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+        userId: userId,
+      );
       expect(decrypted, isNull);
     });
 
     test('J. Tampered DRM file decryption failure', () async {
       final plaintext = 'Tamper test content'.codeUnits;
       const resourceId = 'tamper_res';
+      const subjectId = 'subject-test';
       const userId = 'user_99';
 
       await drmRepo.saveEncryptedFile(
+        subjectId: subjectId,
         resourceId: resourceId,
         plaintextBytes: plaintext,
         userId: userId,
@@ -190,24 +233,30 @@ void main() {
 
       // Find file on disk and overwrite some bytes
       final dir = await getApplicationSupportDirectory();
-      final file = File('${dir.path}/$resourceId.drm');
+      final file = File('${dir.path}/$subjectId/$resourceId.drm');
       final bytes = await file.readAsBytes();
       
       // Mutate one byte of ciphertext to simulate file tempering
       bytes[bytes.length - 5] ^= 0xFF;
       await file.writeAsBytes(bytes);
 
-      final decrypted = await drmRepo.getDecryptedFile(resourceId: resourceId, userId: userId);
+      final decrypted = await drmRepo.getDecryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+        userId: userId,
+      );
       expect(decrypted, isNull);
     });
 
     test('L/M/N/O/P. Subscription expired/revoked/wipe DRM file', () async {
       final plaintext = 'Auto wipe content'.codeUnits;
       const resourceId = 'wipe_res';
+      const subjectId = 'subject-test';
       const userId = 'user_wipe';
 
       // Save with expiration in the past (expired subscription)
       await drmRepo.saveEncryptedFile(
+        subjectId: subjectId,
         resourceId: resourceId,
         plaintextBytes: plaintext,
         userId: userId,
@@ -215,13 +264,23 @@ void main() {
       );
 
       // Decrypt attempt should return null and purge the files/keys
-      final decrypted = await drmRepo.getDecryptedFile(resourceId: resourceId, userId: userId);
+      final decrypted = await drmRepo.getDecryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+        userId: userId,
+      );
       expect(decrypted, isNull);
 
-      final hasKey = await mockStorage.getValidContentKey(resourceId: resourceId);
+      final hasKey = await mockStorage.getValidContentKey(
+        subjectId: subjectId,
+        resourceId: resourceId,
+      );
       expect(hasKey, isNull);
 
-      final hasFile = await drmRepo.hasEncryptedFile(resourceId: resourceId);
+      final hasFile = await drmRepo.hasEncryptedFile(
+        subjectId: subjectId,
+        resourceId: resourceId,
+      );
       expect(hasFile, isFalse);
     });
 

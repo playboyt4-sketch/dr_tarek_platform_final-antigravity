@@ -1,3 +1,17 @@
+/**
+ * QUARANTINE NOTICE (post ADR-005 Doctor migration) — documentation only,
+ * no behavior change.
+ *
+ * This script writes the LEGACY role "teacher" to users/{uid} (merge) plus a
+ * password hash to user_secrets/{uid}. Production authorization (Firestore /
+ * Storage Rules, Cloud Functions ADMIN_ROLES / requireDoctor, mobile +
+ * dashboard gates) accepts only "doctor" / "admin" / "student" /
+ * "new_student": a "teacher" account is inert (denied everywhere), so
+ * running this script post-migration REGRESSES the owner account instead of
+ * repairing it. DO NOT RUN without explicit Project Owner approval. Changing
+ * the role string, the pinned UID/phone, or deleting this file all require
+ * an owner decision — do not do them silently.
+ */
 import { randomBytes, scrypt as scryptCallback } from "node:crypto";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";

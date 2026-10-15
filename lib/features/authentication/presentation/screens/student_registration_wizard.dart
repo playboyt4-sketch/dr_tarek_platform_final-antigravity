@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../../core/errors/failure.dart';
 import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../profile/data/services/pending_profile_photo_store.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../../core/widgets/password_strength_meter.dart';
 import '../providers/auth_provider.dart';
@@ -186,6 +188,17 @@ class _StudentRegistrationWizardState
     if (!mounted) return;
     final state = ref.read(authProvider);
     if (!state.hasError) {
+      // Same rule as the step screens: the picked photo is a local file and
+      // registration runs signed-out, so stash it for upload on first login
+      // instead of dropping it (or sending a device path as a URL).
+      // No local filesystem exists on web (`File` throws UnsupportedError),
+      // so the stash is skipped there.
+      if (!kIsWeb && _photoFile != null) {
+        await PendingProfilePhotoStore.save(
+          phone: _phoneController.text.trim(),
+          photo: _photoFile!,
+        );
+      }
       setState(() => _submitted = true);
     }
   }
@@ -202,13 +215,16 @@ class _StudentRegistrationWizardState
     try {
       final picker = ImagePicker();
       final picked = await picker.pickImage(source: ImageSource.gallery);
-      if (picked != null) {
+      if (picked != null && !kIsWeb) {
         setState(() {
           _photoFile = File(picked.path);
         });
       }
     } catch (e) {
-      _showError('فشل في اختيار الصورة الشخصية: $e');
+      // Never interpolate the raw exception ($e) into user-facing text —
+      // it leaks technical/English internals. Route through the canonical
+      // Failure mapping so only Arabic failureMessage() copy is shown.
+      _showError(_friendlyError(e));
     }
   }
 
@@ -357,7 +373,7 @@ class _StudentRegistrationWizardState
     switch (_step) {
       case 0:
         return _RegistrationStepLayout(
-          imagePath: 'assets/images/New Student - name.png',
+          imagePath: 'assets/images/new_student_name_photo.png',
           title: 'ما هو اسمك بالكامل؟',
           subtitle: 'أدخل اسمك الثلاثي أو الرباعي كما هو مدون في الأوراق الرسمية.',
           child: TextField(
@@ -372,7 +388,7 @@ class _StudentRegistrationWizardState
         );
       case 1:
         return _RegistrationStepLayout(
-          imagePath: 'assets/images/New Student - number.png',
+          imagePath: 'assets/images/New Student - number photo.png',
           title: 'ما هو رقم هاتفك؟',
           subtitle: 'سيتم استخدام رقم الهاتف لتسجيل الدخول إلى حسابك.',
           child: TextField(
@@ -412,7 +428,7 @@ class _StudentRegistrationWizardState
                     ],
                   ),
                   child: ClipOval(
-                    child: _photoFile != null
+                    child: !kIsWeb && _photoFile != null
                         ? Image.file(_photoFile!, fit: BoxFit.cover)
                         : Icon(Icons.person, size: context.rsFont(76), color: const Color(0xFF9A9A9A)),
                   ),
@@ -437,7 +453,7 @@ class _StudentRegistrationWizardState
         );
       case 3:
         return _RegistrationStepLayout(
-          imagePath: 'assets/images/New Student - grade.png',
+          imagePath: 'assets/images/New Student - Grade photo.png',
           title: 'الفرقة والمجموعة',
           subtitle: 'اختر فرقتك الدراسية والمجموعة المخصصة إن وجدت.',
           child: Column(
@@ -506,7 +522,7 @@ class _StudentRegistrationWizardState
         );
       case 4:
         return _RegistrationStepLayout(
-          imagePath: 'assets/images/New Student - password.png',
+          imagePath: 'assets/images/New Student - password photo.png',
           title: 'تعيين كلمة المرور',
           subtitle: 'يجب أن تتبع كلمة المرور سياسة الأمان الموضحة أدناه.',
           child: Column(
@@ -767,7 +783,7 @@ class _RegistrationSubmittedView extends StatelessWidget {
                       maxHeight: context.rsV(360),
                     ),
                     child: Image.asset(
-                      'assets/images/New Student - end.png',
+                      'assets/images/New Student - End photo.png',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return SizedBox(

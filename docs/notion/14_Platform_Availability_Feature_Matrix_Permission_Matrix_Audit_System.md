@@ -100,7 +100,13 @@ This document is the single source of truth for access control across the platfo
 | `video.resume` | Resume playback | ✅ | ✅ | ✅ | ✅ |
 | `video.watermark` | Dynamic watermark | ✅ | ✅ | ✅ | ✅ |
 | `video.security.screen_record_detect` | Detect screen recording | ✅ | ✅ | ✅ | ✅ |
-| `video.security.screenshot_prevent` | Prevent screenshots | ✅ | ✅ | ✅ | ✅ |
+| `video.security.screenshot_prevent` | Prevent screenshots (Android) / detect-only on iOS — see note | ✅ | ✅ | ✅ | ✅ |
+
+> **iOS note (owner decision 2026-10-14, detection-only):** on iOS the platform
+> cannot prevent screenshots or screen capture; `AppDelegate` observes
+> `capturedDidChangeNotification` and overlays a black shield (detection +
+> deterrence only). Do not promise prevention on iOS in UI copy, store
+> listing, or review notes. Android behavior is unchanged.
 
 ### PDF & Documents
 

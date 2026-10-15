@@ -21,16 +21,67 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "predeploy": [],
+      "predeploy": ["npm --prefix functions run build"],
       "timeout": "60s"
     }
   ],
+  "hosting": {
+    "site": "dr-tarek-platform",
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [{ "key": "Cache-Control", "value": "max-age=604800" }]
+      },
+      {
+        "source": "**/flutter_service_worker.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/flutter_bootstrap.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/main.dart.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/index.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/version.json",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      }
+    ]
+  },
   "flutter": {
     "platforms": {
       "android": {
         "default": {
           "projectId": "dr-tarek-platform",
-          "appId": "1:606744934510:android:3d55cc03076b0adcc54e7f",
+          "appId": "1:606744934510:android:e272d428dbc477bbc54e7f",
           "fileOutput": "android/app/google-services.json"
         }
       },
@@ -38,8 +89,8 @@
         "lib/firebase_options.dart": {
           "projectId": "dr-tarek-platform",
           "configurations": {
-            "android": "1:606744934510:android:3d55cc03076b0adcc54e7f",
-            "ios": "1:606744934510:ios:123c69688cf114cbc54e7f",
+            "android": "1:606744934510:android:e272d428dbc477bbc54e7f",
+            "ios": "1:606744934510:ios:9718f3e90867d668c54e7f",
             "web": "1:606744934510:web:0ed4cde346f56acec54e7f"
           }
         }
@@ -55,6 +106,9 @@
     },
     "firestore": {
       "port": 8080
+    },
+    "storage": {
+      "port": 9199
     },
     "ui": {
       "enabled": true,

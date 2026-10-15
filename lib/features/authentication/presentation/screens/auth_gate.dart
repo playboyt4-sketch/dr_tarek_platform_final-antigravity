@@ -6,8 +6,10 @@ import '../../../../../core/errors/failure_messages.dart';
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../admin/presentation/screens/admin_home_screen.dart';
 import '../../../student_home/presentation/screens/student_home_screen.dart';
+import '../../domain/entities/auth_user.dart';
 import '../../domain/entities/session_state.dart';
 import '../providers/session_provider.dart';
+import '../widgets/forced_password_change_screen.dart';
 
 import 'user_type_selection_screen.dart';
 
@@ -24,6 +26,7 @@ AuthGateDestination authGateDestinationForRole(String role) {
   return switch (role.trim().toLowerCase()) {
     'student' => AuthGateDestination.student,
     'admin' => AuthGateDestination.admin,
+    'doctor' => AuthGateDestination.admin,
     _ => AuthGateDestination.blocked,
   };
 }
@@ -46,7 +49,9 @@ class AuthGate extends ConsumerWidget {
         onAction: () => ref.read(sessionProvider.notifier).retry(),
       ),
       data: (session) => switch (session) {
-        SessionInitializing() => const Scaffold(backgroundColor: Color(0xFFFFFCF7)),
+        SessionInitializing() => const Scaffold(
+          backgroundColor: Color(0xFFFFFCF7),
+        ),
         SessionUnauthenticated() => const UserTypeSelectionScreen(),
         SessionAuthenticated(:final user) => switch (authGateDestinationForRole(
           user.role,
@@ -95,6 +100,9 @@ class AuthGate extends ConsumerWidget {
           actionLabel: l10n.actionSignOut,
           onAction: () => ref.read(sessionProvider.notifier).logout(),
           userName: user.fullName,
+        ),
+        SessionForcePasswordChange(:final user) => _ForcePasswordChangeGate(
+          user: user,
         ),
         SessionError(:final error) => _SessionMessage(
           title: l10n.sessionErrorTitle,
@@ -147,6 +155,79 @@ class _SessionMessage extends StatelessWidget {
                 const SizedBox(height: 24),
                 FilledButton(onPressed: onAction, child: Text(actionLabel)),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Terminal gate for student forced-password-change.
+///
+/// Rendered directly by [AuthGate] (no route): while the session resolves to
+/// [SessionForcePasswordChange], normal app content (student/admin home) is
+/// unreachable. Back navigation is blocked via [PopScope]; the only exits
+/// are completing the mandatory password change (which re-resolves the
+/// session) or signing out.
+class _ForcePasswordChangeGate extends ConsumerWidget {
+  final AuthUser user;
+
+  const _ForcePasswordChangeGate({required this.user});
+
+  Future<void> _openMandatoryChange(BuildContext context, WidgetRef ref) async {
+    // Uses the forced-change form: on success it force-refreshes claims
+    // (getIdTokenResult(true)) and invalidates the session itself, so the
+    // gate re-resolves to Authenticated. The retry() below is a safety
+    // re-resolve on the already-refreshed claims.
+    final changed = await showForcedPasswordChangeDialog(
+      context,
+      studentName: user.fullName,
+    );
+    if (changed == true && context.mounted) {
+      ref.read(sessionProvider.notifier).retry();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'تغيير كلمة المرور مطلوب',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(user.fullName, textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'تمت إعادة تعيين كلمة المرور الخاصة بك من قبل الإدارة. '
+                    'يجب تعيين كلمة مرور جديدة للمتابعة.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: () => _openMandatoryChange(context, ref),
+                    child: const Text('تغيير كلمة المرور'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () =>
+                        ref.read(sessionProvider.notifier).logout(),
+                    child: const Text('تسجيل الخروج'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

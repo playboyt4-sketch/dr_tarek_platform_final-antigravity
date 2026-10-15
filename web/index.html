@@ -31,6 +31,13 @@
 
   <title>Dr. Tarek El Araby Platform</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- P1 playback: HLS shim for Flutter Web. video_player drives a plain
+    <video> element, which cannot demux HLS (.m3u8) on Chrome/Edge/Firefox.
+    hls.js attaches to the element and feeds it the playlist. Served from
+    the project's allowed script host (cdn.jsdelivr.net). Harmless when the
+    backend serves direct MP4 (web path requests format=mp4). -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1" defer></script>
 </head>
 <body>
   <!--

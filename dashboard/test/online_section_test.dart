@@ -91,7 +91,7 @@ class FakeOnlineLectureController implements SubjectDetailsController {
     int? previewMinutes,
     required List<NewLectureResource> resources,
     required Map<String, bool> accessByStudent,
-    String actorId = 'dashboard',
+    String? actorId,
   }) async {
     created.add(<String, Object?>{
       'subjectId': subjectId,
@@ -138,6 +138,37 @@ class FakeOnlineLectureController implements SubjectDetailsController {
     String? gradeKey,
     String? coverUrl,
   }) async {}
+
+  @override
+  Future<LectureEditData> getLectureForEdit(String lectureId) async =>
+      LectureEditData(
+        lectureId: lectureId,
+        title: 'Existing',
+        displayOrder: 0,
+        status: 'draft',
+        guestEnabled: false,
+        resources: const <LectureEditResource>[],
+        accessOverrides: const <String, bool>{},
+      );
+
+  @override
+  Future<void> updateLectureFull({
+    required String lectureId,
+    required String title,
+    required int displayOrder,
+    required bool publishNow,
+    DateTime? publishDateTime,
+    bool preserveStatus = false,
+    bool clearPublishDate = false,
+    required bool guestEnabled,
+    int? previewMinutes,
+    required List<NewLectureResource> newResources,
+    required List<String> deleteResourceIds,
+    List<UpdatedLectureResource> updatedResources =
+        const <UpdatedLectureResource>[],
+    required Map<String, bool> accessByStudent,
+    String? actorId,
+  }) async {}
 }
 
 const GradeStudentsData _roster = GradeStudentsData(
@@ -147,7 +178,6 @@ const GradeStudentsData _roster = GradeStudentsData(
       id: 's-ahmed',
       name: 'Ahmed',
       isCenter: true,
-      plan: 'PRO',
       isActive: true,
       lastSignIn: '',
     ),
@@ -346,7 +376,7 @@ void main() {
       final Finder fields = find.byType(TextField);
       await tester.enterText(
           fields.at(fieldCount - 3), 'Session Recording');
-      await tester.enterText(fields.at(fieldCount - 2), 'bunny-online-123');
+      await tester.enterText(fields.at(fieldCount - 2), '11111111-1111-4111-8111-111111111111');
       await tester.tap(find.byKey(const Key('resourceDialogSave')));
       await tester.pumpAndSettle();
       expect(find.textContaining('Video - Session Recording'), findsOneWidget);
@@ -364,7 +394,7 @@ void main() {
           (payload['resources'] as List).cast<NewLectureResource>();
       expect(resources, hasLength(1));
       expect(resources.single.type, 'video');
-      expect(resources.single.bunnyVideoId, 'bunny-online-123');
+      expect(resources.single.bunnyVideoId, '11111111-1111-4111-8111-111111111111');
     });
   });
 
@@ -475,3 +505,4 @@ void main() {
     });
   });
 }
+

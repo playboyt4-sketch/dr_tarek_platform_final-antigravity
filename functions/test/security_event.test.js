@@ -28,11 +28,11 @@ const adminMock = {
         const query = {
           where: () => query,
           get: async () => {
-            // One staff teacher exists so high-severity alerts fan out.
-            if (collPath === "users" && field === "role" && value === "teacher") {
+            // One staff doctor exists so high-severity alerts fan out.
+            if (collPath === "users" && field === "role" && value === "doctor") {
               return {
                 empty: false,
-                docs: [{id: "teacher-1", data: () => ({role: "teacher"})}],
+                docs: [{id: "doctor-1", data: () => ({role: "doctor"})}],
               };
             }
             return {empty: true, docs: []};
@@ -174,9 +174,9 @@ async function run() {
       severity: "low",
       user_id: "victim-uid",
       userId: "victim-uid",
-      role: "teacher",
-      actor_id: "teacher-1",
-      actor_role: "teacher",
+      role: "doctor",
+      actor_id: "doctor-1",
+      actor_role: "doctor",
       actionTaken: "logout",
     },
     auth: studentAuth,

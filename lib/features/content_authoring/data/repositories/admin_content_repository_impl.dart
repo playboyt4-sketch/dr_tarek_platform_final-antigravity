@@ -9,6 +9,8 @@ import '../../../lecture/domain/entities/lecture_resource.dart'
     show LectureResourceType;
 import '../../domain/entities/admin_content_entities.dart';
 import '../../domain/repositories/admin_content_repository.dart';
+import '../../domain/use_cases/resource_use_cases.dart'
+    show isValidBunnyVideoId;
 import '../datasources/admin_content_data_source.dart';
 import '../datasources/admin_content_remote_data_source_impl.dart'
     show adminResourceFields;
@@ -260,12 +262,21 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
 
   @override
   Future<String> createResource(AdminLectureResource resource) async {
-    if (resource.resourceType == LectureResourceType.video &&
-        (resource.bunnyVideoId?.trim().isEmpty ?? true)) {
-      throw const Failure(
-        FailureCode.validation,
-        debugDetail: 'Video resources must carry a Bunny video id (06 §6.4).',
-      );
+    if (resource.resourceType == LectureResourceType.video) {
+      final String vid = (resource.bunnyVideoId ?? '').trim();
+      if (vid.isEmpty) {
+        throw const Failure(
+          FailureCode.validation,
+          debugDetail: 'Video resources must carry a Bunny video id (06 §6.4).',
+        );
+      }
+      if (!isValidBunnyVideoId(vid)) {
+        throw const Failure(
+          FailureCode.validation,
+          debugDetail:
+              'Bunny video id must be a bare Video ID (GUID) — URLs are not accepted.',
+        );
+      }
     }
     if (resource.resourceType == LectureResourceType.externalLink &&
         (resource.externalUrl?.trim().isEmpty ?? true)) {
@@ -302,8 +313,26 @@ class AdminContentRepositoryImpl implements AdminContentRepository {
   }
 
   @override
-  Future<void> updateResource(AdminLectureResource resource) =>
-      dataSource.updateResourceDoc(resource.id, adminResourceFields(resource));
+  Future<void> updateResource(AdminLectureResource resource) {
+    if (resource.resourceType == LectureResourceType.video) {
+      final String vid = (resource.bunnyVideoId ?? '').trim();
+      if (vid.isEmpty) {
+        throw const Failure(
+          FailureCode.validation,
+          debugDetail: 'Video resources must carry a Bunny video id (06 §6.4).',
+        );
+      }
+      if (!isValidBunnyVideoId(vid)) {
+        throw const Failure(
+          FailureCode.validation,
+          debugDetail:
+              'Bunny video id must be a bare Video ID (GUID) — URLs are not accepted.',
+        );
+      }
+    }
+    return dataSource.updateResourceDoc(
+        resource.id, adminResourceFields(resource));
+  }
 
   @override
   Future<String> createUploadedResource({

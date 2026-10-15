@@ -259,7 +259,10 @@ class _DashboardShellState extends State<DashboardShell> {
   Widget _contentFor(DashboardSection section) {
     switch (section) {
       case DashboardSection.home:
-        return DashboardHomeScreen(onMenuPressed: _openMenu);
+        return DashboardHomeScreen(
+          onMenuPressed: _openMenu,
+          onNavigate: _openGradeStudents,
+        );
       case DashboardSection.gradeOne:
       case DashboardSection.gradeTwo:
       case DashboardSection.gradeThree:
@@ -295,6 +298,7 @@ class _DashboardShellState extends State<DashboardShell> {
               'student-profile-${profileStudent.id}-$_profileGrade'),
           student: profileStudent,
           gradeKey: _profileGrade,
+          avatarUrl: profileStudent.photoUrl,
           onBack: _closeStudentProfile,
           // Dashboard-level controls: grade tabs exit the profile to
           // that grade's Students list, Students returns to the current
@@ -362,15 +366,15 @@ class _DashboardShellState extends State<DashboardShell> {
         );
       case DashboardSection.subscription:
         // Role-aware gating: delegated Admins see the rolling-window rows
-        // locked (Teacher only); the backend re-enforces this server-side.
+        // locked (Doctor only); the backend re-enforces this server-side.
         // Unknown/loading sessions fail closed (locked).
         return Consumer(
           builder: (BuildContext context, WidgetRef ref, _) {
-            final bool isTeacher = ref.watch(sessionProvider).maybeWhen(
-                  data: (session) => session?.role == 'teacher',
+            final bool isDoctor = ref.watch(sessionProvider).maybeWhen(
+                  data: (session) => session?.role == 'doctor',
                   orElse: () => false,
                 );
-            return SubscriptionScreen(isTeacher: isTeacher);
+            return SubscriptionScreen(isDoctor: isDoctor);
           },
         );
       case DashboardSection.admins:

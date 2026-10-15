@@ -134,6 +134,20 @@ class AuthController extends AsyncNotifier<AuthUser?> {
     );
   }
 
+  /// Applies the login "Remember me" choice to the Firebase session.
+  ///
+  /// Best-effort by repository contract: never throws, never touches
+  /// [state] — login must not fail because of persistence.
+  Future<void> applyRememberMePersistence(bool rememberMe) async {
+    try {
+      await ref
+          .read(authRepositoryProvider)
+          .applySessionPersistence(rememberMe: rememberMe);
+    } catch (_) {
+      // Continue with the platform default.
+    }
+  }
+
   Future<void> logout() async {
     state = const AsyncLoading();
 

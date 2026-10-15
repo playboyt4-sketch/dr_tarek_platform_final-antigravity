@@ -279,6 +279,9 @@ class FakeAuthRepository implements AuthRepository {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<void> applySessionPersistence({required bool rememberMe}) async {}
 }
 
 class FakeDeviceBindingRepository implements DeviceBindingRepository {

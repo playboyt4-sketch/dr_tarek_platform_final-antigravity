@@ -54,8 +54,6 @@ class AssessmentQuestionScreen extends ConsumerWidget {
         }
 
         final isAnswered = state.isCurrentQuestionAnswered;
-        final isCorrect = state.isCurrentQuestionCorrect;
-        final explanation = state.currentExplanation;
         final selectedAnswer = state.selectedAnswers[question.id];
 
         return Scaffold(
@@ -81,12 +79,15 @@ class AssessmentQuestionScreen extends ConsumerWidget {
                         final option = question.options[index];
                         final isSelected = selectedAnswer == option;
                         
+                        // O6-B: selection is shown neutrally. Correctness and
+                        // explanations surface only after final submission
+                        // (summary screen), never per question.
                         Color? bgColor;
                         Color? borderColor;
                         if (isAnswered) {
                           if (isSelected) {
-                            bgColor = isCorrect ? Colors.green.shade100 : Colors.red.shade100;
-                            borderColor = isCorrect ? Colors.green : Colors.red;
+                            bgColor = Theme.of(context).primaryColor.withValues(alpha: 0.12);
+                            borderColor = Theme.of(context).primaryColor;
                           } else {
                             bgColor = Colors.grey.shade100;
                             borderColor = Colors.grey.shade300;
@@ -121,20 +122,6 @@ class AssessmentQuestionScreen extends ConsumerWidget {
                   if (state.isSubmitting)
                     const Center(child: CircularProgressIndicator())
                   else if (isAnswered) ...[
-                    if (explanation != null && explanation.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Explanation: $explanation',
-                          style: const TextStyle(color: Colors.blueGrey),
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: state.isLastQuestion

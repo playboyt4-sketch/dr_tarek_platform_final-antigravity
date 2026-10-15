@@ -42,11 +42,11 @@ void main() {
       expect(denied, isNot(isA<FreeWindowBlockedException>()));
       expect(
         denied.message,
-        'لا تملك صلاحية مشاهدة هذا الفيديو أو انتهى اشتراكك.',
+        'You do not have permission to watch this video, or your subscription has ended.',
       );
 
       final generic = classifyVideoSourceError('internal', null, null);
-      expect(generic.message, 'تعذر تحميل الفيديو. حاول مرة أخرى.');
+      expect(generic.message, 'Could not load the video. Please try again.');
     });
 
     test('server windowHours override the default 24h message', () {
@@ -86,6 +86,55 @@ void main() {
       expect(
         kFreeWindowBlockedMessage,
         'A Center Free 24-hour video window is already active for another video.',
+      );
+    });
+  });
+
+  group('classifyVideoSourceError - device-blocked contract', () {
+    test('maps the Guest-tier no-preview sentinel to the typed exception',
+        () {
+      final error = classifyVideoSourceError(
+        'permission-denied',
+        'Guest preview is not enabled for this lecture.',
+        null,
+      );
+
+      expect(error, isA<DeviceNotAuthorizedException>());
+      expect(error.message, isNotEmpty);
+    });
+
+    test('sentinel with surrounding whitespace still classifies', () {
+      final error = classifyVideoSourceError(
+        'permission-denied',
+        '  Guest preview is not enabled for this lecture.  ',
+        null,
+      );
+
+      expect(error, isA<DeviceNotAuthorizedException>());
+    });
+
+    test('other permission-denied errors keep the generic message', () {
+      final denied = classifyVideoSourceError(
+        'permission-denied',
+        'Active subject subscription is required.',
+        null,
+      );
+
+      expect(denied, isNot(isA<DeviceNotAuthorizedException>()));
+      expect(
+        denied.message,
+        'You do not have permission to watch this video, or your subscription has ended.',
+      );
+    });
+
+    test('client sentinel literal matches the server string exactly', () {
+      // Drift guard: functions/src/index.ts generateBunnySignedUrl throws
+      // HttpsError("permission-denied", <this exact value>). If the backend
+      // rewords it, the mapping safely falls back to generic — never a
+      // wrong wall.
+      expect(
+        kGuestPreviewNotEnabledMessage,
+        'Guest preview is not enabled for this lecture.',
       );
     });
   });

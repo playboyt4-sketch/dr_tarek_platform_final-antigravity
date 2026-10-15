@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../../../admin/domain/admin_grades.dart'
+    show normalizeAdminGradeKey;
 import '../../../lecture/domain/entities/lecture.dart';
 import '../../../lecture/domain/entities/lecture_resource.dart'
     show LectureResourceType;
@@ -50,6 +52,66 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         'updated_at': FieldValue.serverTimestamp(),
         'updated_by': _actorId,
       };
+
+  /// Resolves the owning subject of a lecture for the `subject_id`
+  /// denormalization on `lecture_resources` rows (required by the
+  /// `hasSubjectAccess` Firestore gate). Returns null when the lecture
+  /// or its subject is missing — callers then leave the field untouched.
+  Future<String?> _subjectIdForLecture(String lectureId) async {
+    final snap =
+        await firestore.collection('lectures').doc(lectureId).get();
+    final subjectId = snap.data()?['subject_id'] as String?;
+    return (subjectId == null || subjectId.isEmpty) ? null : subjectId;
+  }
+
+  /// Canonical first-video sync shared by every resource mutation below,
+  /// mirroring the Dashboard `SubjectDetailsController` writer sync:
+  /// eligible = `video` + visible + not soft-deleted + non-empty Bunny id;
+  /// winner = lowest `display_order` (document id breaks ties); null when
+  /// nothing is eligible. The denormalized `first_video` map on
+  /// `lectures/{lectureId}` keeps student listings + playback identical
+  /// no matter which authoring surface wrote the resource.
+  Future<void> _syncLectureFirstVideo(String lectureId) async {
+    final snap = await firestore
+        .collection('lecture_resources')
+        .where('lecture_id', isEqualTo: lectureId)
+        .get();
+    String? winnerId;
+    String? winnerTitle;
+    String? winnerBunnyId;
+    int? winnerOrder;
+    for (final doc in snap.docs) {
+      final d = doc.data();
+      if (d['is_deleted'] == true) continue;
+      if ((d['is_visible'] ?? d['visibility']) != true) continue;
+      if (d['resource_type'] != 'video') continue;
+      final bunnyId = (d['bunny_video_id'] as String?)?.trim();
+      if (bunnyId == null || bunnyId.isEmpty) continue;
+      final order = (d['display_order'] as num?)?.toInt() ?? 0;
+      if (winnerId == null ||
+          order < winnerOrder! ||
+          (order == winnerOrder && doc.id.compareTo(winnerId) < 0)) {
+        winnerId = doc.id;
+        winnerTitle = ((d['title'] ?? d['resource_title']) as String?) ?? '';
+        winnerBunnyId = bunnyId;
+        winnerOrder = order;
+      }
+    }
+    await firestore.collection('lectures').doc(lectureId).update({
+      'first_video': winnerId == null
+          ? null
+          : <String, Object?>{
+              'resource_id': winnerId,
+              'bunny_video_id': winnerBunnyId,
+              'title': winnerTitle,
+              'display_order': winnerOrder,
+              'thumbnail_path': null,
+              'thumbnail_storage_provider': null,
+            },
+      'updated_at': FieldValue.serverTimestamp(),
+      'updated_by': _actorId,
+    });
+  }
 
   // ---- Subjects (picker) ----
   @override
@@ -158,9 +220,22 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     await batch.commit();
   }
 
+  /// Soft-deletes a custom section (archived, restorable via
+  /// [restoreSection] and visible in `watchArchivedSections`). A hard
+  /// `.delete()` is denied by `firestore.rules` (`allow delete: if false`)
+  /// and would hide the section from the archive forever. System sections
+  /// stay protected server-side: the rules reject `is_deleted: true` on
+  /// them, so this update can only ever archive custom sections.
   @override
   Future<void> deleteSection(String sectionId) {
-    return firestore.collection('subject_sections').doc(sectionId).delete();
+    return firestore.collection('subject_sections').doc(sectionId).update({
+      'is_deleted': true,
+      'is_visible': false,
+      'deleted_at': FieldValue.serverTimestamp(),
+      'deleted_by': _actorId,
+      'updated_at': FieldValue.serverTimestamp(),
+      'updated_by': _actorId,
+    });
   }
 
   @override
@@ -258,6 +333,10 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
           publishDate == null ? null : Timestamp.fromDate(publishDate),
       'status': 'draft',
       'is_deleted': false,
+      // Denormalized first-video pointer (Dashboard writer sync keeps it
+      // current on every resource mutation); null until a visible video
+      // resource exists.
+      'first_video': null,
       // FINAL_DECISIONS §11 per-lecture Guest preview control.
       'guest_enabled': guestEnabled,
       'guest_preview_minutes': guestPreviewMinutes,
@@ -373,10 +452,17 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         .snapshots()
         .map((snap) {
       final students = <LectureStudent>[];
+      // Both sides normalized to canonical grade_one..grade_four so
+      // legacy digit spellings (grade_3) and canonical values
+      // (grade_three) match regardless of which side carries which.
+      final normalizedFilter = normalizeAdminGradeKey(gradeKey);
       for (final doc in snap.docs) {
         final data = doc.data();
         final grade = data['grade'] as String?;
-        if (gradeKey != null && grade != gradeKey) continue;
+        if (gradeKey != null &&
+            normalizeAdminGradeKey(grade) != normalizedFilter) {
+          continue;
+        }
         students.add(LectureStudent(
           id: doc.id,
           name: ((data['full_name'] as String?)?.trim().isEmpty ?? true)
@@ -508,21 +594,57 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
   Future<void> setResourceDoc({
     required String resourceId,
     required Map<String, dynamic> fields,
-  }) {
-    return firestore
+  }) async {
+    final payload = Map<String, dynamic>.from(fields);
+    // Backfill the owning subject so the `hasSubjectAccess` gate can
+    // resolve this row (the form entity only carries the lecture id).
+    if ((payload['subject_id'] as String?)?.isNotEmpty != true) {
+      final lectureId = payload['lecture_id'] as String?;
+      if (lectureId != null && lectureId.isNotEmpty) {
+        final subjectId = await _subjectIdForLecture(lectureId);
+        if (subjectId != null) payload['subject_id'] = subjectId;
+      }
+    }
+    await firestore
         .collection('lecture_resources')
         .doc(resourceId)
-        .set({...fields, ..._createStamp});
+        .set({...payload, ..._createStamp});
+    final lectureId = payload['lecture_id'] as String?;
+    if (lectureId != null && lectureId.isNotEmpty) {
+      await _syncLectureFirstVideo(lectureId);
+    }
   }
 
   @override
   Future<void> updateResourceDoc(
       String resourceId, Map<String, dynamic> fields) async {
+    final payload = Map<String, dynamic>.from(fields);
+    final existing = await firestore
+        .collection('lecture_resources')
+        .doc(resourceId)
+        .get();
+    final stored = existing.data();
+    // Backfill `subject_id` on legacy rows that predate the field so the
+    // `hasSubjectAccess` gate resolves them after any edit.
+    if (!payload.containsKey('subject_id') &&
+        ((stored?['subject_id'] as String?)?.isNotEmpty != true)) {
+      final lectureId = (payload['lecture_id'] ?? stored?['lecture_id'])
+          as String?;
+      if (lectureId != null && lectureId.isNotEmpty) {
+        final subjectId = await _subjectIdForLecture(lectureId);
+        if (subjectId != null) payload['subject_id'] = subjectId;
+      }
+    }
     await firestore.collection('lecture_resources').doc(resourceId).update({
-      ...fields,
+      ...payload,
       'updated_at': FieldValue.serverTimestamp(),
       'updated_by': _actorId,
     });
+    final lectureId =
+        (payload['lecture_id'] ?? stored?['lecture_id']) as String?;
+    if (lectureId != null && lectureId.isNotEmpty) {
+      await _syncLectureFirstVideo(lectureId);
+    }
   }
 
   @override
@@ -540,6 +662,22 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
       );
     }
     await batch.commit();
+    // Display order feeds first-video selection — resync every lecture
+    // touched by the reorder.
+    final lectureIds = <String>{};
+    for (final item in order) {
+      final doc = await firestore
+          .collection('lecture_resources')
+          .doc(item.id)
+          .get();
+      final lectureId = doc.data()?['lecture_id'] as String?;
+      if (lectureId != null && lectureId.isNotEmpty) {
+        lectureIds.add(lectureId);
+      }
+    }
+    for (final lectureId in lectureIds) {
+      await _syncLectureFirstVideo(lectureId);
+    }
   }
 
   @override
@@ -551,6 +689,14 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
       'updated_at': FieldValue.serverTimestamp(),
       'updated_by': _actorId,
     });
+    final doc = await firestore
+        .collection('lecture_resources')
+        .doc(resourceId)
+        .get();
+    final lectureId = doc.data()?['lecture_id'] as String?;
+    if (lectureId != null && lectureId.isNotEmpty) {
+      await _syncLectureFirstVideo(lectureId);
+    }
   }
 }
 

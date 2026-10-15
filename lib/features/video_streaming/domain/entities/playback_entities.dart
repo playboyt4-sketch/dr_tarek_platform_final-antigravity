@@ -31,21 +31,43 @@ enum PlayerUiState {
 
 enum ResumeAction { none, continueWatching, startOver }
 
+/// Machine-readable denial reason for a refused [VideoEntitlement].
+/// Presentation-only routing (which wall/message/CTA to show) — the
+/// allow/deny verdict itself is unchanged. No reason is ever fabricated:
+/// each value is set at the exact denial site that established it.
+enum VideoDenialKind {
+  /// No usable subscription for THIS subject (missing/inactive/expired).
+  /// Never an upsell: the per-subject plan may already be correct.
+  subscriptionInactive,
+
+  /// The subject's plan genuinely excludes video (upsell candidate).
+  planUpsell,
+
+  /// Backend/config problem, not a student action (e.g. no quality matrix).
+  configuration,
+}
+
 class VideoEntitlement {
   final bool allowed;
   final Set<VideoQuality> allowedQualities;
   final String? message;
 
+  /// Why access was refused (null when allowed or for legacy denials).
+  final VideoDenialKind? denialKind;
+
   const VideoEntitlement({
     required this.allowed,
     this.allowedQualities = const {},
     this.message,
+    this.denialKind,
   });
 
-  const VideoEntitlement.denied(String reason)
-    : allowed = false,
-      allowedQualities = const {},
-      message = reason;
+  const VideoEntitlement.denied(
+    String reason, {
+    this.denialKind,
+  })  : allowed = false,
+        allowedQualities = const {},
+        message = reason;
 
   /// Compatibility projection for older consumers; authorization remains set-based.
   String? get maxQuality {
@@ -240,11 +262,30 @@ class VideoResource {
   final String? thumbnailProvider;
   final Duration? duration;
 
+  /// Backend `display_order` (surfaced as `displayOrder` by the callable).
+  /// Drives canonical first-video selection below; defaults to 0 for
+  /// payloads from older deployments.
+  final int displayOrder;
+
   /// FINAL_DECISIONS §11: non-null ONLY when the server armed the Guest
   /// per-lecture preview gate for THIS student+lecture; the value is the
   /// exact number of seconds allowed. Zero = wall immediately.
   final bool isGuestPreview;
   final int? guestPreviewSeconds;
+
+  /// Messaging-only audience for the Guest verdict ("guest" = external
+  /// Guest identity/plan → Center-enrollment message; "center" = Center
+  /// student on an unauthorized device → device message). Mirrors the
+  /// server `previewAudience` discriminator; null/unknown preserves the
+  /// legacy generic wall. Never authorization logic.
+  final String? previewAudience;
+
+  /// Silent header autoplay: Bunny's HQ preview clip for the video
+  /// (`preview_hq.mp4`, played muted + looping — no audio track is ever
+  /// unmuted), signed server-side like the poster. Present only when the
+  /// Stream API confirms the clip exists; callers fall back to
+  /// [thumbnailUrl]. Never playback authorization (read-only listing).
+  final String? previewUrl;
 
   const VideoResource({
     required this.id,
@@ -254,13 +295,16 @@ class VideoResource {
     this.thumbnailUrl,
     this.storageProvider = 'firebase',
     this.thumbnailProvider,
+    this.previewUrl,
     this.duration,
+    this.displayOrder = 0,
     this.isGuestPreview = false,
     this.guestPreviewSeconds,
+    this.previewAudience,
   });
 
   bool get isVideo =>
-      resourceType == 'video' && bunnyVideoId?.isNotEmpty == true;
+      resourceType == 'video' && isValidBunnyVideoId(bunnyVideoId);
 
   bool get isDocument =>
       resourceType == 'pdf' || resourceType == 'attachment';
@@ -270,20 +314,44 @@ class VideoResource {
   /// shape contract is unit-testable without Firebase mocks. Prefers the
   /// server-resolved [thumbnailUrl]; falls back to the legacy raw
   /// `thumbnail` string for payloads from older deployments.
+  /// VIDEO-ID-ONLY policy: [bunnyVideoId] is stored verbatim (trimmed).
+  /// Full player/share URLs are NEVER normalized to a GUID here — a URL
+  /// is invalid input and must fail closed downstream (see
+  /// [isValidBunnyVideoId] / resolver validation).
   factory VideoResource.fromCallablePayload(Map<String, dynamic> map) {
     return VideoResource(
       id: map['id'] as String? ?? '',
       title: map['title'] as String? ?? 'مورد تعليمي',
       resourceType: map['resourceType'] as String? ?? 'attachment',
-      bunnyVideoId: map['bunnyVideoId'] as String?,
+      bunnyVideoId: _sanitizeBunnyId(map['bunnyVideoId'] as String?),
       thumbnailUrl:
           (map['thumbnailUrl'] as String?) ?? map['thumbnail'] as String?,
       storageProvider: map['storageProvider'] as String? ?? 'firebase',
       thumbnailProvider: map['thumbnailProvider'] as String?,
+      previewUrl: map['previewUrl'] as String?,
       duration: _durationFromMap(map['duration']),
+      displayOrder: (map['displayOrder'] as num?)?.toInt() ?? 0,
       isGuestPreview: false,
       guestPreviewSeconds: null,
     );
+  }
+
+  static final RegExp _guidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
+  /// VIDEO-ID-ONLY: true only for a bare Bunny GUID
+  /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). Full URLs, embed links,
+  /// blank strings and null are all invalid — never auto-extracted.
+  static bool isValidBunnyVideoId(String? raw) {
+    if (raw == null) return false;
+    return _guidPattern.hasMatch(raw.trim());
+  }
+
+  static String? _sanitizeBunnyId(String? raw) {
+    if (raw == null) return null;
+    final value = raw.trim();
+    return value.isEmpty ? null : value;
   }
 
   static Duration? _durationFromMap(Object? value) {
@@ -291,6 +359,37 @@ class VideoResource {
     return Duration(seconds: value.round());
   }
 }
+
+/// Canonical first-video fallback selection (client side).
+///
+/// NOT a security boundary: the server already filtered visibility and
+/// soft-deletion, ordered by `display_order`, and enforced entitlement —
+/// this only picks which playable row starts playback. Mirrors the
+/// backend order (`display_order` ascending, document id ascending) with
+/// an explicit local sort so the result never depends on transport order:
+/// lowest [VideoResource.displayOrder] wins, [VideoResource.id] breaks
+/// ties. Returns null when no row satisfies [VideoResource.isVideo].
+VideoResource? firstPlayableVideo(Iterable<VideoResource> resources) {
+  VideoResource? winner;
+  for (final resource in resources) {
+    if (!resource.isVideo) continue;
+    if (winner == null ||
+        resource.displayOrder < winner.displayOrder ||
+        (resource.displayOrder == winner.displayOrder &&
+            resource.id.compareTo(winner.id) < 0)) {
+      winner = resource;
+    }
+  }
+  return winner;
+}
+
+/// Server `previewAudience` discriminator literals for a Guest preview
+/// verdict ("guest" = external Guest identity/plan; "center" = Center
+/// student on an unauthorized device). Messaging only — enforcement never
+/// branches on these. Shared by the data layer (parsing) and presentation
+/// (wall copy selection) so the literals are defined exactly once.
+const String kPreviewAudienceGuest = 'guest';
+const String kPreviewAudienceCenter = 'center';
 
 /// Pure policy for the per-lecture Guest preview minute cap
 /// (FINAL_DECISIONS §11). Kept side-effect-free so it is unit-testable
@@ -332,6 +431,17 @@ class ResolvedVideoSource {
   final bool sessionTakeover;
   final int? heartbeatIntervalMs;
 
+  /// Guest preview verdict echoed by `generateBunnySignedUrl` (FINAL_DECISIONS
+  /// §11 structural contract). Non-null ONLY for Guest issuance — the exact
+  /// allowed seconds (0 = upgrade prompt immediately). Null = Full tier.
+  /// Read-only projection of the server verdict; never decided locally.
+  final int? previewLimitSeconds;
+
+  /// Messaging-only audience echoed alongside `previewLimitSeconds`
+  /// ("guest" | "center"; null/unknown = legacy generic wall). Read-only
+  /// projection of the server `previewAudience` discriminator.
+  final String? previewAudience;
+
   const ResolvedVideoSource({
     required this.url,
     required this.expiresAt,
@@ -341,6 +451,8 @@ class ResolvedVideoSource {
     this.sessionPositionSeconds,
     this.sessionTakeover = false,
     this.heartbeatIntervalMs,
+    this.previewLimitSeconds,
+    this.previewAudience,
   });
 
   bool get hasActiveSession => sessionToken != null && sessionToken!.isNotEmpty;

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
 import '../providers/grade_students_provider.dart';
+import '../providers/subject_details_provider.dart';
 import '../widgets/add_subject_overlay.dart';
 import '../widgets/dashboard_brand_lockup.dart';
 import '../widgets/grade_nav_bar.dart';
@@ -234,12 +235,16 @@ class _StatsRow extends ConsumerWidget {
                 ),
               ),
             ),
-            // Frame 39 plan breakdown (370, 250, 250 x 128).
+            // Frame 39 plan breakdown (370, 250, 250 x 150): one
+            // consistent subscription-derived axis (see
+            // buildPlanBreakdown). Buckets overlap by design — a student
+            // with plans on several subjects is counted in each tier —
+            // so shares may sum past 100%; the caption says so explicitly.
             Positioned(
               left: 370,
               top: 250,
               width: 250,
-              height: 128,
+              height: 150,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -261,6 +266,25 @@ class _StatsRow extends ConsumerWidget {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 4),
+                  // Denominator made explicit: shares are of the grade's
+                  // total student count (buckets overlap — see above).
+                  Text(
+                    data.total == 1
+                        ? 'Share of 1 student; a student with several '
+                            'tiers counts in each.'
+                        : 'Share of ${data.total} students; a student '
+                            'with several tiers counts in each.',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 11,
+                      height: 1.3,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0xFF9CA3AF),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -562,15 +586,7 @@ class _StudentRow extends StatelessWidget {
             ),
             Expanded(
               flex: 2,
-              child: Text(
-                student.plan,
-                style: const TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF111827),
-                ),
-              ),
+              child: _PlanSummaryCell(summary: student.planSummary),
             ),
             Expanded(
               flex: 2,
@@ -650,6 +666,69 @@ class _StudentRow extends StatelessWidget {
   }
 }
 
+/// Honest per-student plan cell: the true subscription distribution
+/// across subjects, never a collapsed single value. Students with no
+/// active subscription render an explicit "No active plan" label — never
+/// a defaulted tier.
+class _PlanSummaryCell extends StatelessWidget {
+  final StudentPlanSummary summary;
+
+  const _PlanSummaryCell({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!summary.hasActivePlan) {
+      return const Text(
+        'No active plan',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: Color(0xFF9CA3AF),
+        ),
+      );
+    }
+    final String tiers = <String>[
+      if (summary.free > 0) '${summary.free} FREE',
+      if (summary.pro > 0) '${summary.pro} PRO',
+      if (summary.max > 0) '${summary.max} MAX',
+      if (summary.unknown > 0) '${summary.unknown} other',
+    ].join(' · ');
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '${summary.subjects} '
+          'subject${summary.subjects == 1 ? '' : 's'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF111827),
+          ),
+        ),
+        Text(
+          tiers,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 11,
+            height: 1.3,
+            fontWeight: FontWeight.w400,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Legacy details dialog — only used when [GradeStudentsScreen.onStudentTap]
 /// is null (e.g. in widget tests). Production shells always wire
 /// [GradeStudentsScreen.onStudentTap], so View navigates to the full
@@ -677,7 +756,8 @@ void showStudentDetailsDialog(BuildContext context, GradeStudent student) {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             _DetailLine(label: 'Type', value: student.typeLabel),
-            _DetailLine(label: 'Plan', value: student.plan),
+            _DetailLine(
+                label: 'Plan', value: student.planSummary.displayText),
             _DetailLine(label: 'Status', value: student.statusLabel),
             _DetailLine(label: 'Last Sign in', value: student.lastSignIn),
           ],
@@ -762,16 +842,8 @@ class _SubjectsPane extends ConsumerWidget {
               runSpacing: 24,
               children: <Widget>[
                 for (final SubjectOption subject in subjects)
-                  SubjectCardItem(
-                    title: subject.title,
-                    // SubjectOption carries no counters yet — live
-                    // lecture/revision breakdown lands with the details
-                    // screen; cards show Figma zeros meanwhile.
-                    isActive: subject.isVisible,
-                    lecturesCount: 0,
-                    revisionsCount: 0,
-                    finalCount: 0,
-                    onlineCount: 0,
+                  _LiveSubjectCard(
+                    subject: subject,
                     gradeColor: gradeColor,
                     onTap: () {
                       final ValueChanged<SubjectOption>? open =
@@ -802,6 +874,46 @@ class _SubjectsPane extends ConsumerWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// Subject card with live per-tab lecture counts — the same flattened
+/// tab lists the details table shows (`tabLecturesProvider`), so the
+/// card strip (`Lectures (n) / Revisions (n) / Final (n) / Online (n)`)
+/// always matches what the doctor finds inside. Zero while loading.
+class _LiveSubjectCard extends ConsumerWidget {
+  final SubjectOption subject;
+  final Color gradeColor;
+  final VoidCallback onTap;
+
+  const _LiveSubjectCard({
+    required this.subject,
+    required this.gradeColor,
+    required this.onTap,
+  });
+
+  int _tabCount(WidgetRef ref, SubjectContentTab tab) {
+    return ref
+            .watch(
+              tabLecturesProvider((subjectId: subject.id, tab: tab)),
+            )
+            .value
+            ?.length ??
+        0;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SubjectCardItem(
+      title: subject.title,
+      isActive: subject.isVisible,
+      lecturesCount: _tabCount(ref, SubjectContentTab.lectures),
+      revisionsCount: _tabCount(ref, SubjectContentTab.revisions),
+      finalCount: _tabCount(ref, SubjectContentTab.finalTab),
+      onlineCount: _tabCount(ref, SubjectContentTab.online),
+      gradeColor: gradeColor,
+      onTap: onTap,
     );
   }
 }

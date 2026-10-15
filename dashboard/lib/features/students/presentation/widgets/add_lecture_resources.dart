@@ -2,6 +2,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+/// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
+bool isValidBunnyVideoId(String raw) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(raw.trim());
+}
+
 /// Staged resources for the Add New Lecture form.
 ///
 /// Resources are staged locally inside the form and persisted together
@@ -11,7 +18,7 @@ import 'package:flutter/material.dart';
 ///
 /// Behavior mirrors the approved resource implementation:
 /// - Video: Bunny video id only (uploaded separately to Bunny; the
-///   teacher enters the id — never a playback URL).
+///   doctor enters the id — never a playback URL).
 /// - PDF / Attachment: file picked from the device; bytes upload through
 ///   Firebase Storage on save (approved path convention).
 /// - External Link: display name + validated http(s) URL.
@@ -304,6 +311,11 @@ Future<StagedResource?> _videoDialog(
   if (bunnyId.text.trim().isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Bunny Video ID is required.')));
+    return null;
+  }
+  if (!isValidBunnyVideoId(bunnyId.text)) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.')));
     return null;
   }
   return StagedResource(

@@ -225,9 +225,12 @@ class _DeviceTableBlock extends StatelessWidget {
 }
 
 /// Device table (Figma Dev Mode: 830 wide, 1 px #E5E7EB border, radius
-/// 16): header 830 with 8 px padding — No. 56 | Subjects 306 | Plan 116
-/// | Device 116 | Action 156 — 1 px divider, then dynamic data rows with
-/// 10 px padding. Row numbers are presentation-only.
+/// 16): header 830 with 8 px padding — No. 56 | Subjects 216 | Grade 146
+/// | Plan 116 | Device 116 | Action 156 (= 806, inside the 808 content
+/// width) — 1 px divider, then dynamic data rows with 10 px padding.
+/// The Grade column shows each subject's OWN catalog grade (which may
+/// differ from the student's current grade). Row numbers are
+/// presentation-only.
 class _DeviceTable extends StatelessWidget {
   final _StudentProfileDeviceTabState state;
   final List<StudentSubjectDeviceRow> rows;
@@ -298,7 +301,8 @@ class _DeviceHeaderRow extends StatelessWidget {
             width: 56,
             child: _HeaderLabel('No.'),
           ),
-          SizedBox(width: 306, child: _HeaderLabel('Subjects')),
+          SizedBox(width: 216, child: _HeaderLabel('Subjects')),
+          SizedBox(width: 146, child: _HeaderLabel('Grade')),
           SizedBox(width: 116, child: _HeaderLabel('Plan')),
           SizedBox(width: 116, child: _HeaderLabel('Device')),
           SizedBox(width: 156, child: _HeaderLabel('Action')),
@@ -365,9 +369,19 @@ class _DeviceDataRow extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 306,
+            width: 216,
             child: Text(
               row.title,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: cellStyle,
+            ),
+          ),
+          SizedBox(
+            width: 146,
+            child: Text(
+              GradeTheme.subjectGradeLabel(row.gradeKey),
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

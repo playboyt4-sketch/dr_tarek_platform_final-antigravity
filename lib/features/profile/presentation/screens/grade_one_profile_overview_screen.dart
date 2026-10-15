@@ -1,10 +1,14 @@
 import 'dart:ui';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
-import '../../domain/entities/student.dart';
+import '../../../authentication/domain/entities/auth_user.dart';
+import '../providers/profile_providers.dart';
 
 /// "Grade One Student Profile Overview" — 1280x800 landscape canvas.
 ///
@@ -15,21 +19,98 @@ import '../../domain/entities/student.dart';
 /// - Inline Edit/Done for Name & Phone, showDialog overlays for
 ///   Grade & Student Type (fade 150ms, barrier black 25%).
 ///
-/// Pass [initialStudent] (e.g. from the students table "View" action) to
-/// pre-fill Name, Phone, Grade and Student Type. Without it, the screen
-/// falls back to the Figma placeholder student.
-class GradeOneProfileOverviewScreen extends StatefulWidget {
-  final Student? initialStudent;
+/// Loads the REAL student from `users/{studentId}` through
+/// [studentProfileProvider]. Displayed name/phone/grade/student-type are
+/// reflections of the loaded [AuthUser] — never local source of truth.
+class GradeOneProfileOverviewScreen extends ConsumerStatefulWidget {
+  final String studentId;
 
-  const GradeOneProfileOverviewScreen({super.key, this.initialStudent});
+  const GradeOneProfileOverviewScreen({required this.studentId, super.key});
+
+  /// Display-only mapping: canonical `users.grade` key → overview label.
+  ///
+  /// Never used for writes; the authoritative value stays `AuthUser.grade`.
+  static String gradeLabelForKey(String? gradeKey) {
+    final normalized = (gradeKey ?? '').trim().toLowerCase();
+    const aliases = <String, String>{
+      'grade_one': 'Grade One',
+      'grade_1': 'Grade One',
+      'grade 1': 'Grade One',
+      '1': 'Grade One',
+      'grade_two': 'Grade Two',
+      'grade_2': 'Grade Two',
+      'grade 2': 'Grade Two',
+      '2': 'Grade Two',
+      'grade_three': 'Grade Three',
+      'grade_3': 'Grade Three',
+      'grade 3': 'Grade Three',
+      '3': 'Grade Three',
+      'grade_four': 'Grade Four',
+      'grade_4': 'Grade Four',
+      'grade 4': 'Grade Four',
+      '4': 'Grade Four',
+    };
+    return aliases[normalized] ?? 'Grade One';
+  }
+
+  /// Write-path mapping: overview label → canonical `users.grade` key.
+  ///
+  /// Only canonical keys are ever sent to the backend; a UI label such as
+  /// "Grade Two" must never cross the repository boundary. Returns null
+  /// for unrecognized labels (caller treats this as invalid input).
+  static String? canonicalGradeForLabel(String? gradeLabel) {
+    final normalized = (gradeLabel ?? '').trim().toLowerCase();
+    const aliases = <String, String>{
+      'grade one': 'grade_one',
+      'grade_one': 'grade_one',
+      'grade_1': 'grade_one',
+      'grade 1': 'grade_one',
+      '1': 'grade_one',
+      'grade two': 'grade_two',
+      'grade_two': 'grade_two',
+      'grade_2': 'grade_two',
+      'grade 2': 'grade_two',
+      '2': 'grade_two',
+      'grade three': 'grade_three',
+      'grade_three': 'grade_three',
+      'grade_3': 'grade_three',
+      'grade 3': 'grade_three',
+      '3': 'grade_three',
+      'grade four': 'grade_four',
+      'grade_four': 'grade_four',
+      'grade_4': 'grade_four',
+      'grade 4': 'grade_four',
+      '4': 'grade_four',
+    };
+    return aliases[normalized];
+  }
+
+  /// Pure same-grade check: true when [selectedLabel] already matches the
+  /// loaded canonical [currentGradeKey], so the caller can skip the
+  /// backend (no audit event for a no-op).
+  static bool isGradeUnchanged({
+    required String? currentGradeKey,
+    required String selectedLabel,
+  }) {
+    final currentLabel = gradeLabelForKey(currentGradeKey);
+    return currentLabel.trim().toLowerCase() ==
+        selectedLabel.trim().toLowerCase();
+  }
+
+  /// Display-only mapping for the backend `student_type` value.
+  static String studentTypeLabelForKey(String? studentTypeKey) {
+    final normalized = (studentTypeKey ?? '').trim().toLowerCase();
+    if (normalized == 'guest') return 'Guest';
+    return 'Center';
+  }
 
   @override
-  State<GradeOneProfileOverviewScreen> createState() =>
+  ConsumerState<GradeOneProfileOverviewScreen> createState() =>
       _GradeOneProfileOverviewScreenState();
 }
 
 class _GradeOneProfileOverviewScreenState
-    extends State<GradeOneProfileOverviewScreen>
+    extends ConsumerState<GradeOneProfileOverviewScreen>
     with SingleTickerProviderStateMixin {
   // ---- Design tokens (Grade One / Yellow) ----
   static const Color bgColor = AppColors.grade1Canvas; // #F59E0B
@@ -78,17 +159,37 @@ class _GradeOneProfileOverviewScreenState
   String activeGradeTab = 'Grade One';
   String activeSubTab = 'Students';
 
+  /// Last [AuthUser] snapshot the controllers/display state were seeded
+  /// from. Reseeds only when the loaded profile actually changes, so
+  /// unrelated rebuilds never clobber in-progress local edits.
+  AuthUser? _seededUser;
+
+  void _seedFromProfile(AuthUser user) {
+    final prev = _seededUser;
+    if (prev != null &&
+        prev.id == user.id &&
+        prev.fullName == user.fullName &&
+        prev.phoneNumber == user.phoneNumber &&
+        prev.grade == user.grade &&
+        prev.studentType == user.studentType) {
+      return;
+    }
+    _seededUser = user;
+    nameController.text = user.fullName;
+    phoneController.text = user.phoneNumber;
+    selectedGrade =
+        GradeOneProfileOverviewScreen.gradeLabelForKey(user.grade);
+    selectedStudentType =
+        GradeOneProfileOverviewScreen.studentTypeLabelForKey(
+            user.studentType);
+    activeGradeTab = selectedGrade;
+  }
+
   @override
   void initState() {
     super.initState();
-    final Student? student = widget.initialStudent;
-    nameController =
-        TextEditingController(text: student?.name ?? 'ahmed mohamed gamal');
-    phoneController =
-        TextEditingController(text: student?.phone ?? '01115800180');
-    selectedGrade = student?.grade.label ?? 'Grade One';
-    selectedStudentType = student?.studentType.label ?? 'Center';
-    activeGradeTab = selectedGrade;
+    nameController = TextEditingController();
+    phoneController = TextEditingController();
     nameFocus = FocusNode();
     phoneFocus = FocusNode();
     _menuController = AnimationController(
@@ -118,6 +219,24 @@ class _GradeOneProfileOverviewScreenState
 
   @override
   Widget build(BuildContext context) {
+    final profile = ref.watch(studentProfileProvider(widget.studentId));
+    return profile.when(
+      loading: () => const Scaffold(
+        backgroundColor: bgColor,
+        body: Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, _) => const Scaffold(
+        backgroundColor: bgColor,
+        body: Center(child: Text('تعذر تحميل ملف الطالب.')),
+      ),
+      data: (user) {
+        _seedFromProfile(user);
+        return _buildLoaded();
+      },
+    );
+  }
+
+  Widget _buildLoaded() {
     return Scaffold(
       backgroundColor: bgColor,
       body: Center(
@@ -332,11 +451,13 @@ class _GradeOneProfileOverviewScreenState
               children: [
                 for (int i = 0; i < grades.length; i++) ...[
                   if (i > 0) const SizedBox(width: 4),
+                  // READ-ONLY reflection of the persisted AuthUser.grade:
+                  // tapping a tab must never mutate activeGradeTab. The
+                  // Grade Edit dialog is the only grade-change mechanism.
                   _buildTopTab(
                     grades[i],
                     isActive: activeGradeTab == grades[i],
-                    onTap: () =>
-                        setState(() => activeGradeTab = grades[i]),
+                    onTap: null,
                   ),
                 ],
               ],
@@ -632,6 +753,7 @@ class _GradeOneProfileOverviewScreenState
 
   void _showGradesOverlay() {
     String temp = selectedGrade;
+    bool saving = false;
     showGeneralDialog<void>(
       context: context,
       barrierColor: overlayBarrier,
@@ -642,7 +764,7 @@ class _GradeOneProfileOverviewScreenState
         final fade = CurvedAnimation(parent: animation, curve: Curves.easeOut);
         return FadeTransition(opacity: fade, child: child);
       },
-      pageBuilder: (context, animation, secondaryAnimation) {
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
         return StatefulBuilder(
           builder: (context, setOverlayState) => Center(
             child: Material(
@@ -678,21 +800,104 @@ class _GradeOneProfileOverviewScreenState
                             _buildOverlayOption(
                               grades[i],
                               isActive: temp == grades[i],
-                              onTap: () => setOverlayState(
-                                  () => temp = grades[i]),
+                              onTap: saving
+                                  ? null
+                                  : () => setOverlayState(
+                                      () => temp = grades[i]),
                             ),
                           ],
                         ],
                       ),
                     ),
                     const SizedBox(height: 24),
-                    _buildSaveButton(() {
-                      setState(() {
-                        selectedGrade = temp;
-                        activeGradeTab = temp;
-                      });
-                      Navigator.pop(context);
-                    }),
+                    _buildSaveButton(
+                      saving
+                          ? null
+                          : () async {
+                              // Capture dialog navigator + screen messenger
+                              // before any async gap (lint:
+                              // use_build_context_synchronously).
+                              final navigator = Navigator.of(context);
+                              final messenger =
+                                  ScaffoldMessenger.of(this.context);
+                              final currentGradeKey = ref
+                                  .read(studentProfileProvider(
+                                      widget.studentId))
+                                  .value
+                                  ?.grade;
+                              if (GradeOneProfileOverviewScreen
+                                  .isGradeUnchanged(
+                                currentGradeKey: currentGradeKey,
+                                selectedLabel: temp,
+                              )) {
+                                // No-op: matches backend behavior
+                                // (no write, no audit event).
+                                navigator.pop();
+                                return;
+                              }
+                              final canonical =
+                                  GradeOneProfileOverviewScreen
+                                      .canonicalGradeForLabel(temp);
+                              if (canonical == null) {
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'تحقق من البيانات المدخلة ثم أعد المحاولة.'),
+                                  ),
+                                );
+                                return;
+                              }
+                              setOverlayState(() => saving = true);
+                              try {
+                                await ref
+                                    .read(
+                                        updateStudentGradeUseCaseProvider)
+                                    .execute(
+                                      studentId: widget.studentId,
+                                      grade: canonical,
+                                    );
+                              } on FirebaseFunctionsException catch (error) {
+                                // Server authorization is authoritative
+                                // (e.g. Admin without admin_students →
+                                // permission-denied). Never expose raw
+                                // backend details to the user.
+                                if (mounted) {
+                                  setOverlayState(() => saving = false);
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        friendlyFunctionErrorMessage(
+                                          error,
+                                          'تعذر حفظ الفرقة، حاول مرة أخرى.',
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return;
+                              } catch (_) {
+                                if (mounted) {
+                                  setOverlayState(() => saving = false);
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'تعذر حفظ الفرقة، حاول مرة أخرى.'),
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+                              if (!mounted) return;
+                              navigator.pop();
+                              // Reload the authoritative profile: the
+                              // reseeded AuthUser.grade drives
+                              // selectedGrade/activeGradeTab — no
+                              // optimistic local mutation.
+                              ref.invalidate(studentProfileProvider(
+                                  widget.studentId));
+                            },
+                      isLoading: saving,
+                    ),
                   ],
                 ),
               ),
@@ -702,6 +907,8 @@ class _GradeOneProfileOverviewScreenState
       },
     );
   }
+
+  // ---------- Overlays ----------
 
   void _showStudentTypeOverlay() {
     String temp = selectedStudentType;
@@ -804,7 +1011,11 @@ class _GradeOneProfileOverviewScreenState
   }
 
   /// Save — 160x40, radius 28, amber fill.
-  Widget _buildSaveButton(VoidCallback onTap) {
+  ///
+  /// Same geometry/typography as the Figma spec; [isLoading] swaps the
+  /// label for a spinner and [onTap] null disables the button while the
+  /// grade save is in flight.
+  Widget _buildSaveButton(VoidCallback? onTap, {bool isLoading = false}) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(28),
@@ -816,15 +1027,24 @@ class _GradeOneProfileOverviewScreenState
           borderRadius: BorderRadius.circular(28),
         ),
         alignment: Alignment.center,
-        child: const Text(
-          'Save',
-          style: TextStyle(
-            fontFamily: AppFontFamilies.googleSansFlex,
-            fontSize: 24,
-            fontWeight: FontWeight.w400,
-            color: Colors.white,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : const Text(
+                'Save',
+                style: TextStyle(
+                  fontFamily: AppFontFamilies.googleSansFlex,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.white,
+                ),
+              ),
       ),
     );
   }

@@ -10,8 +10,8 @@ service cloud.firestore {
       return (signedIn() && 'role' in request.auth.token) ? request.auth.token.role : null;
     }
 
-    function isTeacher() {
-      return signedIn() && role() == 'teacher';
+    function isDoctor() {
+      return signedIn() && role() == 'doctor';
     }
 
     function isAdmin() {
@@ -33,58 +33,64 @@ service cloud.firestore {
     }
 
     function isStaff() {
-      return isTeacher() || isAdmin();
+      return isDoctor() || isAdmin();
+    }
+
+    // Single-get() check on an already-fetched admin_permissions doc.
+    // Kept separate so activeAdminPermission() performs exactly one get()
+    // after the exists() guard (short-circuit preserved).
+    function adminPermSatisfied(permDoc, permissionKey) {
+      return permDoc.data.is_active == true
+        && permDoc.data.permissions[permissionKey] == true;
     }
 
     function activeAdminPermission(permissionKey) {
       return isAdmin()
         && exists(/databases/$(database)/documents/admin_permissions/$(request.auth.uid))
-        && get(/databases/$(database)/documents/admin_permissions/$(request.auth.uid)).data.is_active == true
-        && get(/databases/$(database)/documents/admin_permissions/$(request.auth.uid)).data.permissions[permissionKey] == true;
+        && adminPermSatisfied(get(/databases/$(database)/documents/admin_permissions/$(request.auth.uid)), permissionKey);
     }
 
     function canManageStudents() {
-      return isTeacher() || activeAdminPermission('admin_students');
+      return isDoctor() || activeAdminPermission('admin_students');
     }
 
     function canManageContent() {
-      return isTeacher() || activeAdminPermission('admin_content');
+      return isDoctor() || activeAdminPermission('admin_content');
     }
 
     function canCommunicate() {
-      return isTeacher() || activeAdminPermission('admin_chat');
+      return isDoctor() || activeAdminPermission('admin_chat');
     }
 
     function canViewAnalytics() {
-      return isTeacher() || activeAdminPermission('admin_analytics');
+      return isDoctor() || activeAdminPermission('admin_analytics');
     }
 
     function canManageDevices() {
-      return isTeacher() || activeAdminPermission('admin_devices');
+      return isDoctor() || activeAdminPermission('admin_devices');
     }
 
     function canViewPayments() {
-      return isTeacher() || activeAdminPermission('admin_payments_view');
+      return isDoctor() || activeAdminPermission('admin_payments_view');
     }
 
     function canManagePayments() {
-      return isTeacher() || activeAdminPermission('admin_payments');
+      return isDoctor() || activeAdminPermission('admin_payments');
     }
 
     function canResetPassword() {
-      // Canonical key is `password.reset`; legacy `password_reset` is
-      // honored transitionally until lazy migration converges all docs.
-      return isTeacher()
-        || activeAdminPermission('password.reset')
+      // Sole delegated key is `password_reset` (Project Owner decision:
+      // the dotted `password.reset` key is retired and no longer honored).
+      return isDoctor()
         || activeAdminPermission('password_reset');
     }
 
     function canManageAcademicTerms() {
-      return isTeacher() || activeAdminPermission('admin_academic_terms');
+      return isDoctor() || activeAdminPermission('admin_academic_terms');
     }
 
     function canManageSettings() {
-      return isTeacher() || activeAdminPermission('admin_settings');
+      return isDoctor() || activeAdminPermission('admin_settings');
     }
 
     function hasNoPasswordHash(data) {
@@ -102,11 +108,21 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId)).data.is_deleted == false;
     }
 
+    // Subscription-expiry drift fix: subscriptions.end_date is the official
+    // expiry source. Rules cannot query the subscriptions collection
+    // (random document IDs), so expiry is enforced from its server-maintained
+    // mirror on the assignment row — written transactionally from end_date on
+    // grant/activate/plan-change and from the term binding on term-expiry,
+    // never client-writable (assignments are write:false). end_date == null
+    // means a lifetime subscription and always passes; a missing mirror
+    // fails closed (deny), exactly like before. Ownership, subject scoping,
+    // and the Feature Matrix (entitlements) checks are unchanged.
     function hasEntitlement(userId, subjectId, entitlementName) {
       let assignment = get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId));
+      let expiry = assignment.data.get('subscription_expires_at', request.time);
       return exists(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId))
         && assignment.data.is_deleted == false
-        && assignment.data.subscription_expires_at > request.time
+        && (expiry == null || expiry > request.time)
         && entitlementName in assignment.data.entitlements;
     }
 
@@ -119,15 +135,20 @@ service cloud.firestore {
       return lectureId + '_' + userId;
     }
 
+    // Single-get() check on an already-fetched lecture_access_grants doc.
+    function lectureGrantDenied(grantDoc) {
+      return grantDoc.data.allowed == false
+        && grantDoc.data.get('is_deleted', false) != true;
+    }
+
     function isLectureDenied(userId, lectureId) {
       return lectureId is string && lectureId.size() > 0
         && exists(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId)))
-        && get(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId))).data.allowed == false
-        && get(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId))).data.get('is_deleted', false) != true;
+        && lectureGrantDenied(get(/databases/$(database)/documents/lecture_access_grants/$(lectureAccessGrantId(lectureId, userId))));
     }
 
     function canManageLectureAccess() {
-      return isTeacher() || canManageStudents() || canManageContent();
+      return isDoctor() || canManageStudents() || canManageContent();
     }
 
     // User profiles are readable only after password_hash has been migrated
@@ -135,7 +156,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow get, list: if signedIn()
         && hasNoPasswordHash(resource.data)
-        && (isSelf(userId) || canManageStudents() || isTeacher());
+        && (isSelf(userId) || canManageStudents() || isDoctor());
 
       allow create, delete: if false;
 
@@ -159,20 +180,20 @@ service cloud.firestore {
     }
 
     match /admin_permissions/{adminId} {
-      allow get: if isTeacher()
+      allow get: if isDoctor()
         || (isAdmin() && isSelf(adminId));
-      allow list: if isTeacher();
-      allow create, update, delete: if isTeacher();
+      allow list: if isDoctor();
+      allow create, update, delete: if isDoctor();
     }
 
     match /admin_audit_log/{auditId} {
-      allow get, list: if isTeacher()
+      allow get, list: if isDoctor()
         || (isAdmin() && resource.data.actor_id == request.auth.uid);
       allow create, update, delete: if false;
     }
 
     match /users/{userId}/audit_events/{eventId} {
-      allow get, list: if isSelf(userId) || isTeacher() || canViewAnalytics();
+      allow get, list: if isSelf(userId) || isDoctor() || canViewAnalytics();
       allow write: if false;
     }
 
@@ -203,10 +224,18 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Student self-requests may only open a pending request in the
+    // server-known request shape. Staff resolution (approve/reject with
+    // decided_by/resolved_at) stays staff-only via update; client-chosen
+    // status/decision/timestamp fields are never creatable.
     match /device_change_requests/{requestId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canManageDevices();
-      allow create: if isStudent() && request.resource.data.student_id == request.auth.uid;
+      allow create: if isStudent()
+        && request.resource.data.student_id is string
+        && request.resource.data.student_id == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'status', 'requested_at', 'old_device_id', 'new_device_id']);
       allow update, delete: if canManageDevices();
     }
 
@@ -234,7 +263,7 @@ service cloud.firestore {
     match /subjects/{subjectId} {
       allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow create: if canManageContent()
         && request.resource.data.get('is_deleted', false) == false
         && request.resource.data.get('title', '') is string;
@@ -246,7 +275,7 @@ service cloud.firestore {
     match /subject_sections/{sectionId} {
       allow get, list: if (isStudent() && resource.data.is_deleted != true && resource.data.is_visible == true)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow create: if canManageContent();
       allow update: if canManageContent() 
         && (!('is_deleted' in request.resource.data) || request.resource.data.is_deleted == false || resource.data.is_system_section != true);
@@ -256,7 +285,7 @@ service cloud.firestore {
     match /lectures/{lectureId} {
       allow get, list: if isApprovedContent(resource.data)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow create: if canManageContent();
       allow update: if canManageContent();
       allow delete: if false;
@@ -265,14 +294,14 @@ service cloud.firestore {
     match /lecture_resources/{resourceId} {
       allow get, list: if (resource == null ? false : (isApprovedContent(resource.data) && hasSubjectAccess(request.auth.uid, resource.data.get('subject_id', 'missing-subject')) && !isLectureDenied(request.auth.uid, resource.data.get('lecture_id', ''))))
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow create: if canManageContent();
       allow update: if canManageContent();
       allow delete: if false;
     }
 
     // V1 Individual Per-Lecture Student Access grants.
-    // Staff manage via the centralized permission model (teacher,
+    // Staff manage via the centralized permission model (doctor,
     // student-management, or content-management delegation) — no new
     // permission key. Students have NO access here: enforcement is
     // server-side (Cloud Functions + the lecture_resources gate above),
@@ -299,25 +328,41 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Progress writes are limited to the playback-repository shape
+    // (student_id, lecture_id plus position/completion/PDF keys). Arbitrary
+    // client-controlled fields are rejected; ownership is unchanged.
     match /learning_progress/{progressId} {
-      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+      // Owner-prefix get: progress docs are keyed `{uid}_{lectureId}`, so the
+      // owner may read a not-yet-created doc (resource == null) without a
+      // permission-denied. Cross-owner reads still fail (prefix mismatch) and
+      // listing is ownership-filtered below.
+      allow get: if isStudent() && progressId.matches(request.auth.uid + '_.*');
+      allow list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
       allow create: if isStudent()
-        && request.resource.data.student_id == request.auth.uid;
+        && request.resource.data.student_id == request.auth.uid
+        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'lecture_id', 'subject_id', 'section_id', 'lecture_title', 'thumbnail_url', 'position_seconds', 'video_position_seconds', 'duration_seconds', 'progress_percent', 'completed', 'is_completed', 'completed_at', 'pdf_last_page', 'pdf_total_pages', 'updated_at']);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && request.resource.data.student_id == request.auth.uid;
+        && request.resource.data.student_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['student_id', 'lecture_id', 'subject_id', 'section_id', 'lecture_title', 'thumbnail_url', 'position_seconds', 'video_position_seconds', 'duration_seconds', 'progress_percent', 'completed', 'is_completed', 'completed_at', 'pdf_last_page', 'pdf_total_pages', 'updated_at']);
       allow delete: if false;
     }
 
     match /lecture_progress/{progressId} {
-      allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
+      // Owner-prefix get: same rationale as learning_progress above — first
+      // playback has no doc yet and must not fail with permission-denied.
+      allow get: if isStudent() && progressId.matches(request.auth.uid + '_.*');
+      allow list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canViewAnalytics();
       allow create: if isStudent()
-        && request.resource.data.student_id == request.auth.uid;
+        && request.resource.data.student_id == request.auth.uid
+        && request.resource.data.lecture_id is string
+        && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'lecture_id', 'subject_id', 'section_id', 'lecture_title', 'thumbnail_url', 'position_seconds', 'video_position_seconds', 'duration_seconds', 'progress_percent', 'completed', 'is_completed', 'completed_at', 'pdf_last_page', 'pdf_total_pages', 'updated_at']);
       allow update: if isStudent()
         && resource.data.student_id == request.auth.uid
-        && request.resource.data.student_id == request.auth.uid;
+        && request.resource.data.student_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['student_id', 'lecture_id', 'subject_id', 'section_id', 'lecture_title', 'thumbnail_url', 'position_seconds', 'video_position_seconds', 'duration_seconds', 'progress_percent', 'completed', 'is_completed', 'completed_at', 'pdf_last_page', 'pdf_total_pages', 'updated_at']);
       allow delete: if false;
     }
 
@@ -330,21 +375,21 @@ service cloud.firestore {
     match /subscriptions/{subscriptionId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid)
         || canManageStudents()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
     match /subject_access_assignments/{assignmentId} {
       allow get, list: if (isStudent() && resource.data.student_id == request.auth.uid && resource.data.is_deleted == false)
         || canManageStudents()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
     match /plans/{planId} {
       allow get, list: if (isStudent() && resource.data.is_active == true)
         || canManageStudents()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
@@ -356,14 +401,14 @@ service cloud.firestore {
     match /plan_features/{featureId} {
       allow get, list: if (isStudent() && resource.data.enabled == true)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
     match /notifications/{notificationId} {
       allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
         || canCommunicate()
-        || isTeacher();
+        || isDoctor();
       allow create: if canCommunicate();
       allow delete: if false;
       allow update: if isStudent()
@@ -374,7 +419,7 @@ service cloud.firestore {
       match /deliveries/{deliveryId} {
         allow get, list: if (isStudent() && resource.data.user_id == request.auth.uid)
           || canCommunicate()
-          || isTeacher();
+          || isDoctor();
         allow write: if false;
       }
     }
@@ -419,7 +464,7 @@ service cloud.firestore {
     match /timeline_quizzes/{quizId} {
       allow get, list: if isApprovedContent(resource.data)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
@@ -431,19 +476,18 @@ service cloud.firestore {
         && !('score' in request.resource.data)
         && !('percentage' in request.resource.data)
         && !('passed' in request.resource.data);
-      allow update: if isStudent()
-        && resource.data.student_id == request.auth.uid
-        && resource.data.get('submitted_at', null) == null
-        && !('score' in request.resource.data)
-        && !('percentage' in request.resource.data)
-        && !('passed' in request.resource.data);
+      // Submission and grading happen only through the
+      // submitAssessmentAttempt callable (Admin SDK) — clients can
+      // start attempts (create) but NEVER update them, not even for
+      // answers-only payloads. See BR-09 (immutable submissions).
+      allow update: if false;
       allow delete: if false;
     }
 
     match /exams/{examId} {
       allow get, list: if isApprovedContent(resource.data)
         || canManageContent()
-        || isTeacher();
+        || isDoctor();
       allow write: if false;
     }
 
@@ -455,30 +499,29 @@ service cloud.firestore {
         && !('score' in request.resource.data)
         && !('percentage' in request.resource.data)
         && !('passed' in request.resource.data);
-      allow update: if isStudent()
-        && resource.data.student_id == request.auth.uid
-        && resource.data.get('submitted_at', null) == null
-        && !('score' in request.resource.data)
-        && !('percentage' in request.resource.data)
-        && !('passed' in request.resource.data);
+      // Submission and grading happen only through the
+      // submitExamAttempt callable (Admin SDK) — clients can start
+      // attempts (create) but NEVER update them, not even for
+      // answers-only payloads. See BR-09 (immutable submissions).
+      allow update: if false;
       allow delete: if false;
     }
 
     // Student-level payment ledger (payment_logs): staff read-only
-    // visibility; all writes go exclusively through the Teacher-only
+    // visibility; all writes go exclusively through the Doctor-only
     // payment callables (onPaymentLogged, correctPaymentLog,
     // setStudentFinancialAccount via Admin SDK), never direct clients.
     match /payment_logs/{paymentId} {
-      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow get, list: if canViewPayments() || canManagePayments() || isDoctor();
       allow write: if false;
     }
 
     // Student financial accounts (student-level finance): staff read-only
     // visibility for the Dashboard ledger; all writes go exclusively
-    // through the Teacher-only setStudentFinancialAccount callable
+    // through the Doctor-only setStudentFinancialAccount callable
     // (Admin SDK), never direct clients.
     match /student_financial_accounts/{studentId} {
-      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow get, list: if canViewPayments() || canManagePayments() || isDoctor();
       allow write: if false;
     }
 
@@ -487,24 +530,24 @@ service cloud.firestore {
     // read-only visibility for the Dashboard Payments Subjects table,
     // reusing the existing Payments read authorization
     // (canViewPayments / canManagePayments); all writes go exclusively
-    // through the Teacher-only setStudentSubjectPricing callable
+    // through the Doctor-only setStudentSubjectPricing callable
     // (Admin SDK), never direct clients. No subject-level payment
     // authorization is introduced here.
     match /student_subject_pricing/{pricingId} {
-      allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+      allow get, list: if canViewPayments() || canManagePayments() || isDoctor();
       allow write: if false;
     }
 
     // Academic periods are readable by every signed-in user (students need
     // period state for their subscription boundaries). All writes happen
-    // exclusively through Teacher-only Cloud Functions.
+    // exclusively through Doctor-only Cloud Functions.
     match /academic_periods/{periodId} {
       allow get, list: if signedIn();
       allow write: if false;
     }
 
     // Platform-wide feature toggles are readable by staff; students read
-    // only enabled features. All writes go through Teacher-only Functions.
+    // only enabled features. All writes go through Doctor-only Functions.
     match /platform_features/{featureId} {
       allow get, list: if isStaff()
         || (isStudent() && resource.data.enabled == true);
@@ -512,22 +555,24 @@ service cloud.firestore {
     }
 
     match /system_settings/{settingId} {
-      allow get: if isTeacher() || canManageSettings();
-      allow list: if isTeacher();
+      allow get: if isDoctor() || canManageSettings();
+      allow list: if isDoctor();
       allow write: if false;
     }
 
     match /video_watch_windows/{windowId} {
-      allow read: if request.auth != null && request.auth.uid == windowId;
-      allow write: if false; // Only server writes (Admin SDK) are allowed
+      // Server-only: reads go exclusively through the getVideoWatchWindow
+      // callable (Admin SDK). No client — owner included — may read or
+      // write these documents directly.
+      allow read, write: if false;
     }
 
     match /password_reset_requests/{requestId} {
-      allow get, list: if isTeacher() || canManageStudents() || canResetPassword();
+      allow get, list: if isDoctor() || canManageStudents() || canResetPassword();
       // Student self-request (08 §9.2) or staff with reset authority.
       // Canonical create schema: student_id, phone_number, status,
       // requested_at, created_at (server callable writes both timestamps).
-      allow create: if (isTeacher() || canResetPassword() || (isStudent() && request.resource.data.student_id == request.auth.uid))
+      allow create: if (isDoctor() || canResetPassword() || (isStudent() && request.resource.data.student_id == request.auth.uid))
         && request.resource.data.status == 'pending'
         && request.resource.data.student_id is string
         && request.resource.data.diff({}).affectedKeys().hasOnly(['student_id', 'phone_number', 'status', 'requested_at', 'created_at'])

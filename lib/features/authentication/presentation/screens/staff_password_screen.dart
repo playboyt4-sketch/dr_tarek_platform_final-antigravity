@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/routing/app_routes.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../domain/entities/session_state.dart';
 import '../providers/auth_provider.dart';
 import '../providers/session_provider.dart';
+import 'auth_gate.dart';
 
 /// Staff sign-in (platform owner + admins): password-only, per the approved
 /// Figma frame "teacher and admin - sign in". The staff member picks their
@@ -47,9 +51,34 @@ class _StaffPasswordScreenState extends ConsumerState<StaffPasswordScreen> {
 
     ref.invalidate(sessionProvider);
     final session = await ref.read(sessionProvider.future);
-    if (!mounted || session is SessionError) return;
+    if (!mounted) return;
 
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    // Authenticated → role home (admin staff land on the admin home).
+    if (session is SessionAuthenticated) {
+      final dest =
+          authGateDestinationForRole(session.user.role) ==
+                  AuthGateDestination.admin
+              ? AppRoutes.adminHome
+              : AppRoutes.studentHome;
+      context.goNamed(dest);
+      return;
+    }
+    if (session is SessionError) return;
+    // Terminal non-error sessions stay here with a message instead of
+    // popping back to user-type selection on a successful sign-in.
+    final l10n = AppLocalizations.of(context);
+    final message = switch (session) {
+      SessionPendingApproval() => l10n.pendingApprovalMessage,
+      SessionRejected() => l10n.rejectedMessage,
+      SessionDisabled() => l10n.disabledMessage,
+      SessionUnauthorizedDevice() => l10n.unauthorizedDeviceMessage,
+      SessionRoleBlocked(:final role) =>
+        l10n.roleUnavailableMessage(role),
+      _ => l10n.sessionErrorTitle,
+    };
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

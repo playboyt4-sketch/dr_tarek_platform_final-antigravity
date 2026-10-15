@@ -35,6 +35,13 @@ enum FailureCode {
   noInternet,
   timeout,
   server,
+
+  /// Client attestation failed (App Check): missing, expired, or
+  /// unregistered (debug) token. Transport-level, never credential-level —
+  /// it must never collapse into [wrongCredentials], otherwise unrelated
+  /// flows (e.g. Registration) surface Login's copy (BUG-AUTH fix).
+  appCheckFailed,
+
   unknown,
 }
 
@@ -71,6 +78,14 @@ class Failure implements Exception {
 
     // --- Firestore / General Firebase ---
     if (error is FirebaseException) {
+      if (_isAppCheckSignal(error.code, error.message)) {
+        return Failure(
+          FailureCode.appCheckFailed,
+          debugDetail: '${error.code}: ${error.message}',
+          cause: error,
+          stackTrace: stackTrace,
+        );
+      }
       if (error.code == 'permission-denied') {
         return Failure(
           FailureCode.permissionDenied,
@@ -112,6 +127,21 @@ class Failure implements Exception {
     FirebaseFunctionsException e,
     StackTrace? stackTrace,
   ) {
+    // App Check enforcement rejections arrive with generic gRPC codes
+    // (usually `unauthenticated`, sometimes `failed-precondition`), so the
+    // message signal MUST be checked before any code-based mapping below.
+    // Otherwise every attestation failure collapses into
+    // [FailureCode.wrongCredentials] and unrelated flows surface Login's
+    // "Invalid phone number or password" copy (BUG-AUTH fix).
+    if (_isAppCheckSignal(e.code, e.message)) {
+      return Failure(
+        FailureCode.appCheckFailed,
+        debugDetail: '${e.code}: ${e.message}',
+        cause: e,
+        stackTrace: stackTrace,
+      );
+    }
+
     if (e.details is Map) {
       final String? errorCode = e.details['errorCode'];
       if (errorCode != null) {
@@ -174,6 +204,15 @@ class Failure implements Exception {
       'disciplinary_disabled' => FailureCode.disciplinaryDisabled,
       _ => null,
     };
+  }
+
+  /// True when the backend/client signal describes an App Check attestation
+  /// failure (missing, expired, or unregistered token). Both the Firebase
+  /// JS SDK and Functions v2 `enforceAppCheck` rejections mention App Check
+  /// in the code or message while reusing generic gRPC codes.
+  static bool _isAppCheckSignal(String? code, String? message) {
+    final haystack = '${code ?? ''} ${message ?? ''}'.toLowerCase();
+    return haystack.contains('app check') || haystack.contains('app-check');
   }
 
   /// Exact-message map for backend business rules that reuse generic

@@ -31,8 +31,9 @@ async function run() {
     const planIdPro = "pro";
     const lectureId1 = "lecture_1";
     const lectureId2 = "lecture_2";
-    const videoId1 = "bunny_1";
-    const videoId2 = "bunny_2";
+    // Strict Video-ID contract: bare GUIDs only. Distinct IDs preserved.
+    const videoId1 = "55555555-5555-4555-8555-555555555555";
+    const videoId2 = "66666666-6666-4666-8666-666666666666";
     const deviceId = "test_device_123456789";
 
     await db.collection("users").doc(userId).set({
@@ -66,6 +67,21 @@ async function run() {
     await db.collection("plan_features").doc("pf2").set({
       plan_id: planIdFree,
       feature_key: "video.quality.720p",
+      enabled: true
+    });
+
+    // Device allowance is mandatory for tier evaluation
+    // (getSubjectAllowance throws failed-precondition when absent).
+    await db.collection("plan_features").doc("pf5").set({
+      plan_id: planIdFree,
+      feature_key: "device.max_count",
+      feature_value: 1,
+      enabled: true
+    });
+    await db.collection("plan_features").doc("pf6").set({
+      plan_id: planIdPro,
+      feature_key: "device.max_count",
+      feature_value: 1,
       enabled: true
     });
 

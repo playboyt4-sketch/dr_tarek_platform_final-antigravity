@@ -11,7 +11,6 @@ const GradeStudent _student = GradeStudent(
   id: 'stu_001',
   name: 'ahmed mohamed gamal',
   isCenter: true,
-  plan: 'PRO',
   isActive: true,
   lastSignIn: '12/8/2026',
   phone: '01115800180',
@@ -279,6 +278,41 @@ void main() {
         1,
       );
     });
+
+    test('rows carry each subject\'s OWN catalog grade', () {
+      final List<StudentSubjectDeviceRow> rows =
+          buildStudentSubjectDeviceRows(
+        registrations: const <StudentSubjectRegistration>[
+          StudentSubjectRegistration(
+            subjectId: 'sub_old',
+            title: 'Old',
+            gradeKey: 'grade_two',
+            planLabel: 'FREE',
+            enabled: true,
+          ),
+          StudentSubjectRegistration(
+            subjectId: 'sub_new',
+            title: 'New',
+            gradeKey: 'grade_three',
+            planLabel: 'PRO',
+            enabled: true,
+          ),
+        ],
+        planIdBySubject: const <String, String>{},
+        authorizations: const <SubjectDeviceAuthorization>[],
+        devices: const <StudentDeviceRecord>[],
+        allowancesByPlanId: const <String, int>{},
+        studentId: 'stu_001',
+      );
+      expect(
+        rows.firstWhere((r) => r.subjectId == 'sub_old').gradeKey,
+        'grade_two',
+      );
+      expect(
+        rows.firstWhere((r) => r.subjectId == 'sub_new').gradeKey,
+        'grade_three',
+      );
+    });
   });
 
   group('formatDeviceDateTime', () {
@@ -314,6 +348,8 @@ void main() {
 
       expect(find.text('No.'), findsOneWidget);
       expect(find.text('Subjects'), findsNWidgets(3));
+      expect(find.text('Grade'), findsOneWidget);
+      expect(find.text('Grade One'), findsWidgets);
       expect(find.text('Plan'), findsOneWidget);
       // Sub-nav pill + table header.
       expect(find.text('Device'), findsNWidgets(2));

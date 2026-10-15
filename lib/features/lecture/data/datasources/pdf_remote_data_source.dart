@@ -1,5 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
+import '../../../video_streaming/data/services/video_source_resolver.dart'
+    show resolveLocalDeviceId;
+
 /// Signed-URL delivery for protected PDFs/attachments.
 ///
 /// FINAL_DECISIONS §15 dual-provider dispatch: the resource's
@@ -56,8 +59,12 @@ class PdfRemoteDataSource {
     String callableName,
     String resourceId,
   ) async {
-    final result =
-        await _functions.httpsCallable(callableName).call({'resourceId': resourceId});
+    // All three document callables enforce `requireFullSubjectTier`, which
+    // needs the bound device id — resolve it locally like video issuance.
+    final deviceId = await resolveLocalDeviceId();
+    final result = await _functions
+        .httpsCallable(callableName)
+        .call({'resourceId': resourceId, 'deviceId': deviceId});
     return Map<String, dynamic>.from(result.data as Map);
   }
 
@@ -65,8 +72,12 @@ class PdfRemoteDataSource {
     String resourceId, {
     required bool forDownload,
   }) async {
-    final result = await _functions.httpsCallable('generateBunnyResourceUrl')
-        .call({'resourceId': resourceId, 'forDownload': forDownload});
+    final deviceId = await resolveLocalDeviceId();
+    final result = await _functions.httpsCallable('generateBunnyResourceUrl').call({
+      'resourceId': resourceId,
+      'forDownload': forDownload,
+      'deviceId': deviceId,
+    });
     final data = Map<String, dynamic>.from(result.data as Map);
     return PdfSignedUrlResult(
       url: data['url'] as String,

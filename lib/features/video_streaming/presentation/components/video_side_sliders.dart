@@ -4,16 +4,44 @@ import 'package:flutter/material.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
 
-class VideoSideSliders extends StatefulWidget {
-  const VideoSideSliders({super.key});
+import '../controllers/video_playback_controller.dart';
+
+/// Edge sliders matching `docs/video player .html` (volume icon + vertical
+/// track on the LEFT, brightness icon + vertical track on the RIGHT —
+/// physical positions, never mirrored).
+///
+/// Unlike the reference demo's hardcoded 120px track, the track height here
+/// is derived at runtime from the ACTUAL middle-band height (the space
+/// between the top bar's bottom edge and the bottom bar's top edge): the
+/// parent places each slider in a full-height slot of that middle band and
+/// this widget sizes its track as a fraction of the slot via LayoutBuilder,
+/// in the same layout pass — so the sliders can never overlap the top or
+/// bottom bars on any viewport.
+///
+/// System controls are used when the platform supports them; otherwise the
+/// volume slider falls back to the player engine volume so the control stays
+/// visible (e.g. web builds where system plugins are unavailable).
+class VideoEdgeSlider extends StatefulWidget {
+  final VideoPlaybackController? controller;
+
+  /// True for the volume slider, false for the brightness slider.
+  final bool isVolume;
+
+  const VideoEdgeSlider.volume({this.controller, super.key})
+    : isVolume = true;
+
+  const VideoEdgeSlider.brightness({this.controller, super.key})
+    : isVolume = false;
 
   @override
-  State<VideoSideSliders> createState() => _VideoSideSlidersState();
+  State<VideoEdgeSlider> createState() => _VideoEdgeSliderState();
 }
 
-class _VideoSideSlidersState extends State<VideoSideSliders> {
+class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
   double _volume = 0.5;
-  double _brightness = 0.5;
+  // Slider position matching the neutral 1.0 video-brightness factor
+  // ((1.0 - 0.2) / 1.3) so the control reads consistently pre-touch.
+  double _brightness = 0.62;
   bool _isVolumeSupported = true;
   bool _isBrightnessSupported = true;
   StreamSubscription<double>? _volumeSub;
@@ -21,14 +49,19 @@ class _VideoSideSlidersState extends State<VideoSideSliders> {
   @override
   void initState() {
     super.initState();
-    _initVolume();
-    _initBrightness();
+    if (widget.isVolume) {
+      _initVolume();
+    } else {
+      _initBrightness();
+    }
   }
 
   @override
   void dispose() {
     _volumeSub?.cancel();
-    VolumeController.instance.removeListener();
+    if (widget.isVolume) {
+      VolumeController.instance.removeListener();
+    }
     super.dispose();
   }
 
@@ -52,107 +85,109 @@ class _VideoSideSlidersState extends State<VideoSideSliders> {
   Future<void> _initBrightness() async {
     try {
       _brightness = await ScreenBrightness().application;
-      ScreenBrightness().onApplicationScreenBrightnessChanged.listen((brightness) {
+      ScreenBrightness().onApplicationScreenBrightnessChanged.listen((
+        brightness,
+      ) {
         if (mounted) {
           setState(() {
             _brightness = brightness;
           });
         }
       });
-    } catch (e) {
+    } catch (_) {
       _isBrightnessSupported = false;
     }
     if (mounted) setState(() {});
   }
 
   Future<void> _setVolume(double value) async {
-    if (!_isVolumeSupported) return;
     final clamped = value.clamp(0.0, 1.0);
     setState(() => _volume = clamped);
-    await VolumeController.instance.setVolume(clamped);
+    if (_isVolumeSupported) {
+      try {
+        await VolumeController.instance.setVolume(clamped);
+        return;
+      } catch (_) {
+        if (mounted) setState(() => _isVolumeSupported = false);
+      }
+    }
+    // Fallback: engine volume (web / unsupported platforms).
+    try {
+      await widget.controller?.engine?.setVolume(clamped);
+    } catch (_) {}
   }
 
   Future<void> _setBrightness(double value) async {
-    if (!_isBrightnessSupported) return;
     final clamped = value.clamp(0.0, 1.0);
     setState(() => _brightness = clamped);
-    await ScreenBrightness().setApplicationScreenBrightness(clamped);
+    if (_isBrightnessSupported) {
+      try {
+        await ScreenBrightness().setApplicationScreenBrightness(clamped);
+        return;
+      } catch (_) {
+        if (mounted) setState(() => _isBrightnessSupported = false);
+      }
+    }
+    // Fallback: per-video brightness filter (web / unsupported platforms).
+    widget.controller?.setVideoBrightness(clamped);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        if (_isVolumeSupported)
-          Positioned(
-            left: 20,
-            top: 0,
-            bottom: 0,
-            child: _buildSliderControl(
-              icon: Icons.volume_up,
-              value: _volume,
-              onChanged: _setVolume,
-            ),
-          ),
-        if (_isBrightnessSupported)
-          Positioned(
-            right: 20,
-            top: 0,
-            bottom: 0,
-            child: _buildSliderControl(
-              icon: Icons.brightness_6,
-              value: _brightness,
-              onChanged: _setBrightness,
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSliderControl({
-    required IconData icon,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Center(
-      child: GestureDetector(
-        onVerticalDragUpdate: (details) {
-          // Negative delta means sliding up (increase)
-          final delta = -details.primaryDelta! / 120.0;
-          onChanged(value + delta);
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(10.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: Colors.white, size: 20),
-              const SizedBox(height: 10),
-              Container(
-                width: 4,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-                child: Stack(
-                  alignment: Alignment.bottomCenter,
-                  children: [
-                    Container(
-                      width: 4,
-                      height: 120 * value,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+    // Volume is always shown (system control, else engine fallback).
+    // Brightness is always shown too: system control where supported,
+    // per-video filter fallback elsewhere (reference: right-side slider).
+    final icon = widget.isVolume ? Icons.volume_up : Icons.brightness_6;
+    final value = widget.isVolume ? _volume : _brightness;
+    final onChanged = widget.isVolume ? _setVolume : _setBrightness;
+    // Runtime-derived track height: a fraction of the ACTUAL middle-band
+    // slot height (same layout pass via LayoutBuilder), bounded so the
+    // icon + track + touch padding always fit inside the slot — never a
+    // fixed pixel copy of the HTML demo, never overlapping the bars.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final trackHeight = (constraints.maxHeight * 0.42).clamp(64.0, 150.0);
+        return Center(
+          child: GestureDetector(
+            onVerticalDragUpdate: (details) {
+              // Negative delta means sliding up (increase)
+              final delta = -details.primaryDelta! / 120.0;
+              onChanged(value + delta);
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(10.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: Colors.white, size: 20),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 4,
+                    height: trackHeight,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                  ],
-                ),
+                    child: Stack(
+                      alignment: Alignment.bottomCenter,
+                      children: [
+                        Container(
+                          width: 4,
+                          height: trackHeight * value,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

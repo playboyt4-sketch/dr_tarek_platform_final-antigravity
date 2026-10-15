@@ -50,7 +50,7 @@ String lectureAccessGrantDocId(String lectureId, String studentId) =>
 /// Displayed/saved default for one student: an explicit staged toggle
 /// wins, then the stored grant, otherwise ON — meaning "no override",
 /// i.e. the student follows normal lecture eligibility. Default ON is
-/// behavior-preserving: nothing is denied until the Teacher acts.
+/// behavior-preserving: nothing is denied until the Doctor acts.
 bool resolveLectureAccess({bool? staged, bool? grantAllowed}) =>
     staged ?? grantAllowed ?? true;
 

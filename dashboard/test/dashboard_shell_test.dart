@@ -17,7 +17,6 @@ const GradeStudentsData _gradeTwoData = GradeStudentsData(
       id: 's1',
       name: 'Omar khaled hassan',
       isCenter: false,
-      plan: 'FREE',
       isActive: true,
       lastSignIn: '11/8/2026',
     ),
@@ -27,7 +26,7 @@ const GradeStudentsData _gradeTwoData = GradeStudentsData(
     PlanBreakdownRow(label: 'Free', count: 152, share: 40),
     PlanBreakdownRow(label: 'PRO', count: 144, share: 38),
     PlanBreakdownRow(label: 'MAX', count: 38, share: 10),
-    PlanBreakdownRow(label: 'Guest', count: 46, share: 12),
+    PlanBreakdownRow(label: 'No active plan', count: 46, share: 12),
   ],
   isFallback: false,
 );
@@ -39,7 +38,6 @@ const GradeStudentsData _gradeOneData = GradeStudentsData(
       id: 'a1',
       name: 'Ahmed gamal mousa',
       isCenter: true,
-      plan: 'PRO',
       isActive: true,
       lastSignIn: '12/8/2026',
     ),
@@ -49,7 +47,7 @@ const GradeStudentsData _gradeOneData = GradeStudentsData(
     PlanBreakdownRow(label: 'Free', count: 0, share: 0),
     PlanBreakdownRow(label: 'PRO', count: 1, share: 100),
     PlanBreakdownRow(label: 'MAX', count: 0, share: 0),
-    PlanBreakdownRow(label: 'Guest', count: 0, share: 0),
+    PlanBreakdownRow(label: 'No active plan', count: 0, share: 0),
   ],
   isFallback: false,
 );
@@ -176,7 +174,7 @@ void main() {
     expect(find.textContaining('Center 396'), findsOneWidget);
 
     // Bottom section.
-    expect(find.text('Upload Lecture'), findsOneWidget);
+    expect(find.text('Quick Upload'), findsOneWidget);
     expect(
       find.text('Add new video, PDFs & assign to grades'),
       findsOneWidget,

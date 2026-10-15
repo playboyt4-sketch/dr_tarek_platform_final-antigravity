@@ -26,10 +26,16 @@ class SubjectNavigationRemoteDataSource {
 
     return snapshot.docs.map((doc) {
       final data = doc.data();
+      final String? key = data['section_key'] as String?;
       return LearningSection(
         id: doc.id,
         title:
             _text(data['title']) ?? _text(data['section_name']) ?? 'قسم تعليمي',
+        sectionKey: key,
+        isSystemSection: (data['is_system_section'] as bool?) ??
+            (key == 'explanation' ||
+                key == 'revision' ||
+                key == 'final_review'),
         displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
         isVisible: data['is_visible'] != false,
         isLocked: data['is_locked'] == true,
@@ -71,6 +77,9 @@ class SubjectNavigationRemoteDataSource {
           data['skip_intro_start'] ?? data['intro_start'],
         ),
         skipIntroEnd: _offset(data['skip_intro_end'] ?? data['intro_end']),
+        // Denormalized first-video pointer (05 Database §lectures). Null
+        // when absent/malformed — callers keep the legacy tap-time path.
+        firstVideo: FirstVideoRef.fromLectureData(data),
       );
     }).toList();
   }

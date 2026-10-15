@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/errors/friendly_error_message.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../../lecture/data/datasources/pdf_remote_data_source.dart';
 import '../../../lecture/presentation/screens/pdf_viewer_screen.dart';
 import '../../domain/entities/playback_entities.dart';
@@ -179,7 +180,7 @@ Future<void> showLectureDocumentsSheet(
                         document.isPdf
                             ? Icons.picture_as_pdf_outlined
                             : Icons.attach_file,
-                        color: const Color(0xFF00c896),
+                        color: AppColors.secondary,
                       ),
                       // Attachments are clearly labeled per audit Fix 1.
                       title: Text(

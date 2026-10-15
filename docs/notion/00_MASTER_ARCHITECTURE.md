@@ -4,11 +4,12 @@
 
 ## Single Source of Truth
 
-Version: 2.0
+Version: 2.1
 Status: Approved
 
 ## Version History
 
+- **2.1** (2026-09-17): Added ADR-005 — approved Platform Owner role migration (`teacher` → `doctor`). No other architectural change. All role tables, rules, code, and data references still read `teacher` until the implementation migration executes this ADR.
 - **2.0** (2026-09-14): Major architectural change to Subject-Level Device Binding (ADR-004). Supersedes the previous account-level device-binding/login-rejection model. Authentication is account-level and never rejected for device reasons; device authorization is evaluated per Student + Subject + Device on first actual subject access; each Subject independently consumes its own subscription's device allowance; Guest/limited access never mutates the subscription; identity claims are de-scoped from Subject-specific authorization. See Section 7.1 and Section 5.3 (ADR-004). Other documents are not rewritten in this step and must be aligned in follow-up steps per the project workflow.
 - **1.2** (2026-08-04): Clarified "One active device per student" (Section 7) to reflect the plan-based device policy — this bullet, taken literally, contradicted the Center Max plan's 2+ device allowance already documented in 05 Database and 04 Features, and confirmed in FINAL_DECISIONS Section 1. The rule is now stated as plan-configurable, not a fixed single-device rule. Also updated 01 Project Vision (v2.0) and 02 PRD (v1.3) to remove the Offline Learning V1/future-scope conflict.
 - **1.1** and earlier: see prior revisions.
@@ -165,6 +166,16 @@ Architectural decisions become permanent references unless officially superseded
 - **Status:** Approved.
 - **Date:** 2026-09-14.
 - **Version:** Master Architecture 2.0.
+
+## ADR-005 — Platform Owner Role Migration (`teacher` → `doctor`)
+
+- **Decision:** The technical authorization role of the Platform Owner changes from `teacher` to `doctor`. The target model is: `doctor` = Doctor (Platform Owner) with full Platform Owner access; `admin` = delegated administrator, unchanged; `student` / `new_student` unchanged. `DR` is a profile badge / presentation indicator only; it is NOT an authorization role and MUST NOT become a separate RBAC role (no `dr` role value in `users.role`, Custom Claims, or Security Rules). There is ONE shared management Dashboard architecture (no separate Admin Dashboard architecture): the Doctor receives full access at the `/doctor` web path, and Admin receives delegated-permission access at the `/admin` web path. The Doctor Dashboard is built Web-first; the required management functionality is later exposed inside the mobile application through the existing management/admin icon, which MUST NOT be removed. The feature key `chat.doctor_channel` is unchanged by this decision.
+- **Context:** Per ADR-001/ADR-002 and Section 6.1, the Platform Owner's Display Name is "Teacher (Platform Owner)" and its Technical Enum Value is `teacher`, used across the Firestore `users.role` field, Custom Claims (`role: "teacher"`), Cloud Functions authorization (`requireTeacher`, `ADMIN_ROLES`), Firestore/Storage Security Rules (`isTeacher()`), Dashboard authorization (`isStaff`), mobile authorization gates, tests, bootstrap/ops scripts, and audit fields (`actor_role` / `permission_basis`). The project owner has approved renaming the technical role to `doctor` with Display Name "Doctor (Platform Owner)". Live verification (2026-09-17) confirmed project `dr-tarek-platform` is NOT STARTED on migration: the live owner account holds claims `{role: "teacher", approved: true}`, and no `doctor` authorization literal exists in any enforcement layer.
+- **Alternatives Considered:** (1) Permanent dual authorization accepting `teacher OR doctor`. Rejected as a target state: it would leave stale owner credentials valid indefinitely and split audit history across two values; a short-lived transitional acceptance is only permissible if explicitly approved later as part of the cutover plan, never as the steady state. (2) Introducing a separate `dr` authorization role alongside `doctor`. Rejected: `DR` is presentation metadata only; a second owner-grade value would fork every authorization check. (3) Building a separate Admin Dashboard architecture for `/admin`. Rejected: one shared Dashboard surface with permission-gated sections is the approved model. (4) Rewriting historical audit records (`actor_role: "teacher"`, `permission_basis: "teacher"`) to `doctor`. Rejected: history stays historical; only new authorization/audit writes use `doctor`, and readers of historical records must accept both values for the pre-migration era.
+- **Consequences:** Section 6.1, the Database role enum, Security Rules, Cloud Functions, Custom Claims issuance, Dashboard/mobile gates, bootstrap/ops scripts, and tests must all move from `teacher` to `doctor` in the implementation migration; generic educational references (e.g. "teacher reviews", generic "teachers" product prose) and the `chat.doctor_channel` feature key MUST NOT be renamed. The cutover MUST be coordinated across (1) Rules, (2) Functions, (3) the owner Firestore role, (4) Custom Claims, (5) owner re-authentication/session refresh, and (6) Dashboard/mobile clients — a partial migration (e.g. claims without rules, or clients without backend) is unsafe and is explicitly NOT prescribed by this ADR. Pre-migration baseline is checkpoint commit `328c3546a2adfc9b41181dd347a32031ae8fc0fc`. No database schema, collection design, or code is introduced by this ADR.
+- **Status:** Approved.
+- **Date:** 2026-09-17.
+- **Version:** Master Architecture 2.1.
 
 # 6. User Roles
 

@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../domain/entities/device_info.dart';
 
@@ -13,17 +14,29 @@ class DeviceBindingRemoteDataSource {
   }) async {
     final callable = functions.httpsCallable('onLoginAttempt');
 
-    final result = await callable.call({
-      'userId': userId,
-      'deviceId': deviceInfo.deviceId,
-      'deviceName': deviceInfo.deviceName,
-      'platform': deviceInfo.platform,
-      'osVersion': deviceInfo.osVersion,
-      'appVersion': deviceInfo.appVersion,
-    });
+    try {
+      final result = await callable.call({
+        'userId': userId,
+        'deviceId': deviceInfo.deviceId,
+        'deviceName': deviceInfo.deviceName,
+        'platform': deviceInfo.platform,
+        'osVersion': deviceInfo.osVersion,
+        'appVersion': deviceInfo.appVersion,
+      });
 
-    final data = Map<String, dynamic>.from(result.data as Map);
+      final data = Map<String, dynamic>.from(result.data as Map);
 
-    return data['allowed'] == true;
+      return data['allowed'] == true;
+    } catch (error) {
+      final extra = error is FirebaseFunctionsException
+          ? ' code=${error.code} message=${error.message} details=${error.details}'
+          : '';
+      debugPrint(
+        '[VIDEO-DIAG] callable function=onLoginAttempt '
+        'payload=userId=$userId deviceId=${deviceInfo.deviceId} platform=${deviceInfo.platform} '
+        'errorType=${error.runtimeType} error=$error$extra',
+      );
+      rethrow;
+    }
   }
 }

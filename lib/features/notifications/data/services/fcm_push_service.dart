@@ -50,7 +50,11 @@ class FcmPushService {
     this.localNotifications,
   });
 
-  static const _deviceIdKey = 'device_binding_device_id';
+  /// Canonical binding id first (`device_id_uuidv4` — written by
+  /// `DeviceInfoDataSource`), legacy key as fallback so push registration
+  /// keeps working for installs that only ever wrote the old key.
+  static const _deviceIdKey = 'device_id_uuidv4';
+  static const _legacyDeviceIdKey = 'device_binding_device_id';
 
   /// Wires listeners; safe to call once at app startup.
   void start() {
@@ -178,7 +182,8 @@ class FcmPushService {
       final token = await messaging.getToken();
       if (token == null || token.isEmpty) return;
 
-      final deviceId = await storage.read(key: _deviceIdKey);
+      String? deviceId = await storage.read(key: _deviceIdKey);
+      deviceId ??= await storage.read(key: _legacyDeviceIdKey);
       if (deviceId == null || deviceId.isEmpty) {
         // Device binding has not completed yet; onDeviceTokenRefresh will be
         // retried on the next token refresh / sign-in.

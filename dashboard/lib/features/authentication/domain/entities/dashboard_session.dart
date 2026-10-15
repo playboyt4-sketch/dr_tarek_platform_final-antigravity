@@ -16,7 +16,7 @@ class DashboardSession {
 
   /// Whether this session may see the staff dashboard experience.
   ///
-  /// Mirrors the existing approved dashboard behavior: only `teacher` and
+  /// Mirrors the existing approved dashboard behavior: only `doctor` and
   /// `admin` roles with an approved account are admitted.
-  bool get isStaff => (role == 'teacher' || role == 'admin') && approved;
+  bool get isStaff => (role == 'doctor' || role == 'admin') && approved;
 }

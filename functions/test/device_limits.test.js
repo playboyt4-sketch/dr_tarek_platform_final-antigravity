@@ -93,7 +93,7 @@ async function run() {
     }
     try {
         await wrapped(
-            { data: { userId, deviceId: "devX" }, auth: { uid: userId, token: { role: "teacher" } } },
+            { data: { userId, deviceId: "devX" }, auth: { uid: userId, token: { role: "doctor" } } },
         );
         throw new Error("expected permission-denied for non-student role");
     } catch (e) {

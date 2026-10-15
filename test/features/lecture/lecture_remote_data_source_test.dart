@@ -46,7 +46,7 @@ void main() {
           'id': 'res-1',
           'resourceType': 'video',
           'title': 'الفيديو الأول',
-          'bunnyVideoId': 'bunny-123',
+          'bunnyVideoId': '77777777-7777-4777-8777-777777777777',
           'storagePath': null,
           'thumbnail': 'https://thumb',
           'duration': 610,
@@ -78,7 +78,7 @@ void main() {
     expect(video.id, 'res-1');
     expect(video.lectureId, 'lecture-9');
     expect(video.resourceType, LectureResourceType.video);
-    expect(video.bunnyVideoId, 'bunny-123');
+    expect(video.bunnyVideoId, '77777777-7777-4777-8777-777777777777');
     expect(video.thumbnail, 'https://thumb');
     expect(video.duration, 610);
     // Raw resource URLs must never reach the client entity.

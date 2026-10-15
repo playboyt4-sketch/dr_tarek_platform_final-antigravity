@@ -4,22 +4,22 @@
  *
  * Rule under test (firestore.rules):
  *   match /student_subject_pricing/{pricingId} {
- *     allow get, list: if canViewPayments() || canManagePayments() || isTeacher();
+ *     allow get, list: if canViewPayments() || canManagePayments() || isDoctor();
  *     allow write: if false;
  *   }
- * where canViewPayments() = teacher OR admin with `admin_payments_view`
- * and canManagePayments() = teacher OR admin with `admin_payments`
+ * where canViewPayments() = doctor OR admin with `admin_payments_view`
+ * and canManagePayments() = doctor OR admin with `admin_payments`
  * (the exact existing Payments read authorization — no new model).
  *
  * Proofs:
- * 1. Teacher read → allowed.
+ * 1. Doctor read → allowed.
  * 2. Authorized Admin (admin_payments_view) read → allowed.
  * 3. Unauthorized Admin read → denied.
  * 4. Student read → denied.
  * 5. Unauthenticated read → denied.
- * 6. Direct create → denied (even Teacher).
- * 7. Direct update → denied (even Teacher).
- * 8. Direct delete → denied (even Teacher).
+ * 6. Direct create → denied (even Doctor).
+ * 7. Direct update → denied (even Doctor).
+ * 8. Direct delete → denied (even Doctor).
  *
  * Run with the Firestore emulator:
  *   firebase emulators:exec --only firestore --project <project> "node subject_pricing_rules.test.js"
@@ -51,8 +51,8 @@ async function seed() {
       net_egp: 450,
       created_at: new Date(),
       updated_at: new Date(),
-      created_by: 'teacher-1',
-      updated_by: 'teacher-1',
+      created_by: 'doctor-1',
+      updated_by: 'doctor-1',
       is_deleted: false,
       deleted_at: null,
       deleted_by: null,
@@ -99,10 +99,10 @@ async function run() {
 
     const pricingDoc = 'student_subject_pricing/s1_sub1';
 
-    // 1. Teacher read → allowed.
+    // 1. Doctor read → allowed.
     await checkSucceeds(
-      'Teacher read allowed',
-      dbFor('teacher-1', {role: 'teacher'}).doc(pricingDoc).get(),
+      'Doctor read allowed',
+      dbFor('doctor-1', {role: 'doctor'}).doc(pricingDoc).get(),
     );
 
     // 2. Authorized Admin (admin_payments_view) read → allowed.
@@ -129,10 +129,10 @@ async function run() {
       testEnv.unauthenticatedContext().firestore().doc(pricingDoc).get(),
     );
 
-    // 6. Direct create → denied (even Teacher; writes are callable-only).
+    // 6. Direct create → denied (even Doctor; writes are callable-only).
     await checkFails(
-      'Direct create denied (teacher)',
-      dbFor('teacher-1', {role: 'teacher'}).doc('student_subject_pricing/s9_sub9').set({
+      'Direct create denied (doctor)',
+      dbFor('doctor-1', {role: 'doctor'}).doc('student_subject_pricing/s9_sub9').set({
         student_id: 's9',
         subject_id: 'sub9',
         price_egp: 100,
@@ -141,16 +141,16 @@ async function run() {
       }),
     );
 
-    // 7. Direct update → denied (even Teacher).
+    // 7. Direct update → denied (even Doctor).
     await checkFails(
-      'Direct update denied (teacher)',
-      dbFor('teacher-1', {role: 'teacher'}).doc(pricingDoc).update({price_egp: 1}),
+      'Direct update denied (doctor)',
+      dbFor('doctor-1', {role: 'doctor'}).doc(pricingDoc).update({price_egp: 1}),
     );
 
-    // 8. Direct delete → denied (even Teacher).
+    // 8. Direct delete → denied (even Doctor).
     await checkFails(
-      'Direct delete denied (teacher)',
-      dbFor('teacher-1', {role: 'teacher'}).doc(pricingDoc).delete(),
+      'Direct delete denied (doctor)',
+      dbFor('doctor-1', {role: 'doctor'}).doc(pricingDoc).delete(),
     );
   } finally {
     await testEnv.cleanup();

@@ -23,13 +23,13 @@ import 'student_profile_subjects_provider.dart'
 ///   document means "unpriced" (rendered as `—`, never an invented 0).
 /// - Net displayed is the stored server-derived `net_egp`; pricing never
 ///   feeds Paid/Balance (those stay student-level in [StudentLedger]).
-/// - Writes go exclusively through the Teacher-only
+/// - Writes go exclusively through the Doctor-only
 ///   `setStudentSubjectPricing` callable — never direct Firestore writes.
 ///
 /// Forbidden sources (never read here): `student_subject_accounts`,
 /// `subjects.price_egp`, `subjects.discount_egp`, per-subject ledgers.
 
-/// One Teacher-entered pricing reference for a (student, subject) pair.
+/// One Doctor-entered pricing reference for a (student, subject) pair.
 ///
 /// Display / financial-reference only. Not a payment account, not a cap,
 /// not an allocation — it never participates in payment enforcement.
@@ -76,7 +76,7 @@ class StudentSubjectPricing {
 }
 
 /// One Subjects-table row: the student's registration joined with its
-/// optional Teacher-entered pricing (`pricing == null` renders `—`).
+/// optional Doctor-entered pricing (`pricing == null` renders `—`).
 class StudentPricedSubject {
   final String subjectId;
   final String title;
@@ -118,7 +118,7 @@ List<StudentPricedSubject> buildStudentPricedSubjects({
   return rows;
 }
 
-/// Live Teacher-entered pricing records of one student
+/// Live Doctor-entered pricing records of one student
 /// (`student_subject_pricing`).
 ///
 /// Single-filter query only (`student_id`); the `is_deleted` filter is
@@ -172,7 +172,7 @@ final studentPricedSubjectsProvider =
 
 /// Price/Discount writes for the Payments → Subjects table.
 ///
-/// Manual Teacher entry/correction via the approved
+/// Manual Doctor entry/correction via the approved
 /// `setStudentSubjectPricing` callable (one callable for create and
 /// correct on the deterministic `{studentId}_{subjectId}` document).
 /// Kept separate from payment transactions: this controller never
@@ -184,7 +184,7 @@ class StudentSubjectPricingController {
 
   const StudentSubjectPricingController(this._functions);
 
-  /// Teacher-only create/correction of one subject's manual pricing.
+  /// Doctor-only create/correction of one subject's manual pricing.
   /// Client-side guards mirror the server contract so obvious mistakes
   /// surface before the callable round-trip.
   Future<void> setPricing({

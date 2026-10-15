@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/presentation/widgets/application_decision_dialog.dart';
 import '../providers/grade_pending_requests_provider.dart';
+import '../providers/grade_students_provider.dart';
 import 'grade_students_screen.dart'
     show gradeAccent;
 
@@ -69,6 +70,9 @@ class _GradePendingRequestsScreenState
     if (!mounted) return;
     if (message != null) {
       ref.invalidate(gradePendingRequestsProvider(_gradeKey));
+      // Approved students join the Students table: refresh it too so no
+      // manual reload is needed.
+      ref.invalidate(gradeStudentsProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );

@@ -132,9 +132,9 @@ async function seed() {
       allowed: false,
       is_deleted: false,
       created_at: new Date(),
-      created_by: 'teacher-1',
+      created_by: 'doctor-1',
       updated_at: new Date(),
-      updated_by: 'teacher-1',
+      updated_by: 'doctor-1',
     });
     await db.doc('users/student-allowed').set({
       id: 'student-allowed',
@@ -156,9 +156,9 @@ async function seed() {
       allowed: true,
       is_deleted: false,
       created_at: new Date(),
-      created_by: 'teacher-1',
+      created_by: 'doctor-1',
       updated_at: new Date(),
-      updated_by: 'teacher-1',
+      updated_by: 'doctor-1',
     });
     await db.doc('lectures/draft').set({
       status: 'draft',
@@ -171,7 +171,7 @@ async function seed() {
       status: 'published',
       is_deleted: true,
       deleted_at: new Date(),
-      deleted_by: 'teacher-1',
+      deleted_by: 'doctor-1',
       subject_id: 'subject-1',
     });
     // Part E: platform default storage provider setting document.
@@ -185,6 +185,26 @@ async function seed() {
       is_deleted: false,
       enabled: true,
       entitlements: ['notes.create', 'bookmarks.create'],
+      // Server-synced mirror of subscriptions.end_date (active subscription).
+      subscription_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+    // Lifetime subscription: end_date == null passes the expiry gate.
+    await db.doc('subject_access_assignments/student-lifetime_subject-1').set({
+      student_id: 'student-lifetime',
+      subject_id: 'subject-1',
+      is_deleted: false,
+      enabled: true,
+      entitlements: ['notes.create', 'bookmarks.create'],
+      subscription_expires_at: null,
+    });
+    // Expired subscription: past end_date denies despite entitlements.
+    await db.doc('subject_access_assignments/student-expired_subject-1').set({
+      student_id: 'student-expired',
+      subject_id: 'subject-1',
+      is_deleted: false,
+      enabled: true,
+      entitlements: ['notes.create', 'bookmarks.create'],
+      subscription_expires_at: new Date(Date.now() - 1000),
     });
     await db.doc('subject_access_assignments/student-safe_subject-2').set({
       student_id: 'student-safe',
@@ -229,14 +249,14 @@ async function run() {
     await assertFails(dbFor('anonymous').collection('security_events').add({user_id: 'x', event_type: 'emulator'}));
     await assertFails(dbFor('student-safe', {role: 'student', approved: true}).collection('security_events').doc('seeded-event').update({severity: 'low'}));
     await assertFails(dbFor('student-safe', {role: 'student', approved: true}).collection('security_events').doc('seeded-event').delete());
-    await assertFails(dbFor('teacher-1', {role: 'teacher'}).collection('security_events').add({user_id: 'teacher-1', event_type: 'screenshot'}));
-    await assertSucceeds(dbFor('teacher-1', {role: 'teacher'}).collection('security_events').doc('seeded-event').get());
+    await assertFails(dbFor('doctor-1', {role: 'doctor'}).collection('security_events').add({user_id: 'doctor-1', event_type: 'screenshot'}));
+    await assertSucceeds(dbFor('doctor-1', {role: 'doctor'}).collection('security_events').doc('seeded-event').get());
     await assertFails(dbFor('student-secret', {role: 'student', approved: true}).collection('users').doc('student-secret').get());
 
     await assertFails(
       dbFor('student-safe', {role: 'student', approved: true})
         .collection('users').doc('student-safe')
-        .update({role: 'teacher'}),
+        .update({role: 'doctor'}),
     );
 
     await assertSucceeds(
@@ -269,7 +289,7 @@ async function run() {
         .doc('student-secret_subject-1').get(),
     );
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('subject_access_assignments')
         .doc('student-secret_subject-1').get(),
     );
@@ -302,6 +322,20 @@ async function run() {
       dbFor('student-safe', {role: 'student', approved: true})
         .collection('notes').doc('note-2').set({student_id: 'another-student', subject_id: 'subject-1', body: 'Not mine'}),
     );
+    // Subscription-expiry drift fix: end_date semantics — future passes,
+    // null (lifetime) passes, past denies, missing denies.
+    await assertSucceeds(
+      dbFor('student-lifetime', {role: 'student', approved: true})
+        .collection('notes').doc('note-lifetime').set({student_id: 'student-lifetime', subject_id: 'subject-1', body: 'Lifetime note'}),
+    );
+    await assertSucceeds(
+      dbFor('student-lifetime', {role: 'student', approved: true})
+        .collection('notes').doc('note-lifetime').get(),
+    );
+    await assertFails(
+      dbFor('student-expired', {role: 'student', approved: true})
+        .collection('notes').doc('note-expired-new').set({student_id: 'student-expired', subject_id: 'subject-1', body: 'Expired'}),
+    );
 
     await assertSucceeds(
       dbFor('student-safe', {role: 'student', approved: true})
@@ -312,7 +346,7 @@ async function run() {
         .collection('lectures').doc('draft').get(),
     );
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lectures').doc('draft').get(),
     );
 
@@ -359,15 +393,15 @@ async function run() {
       dbFor('student-allowed', {role: 'student', approved: true})
         .collection('lecture_resources').doc('grant-res-allowed').get(),
     );
-    // 10. Teacher / authorized Admins manage grants through the
+    // 10. Doctor / authorized Admins manage grants through the
     // centralized permission model (admin_students or admin_content).
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-safe').get(),
     );
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-new').set({
           lecture_id: 'grant-lecture',
@@ -378,7 +412,7 @@ async function run() {
     );
     // Soft-delete audit state: clients always write the active state.
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-new').set({
           lecture_id: 'grant-lecture',
@@ -389,7 +423,7 @@ async function run() {
     );
     // Deterministic identity is enforced: id must equal lecture_student.
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('wrong-id').set({
           lecture_id: 'grant-lecture',
@@ -400,7 +434,7 @@ async function run() {
     );
     // Identity fields are immutable on update.
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-safe').update({
           lecture_id: 'other-lecture',
@@ -411,7 +445,7 @@ async function run() {
     );
     // Client-side soft-delete is rejected (revocation is allowed=false).
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-safe').update({
           allowed: false,
@@ -420,7 +454,7 @@ async function run() {
     );
     // Grants are never hard-deleted.
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('lecture_access_grants')
         .doc('grant-lecture_student-safe').delete(),
     );
@@ -466,7 +500,7 @@ async function run() {
         .collection('academic_periods').doc('term_1').get(),
     );
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('academic_periods').get(),
     );
     await assertFails(
@@ -474,7 +508,7 @@ async function run() {
         .collection('academic_periods').doc('term_1').get(),
     );
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('academic_periods').doc('term_1').set({status: 'ended'}),
     );
     await assertFails(
@@ -492,11 +526,11 @@ async function run() {
         .collection('platform_features').doc('exams.enabled').get(),
     );
     await assertSucceeds(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('platform_features').doc('exams.enabled').get(),
     );
     await assertFails(
-      dbFor('teacher-1', {role: 'teacher', approved: true})
+      dbFor('doctor-1', {role: 'doctor', approved: true})
         .collection('platform_features').doc('chat.enabled').set({enabled: false}),
     );
 
@@ -537,9 +571,17 @@ async function run() {
     const otherStudentStorage = testEnv
       .authenticatedContext('student-safe', {role: 'student', approved: true})
       .storage();
-    const teacherStorage = testEnv
-      .authenticatedContext('teacher-1', {role: 'teacher', approved: true})
+    const doctorStorage = testEnv
+      .authenticatedContext('doctor-1', {role: 'doctor', approved: true})
       .storage();
+    // ADR-005: a stale `teacher` claim grants no storage authority.
+    const legacyTeacherStorage = testEnv
+      .authenticatedContext('legacy-teacher', {role: 'teacher', approved: true})
+      .storage();
+    await assertFails(
+      legacyTeacherStorage.ref('lecture_resources/lecture-1/resource-1/file.pdf')
+        .put(Buffer.from('pdf-data'), {contentType: 'application/pdf'}),
+    );
 
     await assertSucceeds(
       studentStorage.ref('profile_photos/student-safe/avatar.png')
@@ -553,7 +595,7 @@ async function run() {
       studentStorage.ref('lecture_resources/lecture-1/resource-1/file.pdf').getDownloadURL(),
     );
     await assertSucceeds(
-      teacherStorage.ref('lecture_resources/lecture-1/resource-1/file.pdf')
+      doctorStorage.ref('lecture_resources/lecture-1/resource-1/file.pdf')
         .put(Buffer.from('pdf-data'), {contentType: 'application/pdf'}),
     );
 
@@ -646,24 +688,24 @@ async function run() {
         is_active: true,
       });
     });
-    const teacherDb2 = dbFor('teacher-owner', {role: 'teacher', approved: true});
+    const doctorDb2 = dbFor('doctor-owner', {role: 'doctor', approved: true});
     await assertFails(studentDb.collection('custom_groups').doc('group-1').get());
     await assertFails(studentDb.collection('custom_groups').get());
     await assertSucceeds(
-      teacherDb2.collection('custom_groups').doc('group-1').get(),
+      doctorDb2.collection('custom_groups').doc('group-1').get(),
     );
-    await assertSucceeds(teacherDb2.collection('custom_groups').get());
+    await assertSucceeds(doctorDb2.collection('custom_groups').get());
     await assertSucceeds(
       dbFor('admin-with-chat', {role: 'admin', approved: true})
         .collection('custom_groups').doc('group-1').get(),
     );
-    // Writes remain denied even for the Teacher (callables only).
+    // Writes remain denied even for the Doctor (callables only).
     await assertFails(
-      teacherDb2.collection('custom_groups').doc('group-2')
+      doctorDb2.collection('custom_groups').doc('group-2')
         .set({name: 'forged', is_active: true}),
     );
     await assertFails(
-      teacherDb2.collection('custom_groups').doc('group-1')
+      doctorDb2.collection('custom_groups').doc('group-1')
         .update({is_active: false}),
     );
 
@@ -688,9 +730,9 @@ async function run() {
     );
     await assertFails(studentDb.collection('lecture_resources').doc('resource-1').get());
     // Phase-1 authoring: STAFF may update resource metadata directly
-    // (Rules-governed, canManageContent/isTeacher) — students never can.
+    // (Rules-governed, canManageContent/isDoctor) — students never can.
     await assertSucceeds(
-      teacherDb2.collection('lecture_resources').doc('resource-1').set({
+      doctorDb2.collection('lecture_resources').doc('resource-1').set({
         lecture_id: 'lec-live',
         resource_type: 'video',
         visibility: true,
@@ -739,7 +781,7 @@ async function run() {
     );
 
     // ---- Notifications: students may ONLY mark their OWN notification as
-    // read; staff enqueue via create gated by ADMIN_CHAT / teacher role.
+    // read; staff enqueue via create gated by ADMIN_CHAT / doctor role.
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().doc('notifications/notif-mine').set({
         user_id: 'student-safe',
@@ -851,7 +893,7 @@ async function run() {
       }),
     );
 
-    // Staff creation: composer shape requires teacher role or admin_chat.
+    // Staff creation: composer shape requires doctor role or admin_chat.
     const composerPayload = {
       user_id: 'student-safe',
       title: 'إشعار',
@@ -865,7 +907,7 @@ async function run() {
       created_by: 'staff-1',
     };
     await assertSucceeds(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('notifications').doc('notif-t1').set(composerPayload),
     );
     await assertSucceeds(
@@ -885,10 +927,12 @@ async function run() {
       requested_at: new Date(),
     };
     await assertSucceeds(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('password_reset_requests').doc('req-t1').set(resetRequest),
     );
-    await assertFails(
+    // `password_reset` is the sole delegated key (Project Owner decision):
+    // a granted admin may queue pending requests like the doctor.
+    await assertSucceeds(
       dbFor('admin-with-reset', {role: 'admin', approved: true})
         .collection('password_reset_requests').doc('req-a1').set(resetRequest),
     );
@@ -919,16 +963,16 @@ async function run() {
     );
     // Request documents cannot smuggle extra fields (e.g. resolved markers).
     await assertFails(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('password_reset_requests').doc('req-t2').set({
           ...resetRequest,
-          resolved_by: 'teacher-owner',
+          resolved_by: 'doctor-owner',
           new_password_hash: 'x',
         }),
     );
     // Requests are immutable to clients once queued (Admin SDK resolves them).
     await assertFails(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('password_reset_requests').doc('req-t1')
         .update({status: 'resolved'}),
     );
@@ -944,14 +988,14 @@ async function run() {
     // the catch-all deny must keep rejecting every client access. The admin
     // home tile was repointed to users where approval_status == 'pending'.
     await assertFails(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('registration_requests').doc('x').get(),
     );
 
     // ---- Content authoring (Phase 1): staff manage sections/lectures/
     // resources directly under Rules; students keep read-only published
     // access to sections/lectures and ZERO direct access to resources.
-    const teacherDb3 = dbFor('teacher-1', {role: 'teacher', approved: true});
+    const doctorDb3 = dbFor('doctor-1', {role: 'doctor', approved: true});
     const contentAdminDb = dbFor('admin-with-content', {role: 'admin', approved: true});
     const plainAdminDb = dbFor('admin-with-students', {role: 'admin', approved: true});
 
@@ -967,7 +1011,7 @@ async function run() {
     });
 
     // Create custom section.
-    await assertSucceeds(teacherDb3.collection('subject_sections').doc('sec-custom').set({
+    await assertSucceeds(doctorDb3.collection('subject_sections').doc('sec-custom').set({
       subject_id: 'subject-1',
       section_key: null,
       is_system_section: false,
@@ -991,25 +1035,25 @@ async function run() {
     }));
 
     // Edit title/visibility (system section title editable).
-    await assertSucceeds(teacherDb3.collection('subject_sections').doc('sec-system')
+    await assertSucceeds(doctorDb3.collection('subject_sections').doc('sec-system')
       .update({title: 'الشرح المحدث', is_visible: false}));
     // Reorder = batched display_order updates.
-    await assertSucceeds(teacherDb3.collection('subject_sections').doc('sec-custom')
+    await assertSucceeds(doctorDb3.collection('subject_sections').doc('sec-custom')
       .update({display_order: 1}));
     
     // ALL sections use soft delete. Hard delete must fail.
-    await assertFails(teacherDb3.collection('subject_sections').doc('sec-custom2').delete());
-    await assertFails(teacherDb3.collection('subject_sections').doc('sec-system').delete());
+    await assertFails(doctorDb3.collection('subject_sections').doc('sec-custom2').delete());
+    await assertFails(doctorDb3.collection('subject_sections').doc('sec-system').delete());
 
     // Custom-section soft delete allowed at Rules level; SYSTEM sections can
     // never be deleted (Feature 03 — boundary enforced in the Rules).
-    await assertSucceeds(teacherDb3.collection('subject_sections').doc('sec-custom2')
+    await assertSucceeds(doctorDb3.collection('subject_sections').doc('sec-custom2')
       .update({is_deleted: true}));
-    await assertFails(teacherDb3.collection('subject_sections').doc('sec-system')
+    await assertFails(doctorDb3.collection('subject_sections').doc('sec-system')
       .update({is_deleted: true}));
 
     // Lectures: create draft -> publish -> archive (soft, never hard delete).
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-admin-1').set({
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-admin-1').set({
       section_id: 'sec-live',
       title: 'محاضرة تجريبية',
       description: '',
@@ -1021,13 +1065,13 @@ async function run() {
     console.log("Checking lec-admin-1 get for student");
     await assertFails(studentDb.collection('lectures').doc('lec-admin-1').get()); // draft hidden
     console.log("Passed lec-admin-1 get for student");
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-admin-1')
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-admin-1')
       .update({status: 'published'}));
     await assertSucceeds(contentAdminDb.collection('lectures').doc('lec-admin-1')
       .update({status: 'draft'}));
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-admin-1')
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-admin-1')
       .update({is_deleted: true, status: 'archived'}));
-    await assertFails(teacherDb3.collection('lectures').doc('lec-admin-1').delete());
+    await assertFails(doctorDb3.collection('lectures').doc('lec-admin-1').delete());
     await assertFails(studentDb.collection('lectures').doc('lec-admin-1').set({title: 'hack'}));
 
     // Lecture resources: staff CRUD incl. video-by-id (no raw URLs), pdf path
@@ -1046,7 +1090,7 @@ async function run() {
       visibility: true,
       is_deleted: false,
     };
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-video-1').set(resourceBase));
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-video-1').set(resourceBase));
     await assertSucceeds(contentAdminDb.collection('lecture_resources').doc('res-pdf-1').set({
       ...resourceBase,
       resource_type: 'pdf',
@@ -1055,7 +1099,7 @@ async function run() {
       storage_path: 'lecture_resources/lec-live/res-pdf-1/file.pdf',
       display_order: 2,
     }));
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-link-1').set({
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-link-1').set({
       ...resourceBase,
       resource_type: 'external_link',
       title: 'رابط خارجي',
@@ -1063,11 +1107,11 @@ async function run() {
       display_order: 3,
     }));
     // Reorder + visibility toggle + soft archive.
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-video-1')
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-video-1')
       .update({display_order: 3}));
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-video-1')
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-video-1')
       .update({is_visible: false, visibility: false}));
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-video-1')
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-video-1')
       .update({is_deleted: true, is_visible: false, visibility: false}));
     // Students: no direct reads/writes ever (callable-gated delivery only).
     await assertFails(studentDb.collection('lecture_resources').doc('res-pdf-1').get());
@@ -1085,9 +1129,9 @@ async function run() {
     const subscribedStudent = dbFor('student-safe', {role: 'student', approved: true});
     const unsubscribedStudent = dbFor('student-unsubscribed', {role: 'student', approved: true});
 
-    // Teacher publishes a fresh lecture carrying subject_id (the callable
+    // Doctor publishes a fresh lecture carrying subject_id (the callable
     // resolves the student's subscription from lecture.subject_id).
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-student-vis').set({
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-student-vis').set({
       subject_id: 'subject-1',
       section_id: 'sec-custom',
       title: 'محاضرة الطالب',
@@ -1110,7 +1154,7 @@ async function run() {
 
     // Staff creates two resources via the same shapes the admin flow writes:
     // one VISIBLE, one HIDDEN (visibility toggle / soft archive).
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-visible-1').set({
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-visible-1').set({
       lecture_id: 'lec-student-vis',
       title: 'الفيديو المرئي',
       resource_type: 'video',
@@ -1124,7 +1168,7 @@ async function run() {
       visibility: true,
       is_deleted: false,
     }));
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-hidden-1').set({
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-hidden-1').set({
       lecture_id: 'lec-student-vis',
       title: 'مخفي عن الطلاب',
       resource_type: 'pdf',
@@ -1232,7 +1276,7 @@ async function run() {
     const unsubscribedStudentStorage = testEnv
       .authenticatedContext('student-unsubscribed', {role: 'student', approved: true})
       .storage();
-    await assertSucceeds(teacherStorage
+    await assertSucceeds(doctorStorage
       .ref('lecture_resources/lec-student-vis/res-visible-1/thumb_001.jpg')
       .put(Buffer.from('jpeg-data'), {contentType: 'image/jpeg'}));
     await assertSucceeds(contentAdminStorage
@@ -1241,10 +1285,10 @@ async function run() {
     // Type gating: video files are NEVER stored in Firebase Storage
     // (11 Assets §7.2 — Bunny CDN only), so video/mp4 uploads fail even
     // for staff, while octet-stream generic attachments pass validAttachment.
-    await assertFails(teacherStorage
+    await assertFails(doctorStorage
       .ref('lecture_resources/lec-student-vis/res-x/movie.mp4')
       .put(Buffer.from('mp4-data'), {contentType: 'video/mp4'}));
-    await assertSucceeds(teacherStorage
+    await assertSucceeds(doctorStorage
       .ref('lecture_resources/lec-student-vis/res-x/raw.bin')
       .put(Buffer.from('bin-data'), {contentType: 'application/octet-stream'}));
     await assertFails(unsubscribedStudentStorage
@@ -1256,16 +1300,16 @@ async function run() {
     // guest_enabled / guest_preview_minutes). The existing staff update
     // path must accept them; students must still be unable to write ANY
     // lecture field, including the new ones.
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-student-vis')
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-student-vis')
       .update({guest_enabled: true, guest_preview_minutes: 5}));
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-student-vis')
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-student-vis')
       .update({guest_enabled: false, guest_preview_minutes: null}));
     await assertFails(studentDb.collection('lectures').doc('lec-student-vis')
       .update({guest_enabled: true}));
     await assertFails(unsubscribedStudent.collection('lectures').doc('lec-student-vis')
       .set({guest_enabled: true, title: 'forged'}));
     // Students can never READ a draft even when it is guest-preview enabled.
-    await assertSucceeds(teacherDb3.collection('lectures').doc('lec-guest-draft').set({
+    await assertSucceeds(doctorDb3.collection('lectures').doc('lec-guest-draft').set({
       subject_id: 'subject-1',
       section_id: 'sec-custom',
       title: 'مسودة مجانية',
@@ -1282,12 +1326,12 @@ async function run() {
     // Part B: archived lectures stay invisible to students; staff keep
     // full read access for the Archive screen.
     await assertFails(studentDb.collection('lectures').doc('archived').get());
-    await assertSucceeds(teacherDb3.collection('lectures').doc('archived').get());
+    await assertSucceeds(doctorDb3.collection('lectures').doc('archived').get());
     // Restoring = flipping is_deleted/status — an UPDATE, never a hard
     // delete; hard deletes remain denied at the boundary.
-    await assertSucceeds(teacherDb3.collection('lectures').doc('archived')
+    await assertSucceeds(doctorDb3.collection('lectures').doc('archived')
       .update({is_deleted: false, status: 'draft', deleted_at: null}));
-    await assertFails(teacherDb3.collection('lectures').doc('archived').delete());
+    await assertFails(doctorDb3.collection('lectures').doc('archived').delete());
 
     // Part A §15: storage_provider rides on lecture_resources documents —
     // staff may write it, students may write nothing at all.
@@ -1302,29 +1346,30 @@ async function run() {
         is_deleted: false,
       });
     });
-    await assertSucceeds(teacherDb3.collection('lecture_resources').doc('res-bunny-pdf')
+    await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-bunny-pdf')
       .update({storage_provider: 'firebase'}));
     await assertFails(studentDb.collection('lecture_resources').doc('res-bunny-pdf')
       .update({storage_provider: 'bunny'}));
 
     // Part A §15 / storage.rules: image ATTACHMENTS (jpg/png) are approved
-    // under the same lecture_resources prefix, capped at 5MB like images;
-    // video files stay banned from Firebase Storage entirely.
+    // under the same lecture_resources prefix, capped at 50MB like other
+    // non-video attachments (Project Owner decision); video files stay
+    // banned from Firebase Storage entirely.
     await assertSucceeds(contentAdminStorage
       .ref('lecture_resources/lec-student-vis/res-img-1/diagram.jpg')
       .put(Buffer.from('jpeg-data'), {contentType: 'image/jpeg'}));
-    await assertSucceeds(teacherStorage
+    await assertSucceeds(doctorStorage
       .ref('lecture_resources/lec-student-vis/res-img-2/photo.png')
       .put(Buffer.from('png-data'), {contentType: 'image/png'}));
-    await assertFails(teacherStorage
+    await assertFails(doctorStorage
       .ref('lecture_resources/lec-student-vis/res-big/img.jpg')
-      .put(Buffer.alloc(5 * 1024 * 1024 + 1), {contentType: 'image/jpeg'}));
+      .put(Buffer.alloc(50 * 1024 * 1024 + 1), {contentType: 'image/jpeg'}));
 
-    // Part E: system_settings.default_storage_provider is Teacher-readable,
+    // Part E: system_settings.default_storage_provider is Doctor-readable,
     // student-denied, and client-write-denied for EVERYONE (the only write
     // path is the audited setDefaultStorageProvider callable).
     await assertSucceeds(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('system_settings').doc('settings-main').get(),
     );
     await assertFails(studentDb.collection('system_settings').doc('settings-main').get());
@@ -1332,9 +1377,33 @@ async function run() {
       .collection('system_settings').doc('settings-main')
       .set({default_storage_provider: 'bunny'}));
     await assertFails(
-      dbFor('teacher-owner', {role: 'teacher', approved: true})
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
         .collection('system_settings').doc('settings-main')
         .set({default_storage_provider: 'bunny'}),
+    );
+
+    // Role migration (ADR-005): `doctor` is the Platform Owner claim.
+    // A stale `teacher` claim MUST NOT grant owner access anywhere —
+    // no permanent `teacher OR doctor` compatibility exists in the rules.
+    await assertSucceeds(
+      dbFor('doctor-owner', {role: 'doctor', approved: true})
+        .collection('admin_permissions').get(),
+    );
+    await assertFails(
+      dbFor('legacy-teacher', {role: 'teacher', approved: true})
+        .collection('admin_permissions').get(),
+    );
+    await assertFails(
+      dbFor('legacy-teacher', {role: 'teacher', approved: true})
+        .collection('system_settings').doc('settings-main').get(),
+    );
+    await assertFails(
+      dbFor('legacy-teacher', {role: 'teacher', approved: true})
+        .collection('custom_groups').get(),
+    );
+    await assertFails(
+      dbFor('legacy-teacher', {role: 'teacher', approved: true})
+        .collection('platform_features').get(),
     );
 
     // ---- Storage-delivery completion (audit Fix 1 + Fix 2) -------------
@@ -1392,7 +1461,7 @@ async function run() {
     for (const docId of ['res-attach-bunny', 'res-attach-fb', 'res-thumb-bunny', 'res-thumb-fb']) {
       await assertFails(studentDb.collection('lecture_resources').doc(docId).get());
       await assertFails(unsubscribedStudent.collection('lecture_resources').doc(docId).get());
-      await assertSucceeds(teacherDb3.collection('lecture_resources').doc(docId).get());
+      await assertSucceeds(doctorDb3.collection('lecture_resources').doc(docId).get());
     }
     // Direct byte reads of attachment/thumbnail objects stay DENIED for
     // subscribed students, unsubscribed students and staff alike — the
@@ -1413,8 +1482,8 @@ async function run() {
       subscribedStudentStorage.ref(attachPath),
       unsubscribedStudentStorage.ref(thumbPath),
       unsubscribedStudentStorage.ref(attachPath),
-      teacherStorage.ref(thumbPath),
-      teacherStorage.ref(attachPath),
+      doctorStorage.ref(thumbPath),
+      doctorStorage.ref(attachPath),
     ]) {
       await assertFails(ref.getDownloadURL());
     }
@@ -1438,7 +1507,7 @@ async function run() {
     const windowDoc = (db) => db.collection('video_watch_windows').doc('student-safe');
     await assertFails(windowDoc(studentDb).get());
     await assertFails(windowDoc(dbFor('student-safe', {role: 'student', approved: true})).get());
-    await assertFails(windowDoc(teacherDb3).get());
+    await assertFails(windowDoc(doctorDb3).get());
     await assertFails(testEnv.unauthenticatedContext().firestore()
       .collection('video_watch_windows').doc('student-safe').get());
     await assertFails(windowDoc(studentDb).update({window_expires_at: new Date()}));

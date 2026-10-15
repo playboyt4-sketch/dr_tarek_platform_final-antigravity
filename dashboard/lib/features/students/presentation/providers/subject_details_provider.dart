@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -107,25 +109,232 @@ class SubjectLecture {
   final int displayOrder;
   final String status;
 
+  /// Scheduled publish time (`publish_date`); null when unpublished-now
+  /// or a plain draft. Lectures with `status == 'draft'` stay hidden
+  /// from students until published (or auto-published by the
+  /// `autoPublishDueLectures` scheduler once this passes).
+  final DateTime? publishDate;
+
   const SubjectLecture({
     required this.id,
     required this.title,
     required this.displayOrder,
     required this.status,
+    this.publishDate,
   });
+
+  /// True when visible to students in the mobile app (the student query
+  /// requires `status == 'published'`).
+  bool get isPublished => status == 'published';
 
   factory SubjectLecture.fromDoc(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     final Map<String, dynamic> data = doc.data();
     final String title = (data['title'] as String?)?.trim() ?? '';
+    final Object? rawDate = data['publish_date'];
     return SubjectLecture(
       id: doc.id,
       title: title.isEmpty ? doc.id : title,
       displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
       status: (data['status'] as String?) ?? 'draft',
+      publishDate: rawDate is Timestamp ? rawDate.toDate() : null,
     );
   }
+}
+
+/// One persisted `lecture_resources` row, read for the lecture Edit form.
+class LectureEditResource {
+  final String id;
+  final String type;
+  final String title;
+  final int displayOrder;
+  final String? bunnyVideoId;
+  final String? externalUrl;
+  final String? storagePath;
+
+  /// Strict `is_visible == true` mirror of the student listing query: only
+  /// used for first-video candidacy (the row itself still shows in the
+  /// form regardless).
+  final bool isVisible;
+
+  const LectureEditResource({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.displayOrder,
+    this.bunnyVideoId,
+    this.externalUrl,
+    this.storagePath,
+    required this.isVisible,
+  });
+}
+
+/// Minimal projection of a `lecture_resources` row for canonical
+/// first-video selection (Phase 2). The writer maps persisted + staged
+/// form state into these (including visibility/deletion, which the edit
+/// model above does not carry) and passes the list to
+/// [selectFirstVideoCandidate]. Pure data — no Firestore, no security
+/// semantics: the backend authorization stays authoritative.
+class FirstVideoCandidate {
+  final String id;
+  final String type;
+  final String title;
+  final bool isVisible;
+  final bool isDeleted;
+  final String? bunnyVideoId;
+  final int displayOrder;
+
+  const FirstVideoCandidate({
+    required this.id,
+    required this.type,
+    this.title = '',
+    required this.isVisible,
+    required this.isDeleted,
+    this.bunnyVideoId,
+    required this.displayOrder,
+  });
+}
+
+/// Canonical first-video selector shared by the Dashboard writer sync
+/// (Phase 3 calls this after every resource mutation).
+///
+/// Eligibility: `video` + visible + not soft-deleted + non-empty Bunny id.
+/// Winner: lowest `displayOrder`; document id ascending breaks ties —
+/// the same definition as backend listing order and client
+/// `firstPlayableVideo`. Returns null when nothing is eligible (the
+/// lecture's denormalized `first_video` must then be cleared to null).
+/// Pure and side-effect-free.
+FirstVideoCandidate? selectFirstVideoCandidate(
+  Iterable<FirstVideoCandidate> candidates,
+) {
+  FirstVideoCandidate? winner;
+  for (final candidate in candidates) {
+    if (candidate.type != 'video') continue;
+    if (!candidate.isVisible) continue;
+    if (candidate.isDeleted) continue;
+    final bunnyVideoId = candidate.bunnyVideoId;
+    if (bunnyVideoId == null || bunnyVideoId.trim().isEmpty) continue;
+    if (winner == null ||
+        candidate.displayOrder < winner.displayOrder ||
+        (candidate.displayOrder == winner.displayOrder &&
+            candidate.id.compareTo(winner.id) < 0)) {
+      winner = candidate;
+    }
+  }
+  return winner;
+}
+
+/// Serializes a selected winner into the denormalized `first_video` map
+/// stored on `lectures/{lectureId}`. Identity + display metadata only:
+/// never signed URLs, secrets, storage URLs, or authorization verdicts.
+/// Pure and side-effect-free.
+Map<String, Object?> firstVideoFields(FirstVideoCandidate winner) {
+  return <String, Object?>{
+    'resource_id': winner.id,
+    'bunny_video_id': winner.bunnyVideoId!.trim(),
+    'title': winner.title,
+    'display_order': winner.displayOrder,
+    // Reserved poster keys (raw paths only, once thumbnail content exists).
+    'thumbnail_path': null,
+    'thumbnail_storage_provider': null,
+  };
+}
+
+/// Pure merge of persisted + staged Edit-form state into first-video
+/// candidates for one lecture. Applies in-place edits (null Bunny id =
+/// keep the stored value, mirroring [UpdatedLectureResource]), drops
+/// [deletedIds], and appends [createdById] rows; staged rows are visible
+/// exactly when [createdVisible]. Used by [SubjectDetailsController]
+/// before committing its batch — no Firestore here.
+List<FirstVideoCandidate> collectFirstVideoCandidates({
+  required List<LectureEditResource> persisted,
+  required Map<String, UpdatedLectureResource> updatedById,
+  required Map<String, NewLectureResource> createdById,
+  required bool createdVisible,
+  required Set<String> deletedIds,
+}) {
+  final List<FirstVideoCandidate> candidates = <FirstVideoCandidate>[];
+  for (final LectureEditResource stored in persisted) {
+    if (deletedIds.contains(stored.id)) continue;
+    final UpdatedLectureResource? overlay = updatedById[stored.id];
+    candidates.add(FirstVideoCandidate(
+      id: stored.id,
+      type: stored.type,
+      title: overlay?.title ?? stored.title,
+      isVisible: stored.isVisible,
+      isDeleted: false,
+      bunnyVideoId: overlay?.bunnyVideoId ?? stored.bunnyVideoId,
+      displayOrder: overlay?.displayOrder ?? stored.displayOrder,
+    ));
+  }
+  createdById.forEach((String id, NewLectureResource created) {
+    candidates.add(FirstVideoCandidate(
+      id: id,
+      type: created.type,
+      title: created.title,
+      isVisible: createdVisible,
+      isDeleted: false,
+      bunnyVideoId: created.bunnyVideoId,
+      displayOrder: created.displayOrder,
+    ));
+  });
+  return candidates;
+}
+
+/// Full editable snapshot of one lecture for the Edit form (same page
+/// as Add): lecture fields + persisted resources + per-student access
+/// overrides. Missing grant = no override.
+class LectureEditData {
+  final String lectureId;
+  final String title;
+  final int displayOrder;
+  final String status;
+  final DateTime? publishDate;
+  final bool guestEnabled;
+  final int? previewMinutes;
+  final List<LectureEditResource> resources;
+  final Map<String, bool> accessOverrides;
+
+  const LectureEditData({
+    required this.lectureId,
+    required this.title,
+    required this.displayOrder,
+    required this.status,
+    this.publishDate,
+    required this.guestEnabled,
+    this.previewMinutes,
+    required this.resources,
+    required this.accessOverrides,
+  });
+}
+
+/// One in-place update for an already-persisted `lecture_resources` row.
+/// Only the fields the doctor actually changed are sent: title/order are
+/// always written, while video id / external URL / replacement file bytes
+/// are applied only when non-null (null = keep the stored value).
+/// Wire values (`video`/`pdf`/`attachment`/`external_link`) match the
+/// approved `lecture_resources` format.
+class UpdatedLectureResource {
+  final String id;
+  final String title;
+  final int displayOrder;
+  final String? bunnyVideoId;
+  final String? externalUrl;
+  final Uint8List? fileBytes;
+  final String? fileName;
+  final String? contentType;
+
+  const UpdatedLectureResource({
+    required this.id,
+    required this.title,
+    required this.displayOrder,
+    this.bunnyVideoId,
+    this.externalUrl,
+    this.fileBytes,
+    this.fileName,
+    this.contentType,
+  });
 }
 
 /// One staged resource payload for lecture creation. File-backed types
@@ -389,8 +598,24 @@ final sectionLecturesProvider =
 /// status) and the existing dashboard subject flags.
 class SubjectDetailsController {
   final FirebaseFirestore _db;
+  final FirebaseFunctions? _functions;
 
-  const SubjectDetailsController(this._db);
+  /// [_functions] is optional so Firestore-only unit tests can keep
+  /// building `SubjectDetailsController(db)` with a fake database;
+  /// only [deleteSubject] needs Functions and falls back to the
+  /// default instance when none was injected.
+  const SubjectDetailsController(this._db, [this._functions]);
+
+  /// Resolves the audit actor: explicit caller override wins, otherwise
+  /// the signed-in dashboard uid, otherwise the legacy fallback.
+  static String resolveActorId(String? actorId) {
+    if (actorId != null && actorId.trim().isNotEmpty) return actorId;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? 'dashboard';
+    } catch (_) {
+      return 'dashboard';
+    }
+  }
 
   Future<void> setSubjectVisible(String subjectId, bool visible) {
     return _db.collection('subjects').doc(subjectId).update(
@@ -409,7 +634,7 @@ class SubjectDetailsController {
   /// fields (title, grade, cover). `is_visible` and every other subject
   /// document field are left untouched; lectures/sections/resources are
   /// separate documents and are never affected. Writes go through
-  /// Security Rules staff checks (teacher / content-management
+  /// Security Rules staff checks (doctor / content-management
   /// delegation) — no permission logic lives in widgets.
   Future<void> updateSubject(
     String subjectId, {
@@ -426,13 +651,15 @@ class SubjectDetailsController {
     return _db.collection('subjects').doc(subjectId).update(fields);
   }
 
-  Future<void> deleteSubject(String subjectId) {
-    return _db.collection('subjects').doc(subjectId).update(
-      <String, Object?>{
-        'is_deleted': true,
-        'is_visible': false,
-        'updated_at': FieldValue.serverTimestamp(),
-      },
+  /// Soft-deletes a subject through the approved `deleteSubject` Cloud
+  /// Function. A direct client `is_deleted: true` update is denied by
+  /// `firestore.rules` (subjects updates must keep `is_deleted == false`),
+  /// so the audited server path is the only write route.
+  Future<void> deleteSubject(String subjectId) async {
+    final FirebaseFunctions functions =
+        _functions ?? FirebaseFunctions.instance;
+    await functions.httpsCallable('deleteSubject').call(
+      <String, dynamic>{'subjectId': subjectId},
     );
   }
 
@@ -441,14 +668,17 @@ class SubjectDetailsController {
       <String, Object?>{
         'is_deleted': true,
         'status': 'archived',
+        // The archived lecture leaves student listings; its denormalized
+        // pointer must not survive it.
+        'first_video': null,
         'updated_at': FieldValue.serverTimestamp(),
       },
     );
   }
 
   /// Next lecture display order across the tab-visible sections of one
-  /// subject (max + 1, minimum 1). The form prefills this and the
-  /// teacher may edit it.
+  /// subject (max + 1, minimum 0 — numbering starts at 00). The form
+  /// prefills this and the doctor may edit it.
   Future<int> nextLectureOrder({
     required String subjectId,
     required SubjectContentTab tab,
@@ -458,7 +688,7 @@ class SubjectDetailsController {
         .where('subject_id', isEqualTo: subjectId)
         .where('is_deleted', isEqualTo: false)
         .get();
-    int maxOrder = 0;
+    int maxOrder = -1;
     for (final QueryDocumentSnapshot<Map<String, dynamic>> section
         in sectionsSnap.docs) {
       if (!sectionVisibleInTab(
@@ -509,9 +739,11 @@ class SubjectDetailsController {
   /// target section, writes the lecture document, uploads file-backed
   /// resources, then persists resource metadata + access grants in one
   /// batch. Field names mirror the approved mobile content-authoring
-  /// wire format (`adminResourceFields`); Guest preview maps to the
-  /// existing `public_free_enabled` / `public_free_preview_minutes`
-  /// fields (legacy names preserved — no migration performed here).
+  /// wire format (`adminResourceFields`); Guest preview is written to
+  /// the canonical `guest_enabled` / `guest_preview_minutes` fields
+  /// alongside the legacy `public_free_*` aliases (both kept in sync).
+  /// Every new `lecture_resources` row carries `subject_id` for the
+  /// `hasSubjectAccess` Firestore gate.
   ///
   /// Publication: [publishNow] writes `published` immediately;
   /// otherwise the lecture stays `draft` with [publishDateTime] recorded
@@ -527,8 +759,9 @@ class SubjectDetailsController {
     int? previewMinutes,
     required List<NewLectureResource> resources,
     required Map<String, bool> accessByStudent,
-    String actorId = 'dashboard',
+    String? actorId,
   }) async {
+    final String resolvedActor = resolveActorId(actorId);
     final String sectionId =
         await _resolveTabSection(subjectId: subjectId, tab: tab);
     final DocumentReference<Map<String, dynamic>> lectureRef =
@@ -546,15 +779,20 @@ class SubjectDetailsController {
       'is_deleted': false,
       'public_free_enabled': guestEnabled,
       'public_free_preview_minutes': guestEnabled ? previewMinutes : null,
+      'guest_enabled': guestEnabled,
+      'guest_preview_minutes': guestEnabled ? previewMinutes : null,
       'created_at': FieldValue.serverTimestamp(),
-      'created_by': actorId,
+      'created_by': resolvedActor,
       'updated_at': FieldValue.serverTimestamp(),
-      'updated_by': actorId,
+      'updated_by': resolvedActor,
     });
 
+    final Map<String, NewLectureResource> stagedById =
+        <String, NewLectureResource>{};
     for (final NewLectureResource resource in resources) {
       final DocumentReference<Map<String, dynamic>> resourceRef =
           _db.collection('lecture_resources').doc();
+      stagedById[resourceRef.id] = resource;
       String? storagePath;
       if (resource.fileBytes != null) {
         storagePath = await uploadLectureFile(
@@ -567,6 +805,7 @@ class SubjectDetailsController {
       }
       batch.set(resourceRef, <String, Object?>{
         'lecture_id': lectureRef.id,
+        'subject_id': subjectId,
         'resource_type': resource.type,
         'title': resource.title,
         'display_order': resource.displayOrder,
@@ -583,9 +822,9 @@ class SubjectDetailsController {
         'visibility': publishNow,
         'is_deleted': false,
         'created_at': FieldValue.serverTimestamp(),
-        'created_by': actorId,
+        'created_by': resolvedActor,
         'updated_at': FieldValue.serverTimestamp(),
-        'updated_by': actorId,
+        'updated_by': resolvedActor,
       });
     }
 
@@ -602,14 +841,313 @@ class SubjectDetailsController {
           'deleted_at': null,
           'deleted_by': null,
           'created_at': FieldValue.serverTimestamp(),
-          'created_by': actorId,
+          'created_by': resolvedActor,
           'updated_at': FieldValue.serverTimestamp(),
-          'updated_by': actorId,
+          'updated_by': resolvedActor,
+        },
+      );
+    }
+    // First-video sync (same batch): staged rows are visible exactly when
+    // the lecture publishes now; ids were collected above. Null when
+    // nothing staged is eligible (e.g. draft lectures).
+    final FirstVideoCandidate? stagedWinner = selectFirstVideoCandidate(
+      collectFirstVideoCandidates(
+        persisted: const <LectureEditResource>[],
+        updatedById: const <String, UpdatedLectureResource>{},
+        createdById: stagedById,
+        createdVisible: publishNow,
+        deletedIds: const <String>{},
+      ),
+    );
+    batch.update(lectureRef, <String, Object?>{
+      'first_video':
+          stagedWinner == null ? null : firstVideoFields(stagedWinner),
+    });
+    await batch.commit();
+    return lectureRef.id;
+  }
+
+  /// Editable snapshot of one lecture for the Edit form (the same page
+  /// as Add Lecture): lecture fields + non-deleted resources + stored
+  /// per-student access overrides. Throws [DecisionFailure] when the
+  /// lecture document is missing.
+  Future<LectureEditData> getLectureForEdit(String lectureId) async {
+    final DocumentSnapshot<Map<String, dynamic>> lectureSnap =
+        await _db.collection('lectures').doc(lectureId).get();
+    final Map<String, dynamic>? lecture = lectureSnap.data();
+    if (lecture == null) {
+      throw const DecisionFailure('Lecture not found.');
+    }
+    final QuerySnapshot<Map<String, dynamic>> resourcesSnap = await _db
+        .collection('lecture_resources')
+        .where('lecture_id', isEqualTo: lectureId)
+        .get();
+    final List<LectureEditResource> resources = <LectureEditResource>[];
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
+        in resourcesSnap.docs) {
+      final Map<String, dynamic> data = doc.data();
+      if (data['is_deleted'] == true) continue;
+      resources.add(LectureEditResource(
+        id: doc.id,
+        type: (data['resource_type'] as String?) ?? 'video',
+        title: ((data['title'] as String?) ?? '').trim(),
+        displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
+        bunnyVideoId: data['bunny_video_id'] as String?,
+        externalUrl: data['resource_url'] as String?,
+        storagePath: data['storage_path'] as String?,
+        isVisible: data['is_visible'] == true,
+      ));
+    }
+    resources.sort((LectureEditResource a, LectureEditResource b) =>
+        a.displayOrder.compareTo(b.displayOrder));
+
+    final QuerySnapshot<Map<String, dynamic>> grantsSnap = await _db
+        .collection('lecture_access_grants')
+        .where('lecture_id', isEqualTo: lectureId)
+        .get();
+    final Map<String, bool> overrides = <String, bool>{};
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
+        in grantsSnap.docs) {
+      final Map<String, dynamic> data = doc.data();
+      if (data['is_deleted'] == true) continue;
+      final String? studentId = data['student_id'] as String?;
+      final Object? allowed = data['allowed'];
+      if (studentId != null &&
+          studentId.isNotEmpty &&
+          allowed is bool) {
+        overrides[studentId] = allowed;
+      }
+    }
+
+    final Object? rawDate = lecture['publish_date'];
+    return LectureEditData(
+      lectureId: lectureId,
+      title: ((lecture['title'] as String?) ?? '').trim(),
+      displayOrder: (lecture['display_order'] as num?)?.toInt() ?? 0,
+      status: (lecture['status'] as String?) ?? 'draft',
+      publishDate: rawDate is Timestamp ? rawDate.toDate() : null,
+      guestEnabled:
+          lecture['guest_enabled'] == true || lecture['public_free_enabled'] == true,
+      previewMinutes:
+          (lecture['guest_preview_minutes'] as num?)?.toInt() ??
+              (lecture['public_free_preview_minutes'] as num?)?.toInt(),
+      resources: resources,
+      accessOverrides: overrides,
+    );
+  }
+
+  /// Lecture edit commit for the Edit form (same page as Add): updates
+  /// ONLY the form-represented lecture fields, applies in-place edits of
+  /// persisted rows from [updatedResources] (title, display order, Bunny
+  /// video id, external URL, or a replacement file), appends
+  /// [newResources] as fresh `lecture_resources` rows (pass ids in
+  /// [deleteResourceIds] to soft-delete removed rows), and upserts
+  /// [accessByStudent] grants by deterministic id.
+  ///
+  /// Publication semantics mirror creation: [publishNow] writes
+  /// `published` immediately; a [publishDateTime] writes a scheduled
+  /// `draft` (server auto-publishes on time); otherwise — when
+  /// [preserveStatus] is true (plain Save in edit mode) — the stored
+  /// status is left untouched, and any stored `publish_date` is kept
+  /// unless [clearPublishDate] is set (Save Draft clears it).
+  Future<void> updateLectureFull({
+    required String lectureId,
+    required String title,
+    required int displayOrder,
+    required bool publishNow,
+    DateTime? publishDateTime,
+    bool preserveStatus = false,
+    bool clearPublishDate = false,
+    required bool guestEnabled,
+    int? previewMinutes,
+    required List<NewLectureResource> newResources,
+    required List<String> deleteResourceIds,
+    List<UpdatedLectureResource> updatedResources = const <UpdatedLectureResource>[],
+    required Map<String, bool> accessByStudent,
+    String? actorId,
+  }) async {
+    final String resolvedActor = resolveActorId(actorId);
+    // The lecture's subject scopes every new resource row for the
+    // `hasSubjectAccess` Firestore gate; read once, reuse below.
+    final DocumentSnapshot<Map<String, dynamic>> lectureSnap =
+        await _db.collection('lectures').doc(lectureId).get();
+    final String? lectureSubjectId =
+        (lectureSnap.data()?['subject_id'] as String?)?.trim();
+    final WriteBatch batch = _db.batch();
+    final Map<String, Object?> fields = <String, Object?>{
+      'title': title,
+      'display_order': displayOrder,
+      'public_free_enabled': guestEnabled,
+      'public_free_preview_minutes': guestEnabled ? previewMinutes : null,
+      'guest_enabled': guestEnabled,
+      'guest_preview_minutes': guestEnabled ? previewMinutes : null,
+      'updated_at': FieldValue.serverTimestamp(),
+      'updated_by': resolvedActor,
+    };
+    if (publishNow) {
+      fields['status'] = 'published';
+      fields['publish_date'] = FieldValue.serverTimestamp();
+    } else if (publishDateTime != null) {
+      fields['status'] = 'draft';
+      fields['publish_date'] = Timestamp.fromDate(publishDateTime);
+    } else if (!preserveStatus) {
+      fields['status'] = 'draft';
+      if (clearPublishDate) fields['publish_date'] = null;
+    } else if (clearPublishDate) {
+      fields['publish_date'] = null;
+    }
+    batch.update(_db.collection('lectures').doc(lectureId), fields);
+
+    final Map<String, NewLectureResource> stagedById =
+        <String, NewLectureResource>{};
+    for (final NewLectureResource resource in newResources) {
+      final DocumentReference<Map<String, dynamic>> resourceRef =
+          _db.collection('lecture_resources').doc();
+      stagedById[resourceRef.id] = resource;
+      String? storagePath;
+      if (resource.fileBytes != null) {
+        storagePath = await uploadLectureFile(
+          bytes: resource.fileBytes!,
+          fileName: resource.fileName ?? 'file',
+          contentType: resource.contentType ?? 'application/octet-stream',
+          lectureId: lectureId,
+          resourceId: resourceRef.id,
+        );
+      }
+      batch.set(resourceRef, <String, Object?>{
+        'lecture_id': lectureId,
+        'subject_id': lectureSubjectId,
+        'resource_type': resource.type,
+        'title': resource.title,
+        'display_order': resource.displayOrder,
+        'bunny_video_id': resource.bunnyVideoId,
+        'storage_path': storagePath,
+        'storage_provider':
+            resource.fileBytes != null ? 'firebase' : null,
+        'resource_url': resource.type == 'external_link'
+            ? (resource.externalUrl ?? '')
+            : '',
+        'thumbnail': null,
+        'duration': null,
+        'is_visible': true,
+        'visibility': true,
+        'is_deleted': false,
+        'created_at': FieldValue.serverTimestamp(),
+        'created_by': resolvedActor,
+        'updated_at': FieldValue.serverTimestamp(),
+        'updated_by': resolvedActor,
+      });
+    }
+
+    for (final UpdatedLectureResource resource in updatedResources) {
+      String? storagePath;
+      if (resource.fileBytes != null) {
+        storagePath = await uploadLectureFile(
+          bytes: resource.fileBytes!,
+          fileName: resource.fileName ?? 'file',
+          contentType: resource.contentType ?? 'application/octet-stream',
+          lectureId: lectureId,
+          resourceId: resource.id,
+        );
+      }
+      final Map<String, Object?> updateFields = <String, Object?>{
+        'title': resource.title,
+        'display_order': resource.displayOrder,
+        'updated_at': FieldValue.serverTimestamp(),
+        'updated_by': resolvedActor,
+      };
+      // Null = keep the stored value; non-null = doctor edited it.
+      if (resource.bunnyVideoId != null) {
+        updateFields['bunny_video_id'] = resource.bunnyVideoId;
+      }
+      if (resource.externalUrl != null) {
+        updateFields['resource_url'] = resource.externalUrl;
+      }
+      if (storagePath != null) {
+        updateFields['storage_path'] = storagePath;
+        updateFields['storage_provider'] = 'firebase';
+      }
+      batch.update(
+        _db.collection('lecture_resources').doc(resource.id),
+        updateFields,
+      );
+    }
+
+    for (final String resourceId in deleteResourceIds) {
+      batch.update(
+        _db.collection('lecture_resources').doc(resourceId),
+        <String, Object?>{
+          'is_deleted': true,
+          'updated_at': FieldValue.serverTimestamp(),
+          'updated_by': resolvedActor,
+        },
+      );
+    }
+
+    // First-video sync (same batch): merge persisted rows with the staged
+    // edits/deletes/creates above, recompute the canonical winner, and
+    // store (or clear to null) `first_video` on the lecture. One extra
+    // read of this lecture's rows; the commit stays a single batch.
+    final QuerySnapshot<Map<String, dynamic>> persistedSnap = await _db
+        .collection('lecture_resources')
+        .where('lecture_id', isEqualTo: lectureId)
+        .get();
+    final List<LectureEditResource> persistedForSync = <LectureEditResource>[];
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
+        in persistedSnap.docs) {
+      final Map<String, dynamic> data = doc.data();
+      if (data['is_deleted'] == true) continue;
+      persistedForSync.add(LectureEditResource(
+        id: doc.id,
+        type: (data['resource_type'] as String?) ?? 'video',
+        title: ((data['title'] as String?) ?? '').trim(),
+        displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
+        bunnyVideoId: data['bunny_video_id'] as String?,
+        externalUrl: data['resource_url'] as String?,
+        storagePath: data['storage_path'] as String?,
+        isVisible: data['is_visible'] == true,
+      ));
+    }
+    final FirstVideoCandidate? mergedWinner = selectFirstVideoCandidate(
+      collectFirstVideoCandidates(
+        persisted: persistedForSync,
+        updatedById: <String, UpdatedLectureResource>{
+          for (final UpdatedLectureResource updated in updatedResources)
+            updated.id: updated,
+        },
+        createdById: stagedById,
+        createdVisible: true,
+        deletedIds: deleteResourceIds.toSet(),
+      ),
+    );
+    batch.update(
+      _db.collection('lectures').doc(lectureId),
+      <String, Object?>{
+        'first_video':
+            mergedWinner == null ? null : firstVideoFields(mergedWinner),
+      },
+    );
+
+    for (final MapEntry<String, bool> entry in accessByStudent.entries) {
+      batch.set(
+        _db
+            .collection('lecture_access_grants')
+            .doc('${lectureId}_${entry.key}'),
+        <String, Object?>{
+          'lecture_id': lectureId,
+          'student_id': entry.key,
+          'allowed': entry.value,
+          'is_deleted': false,
+          'deleted_at': null,
+          'deleted_by': null,
+          'created_at': FieldValue.serverTimestamp(),
+          'created_by': resolvedActor,
+          'updated_at': FieldValue.serverTimestamp(),
+          'updated_by': resolvedActor,
         },
       );
     }
     await batch.commit();
-    return lectureRef.id;
   }
 
   /// Target section for a new lecture: first tab-visible section by
@@ -624,7 +1162,9 @@ class SubjectDetailsController {
   Future<String> _resolveTabSection({
     required String subjectId,
     required SubjectContentTab tab,
+    String? actorId,
   }) async {
+    final String resolvedActor = resolveActorId(actorId);
     final QuerySnapshot<Map<String, dynamic>> sectionsSnap = await _db
         .collection('subject_sections')
         .where('subject_id', isEqualTo: subjectId)
@@ -665,9 +1205,9 @@ class SubjectDetailsController {
       'is_visible': true,
       'is_deleted': false,
       'created_at': FieldValue.serverTimestamp(),
-      'created_by': 'dashboard',
+      'created_by': resolvedActor,
       'updated_at': FieldValue.serverTimestamp(),
-      'updated_by': 'dashboard',
+      'updated_by': resolvedActor,
     });
     return ref.id;
   }
@@ -675,5 +1215,8 @@ class SubjectDetailsController {
 
 final subjectDetailsControllerProvider =
     Provider<SubjectDetailsController>((ref) {
-  return SubjectDetailsController(ref.watch(firebaseFirestoreProvider));
+  return SubjectDetailsController(
+    ref.watch(firebaseFirestoreProvider),
+    ref.watch(firebaseFunctionsProvider),
+  );
 });

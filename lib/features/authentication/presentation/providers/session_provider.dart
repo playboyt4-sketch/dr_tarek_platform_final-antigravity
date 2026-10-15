@@ -27,13 +27,13 @@ class SessionController extends AsyncNotifier<SessionState> {
 
   Future<SessionState> _bootstrap() async {
     final claims = await ref.watch(customClaimsProvider.future);
-    
+
     if (claims == null) {
       return const SessionUnauthenticated();
     }
 
     final user = await ref.watch(authProvider.future);
-    
+
     if (user == null) {
       return const SessionUnauthenticated();
     }
@@ -43,20 +43,25 @@ class SessionController extends AsyncNotifier<SessionState> {
       return accountState;
     }
 
-    final deviceBindingController = ref.read(deviceBindingProvider.notifier);
-    await deviceBindingController.validateDevice(userId: user.id);
-
-    final deviceState = ref.read(deviceBindingProvider);
-    if (deviceState.hasError) {
-      throw deviceState.error ?? Exception('Device authorization failed.');
-    }
-    if (deviceState.value != true) {
-      return SessionUnauthorizedDevice(user: user);
-    }
-
     final role = user.role.trim().toLowerCase();
-    if (role != 'student' && role != 'admin') {
+    if (role != 'student' && role != 'admin' && role != 'doctor') {
       return SessionRoleBlocked(user: user, role: role);
+    }
+
+    // Device binding is a student-only backend flow: onLoginAttempt rejects
+    // any non-student role (permission-denied), so only students validate
+    // a device here. Staff (admin/doctor) skip straight to authenticated.
+    if (role == 'student') {
+      final deviceBindingController = ref.read(deviceBindingProvider.notifier);
+      await deviceBindingController.validateDevice(userId: user.id);
+
+      final deviceState = ref.read(deviceBindingProvider);
+      if (deviceState.hasError) {
+        throw deviceState.error ?? Exception('Device authorization failed.');
+      }
+      if (deviceState.value != true) {
+        return SessionUnauthorizedDevice(user: user);
+      }
     }
 
     return SessionAuthenticated(user: user, claims: claims);
@@ -96,6 +101,11 @@ SessionState? resolveAccountSessionState({
       : approvalStatus == 'approved';
   if (!isApproved) {
     return SessionPendingApproval(user: user);
+  }
+
+  final role = user.role.trim().toLowerCase();
+  if (role == 'student' && claims['force_password_change'] == true) {
+    return SessionForcePasswordChange(user: user);
   }
 
   return null;

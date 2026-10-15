@@ -50,6 +50,12 @@ final class SessionUnauthorizedDevice extends SessionState {
   const SessionUnauthorizedDevice({required this.user});
 }
 
+final class SessionForcePasswordChange extends SessionState {
+  final AuthUser user;
+
+  const SessionForcePasswordChange({required this.user});
+}
+
 final class SessionError extends SessionState {
   final Object error;
   final StackTrace stackTrace;

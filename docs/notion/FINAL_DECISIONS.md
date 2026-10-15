@@ -6,13 +6,14 @@
 
 # تم الاتفاق عليها في شات مراجعة المعمارية
 
-Version: 2.0
+Version: 2.1
 Status: Approved
-Date: 2026-09-14
-Authority: 00_MASTER_ARCHITECTURE.md Version 2.0 / ADR-004 (highest authoritative source)
+Date: 2026-09-17
+Authority: 00_MASTER_ARCHITECTURE.md Version 2.1 / ADR-004 + ADR-005 (highest authoritative source)
 
 ## Version History
 
+- **2.1** (2026-09-17): Added Section 26 recording approved ADR-005 — Platform Owner role migration (`teacher` → `doctor`). No enforcement change in this document update.
 - **2.0** (2026-09-14): Major update to Subject-Level Device Binding per ADR-004. Rewrote Section 1 to Student + Subject + Device authorization; updated Sections 2, 3, 5, 10, 14 for consistency; added Sections 16–25 (membership per Subject, Guest tier, Max two-devices-plus-single-playback, device identity, claims authority, reset/lost-device, term/freeze, migration, highest-plan rule, separation, supersession). No exact Guest minute values, no DRM durations, no fingerprint algorithm, no database/function/class details added. Sections 4, 6, 7, 8, 9, 11, 12, 13, 15 unchanged.
 - **1.x** (2026-08-04 and addenda §§11–15): prior approved baseline, including the account-level device-binding model now superseded by 2.0.
 
@@ -227,3 +228,12 @@ Authority: 00_MASTER_ARCHITECTURE.md Version 2.0 / ADR-004 (highest authoritativ
 - Account Authentication, Device Registry, Subject-Device Authorization, Subject Subscription, and Active Playback Session are separate concepts and are not treated as one global device-binding concept.
 - The following old decisions are explicitly superseded and must not be used: account-wide device binding; first login permanently binding the whole account; login rejection from unauthorized devices; one global device allowance for the account; one global subscription plan used for device authorization; global device authorization represented by a single current-device pointer; global active-device state as the authorization source; device change as a prerequisite for login; global invalidation of offline content caused by any device change.
 - 00_MASTER_ARCHITECTURE.md Version 2.0 / ADR-004 is the architectural source. Any remaining text in Sections 1–15 that still reads as the old account-level model is to be read as superseded by Sections 16–25; residual wording will be cleaned in owning-document follow-ups, not silently reinterpreted.
+
+## 26. Platform Owner Role Migration — `teacher` → `doctor` (per ADR-005, approved 2026-09-17)
+
+- Target model: `doctor` = Doctor (Platform Owner, full access); `admin` = delegated administrator (unchanged); `student` / `new_student` unchanged. `DR` is a profile badge / presentation indicator only — NOT an authorization role; no `dr` RBAC value is created.
+- One shared management Dashboard architecture (no separate Admin Dashboard): Doctor at web path `/doctor` with full access; Admin at web path `/admin` with delegated permissions. Doctor Dashboard is Web-first; management functionality later surfaces in mobile through the existing management/admin icon, which is retained.
+- Historical records (`actor_role: "teacher"`, `permission_basis: "teacher"`, prior ADR text, frozen change reports) remain historical and are NOT rewritten. New authorization/audit writes use `doctor`.
+- No permanent `teacher OR doctor` dual authorization; the target state is `doctor`.
+- Generic educational wording ("teacher reviews", generic "teachers") and the feature key `chat.doctor_channel` are NOT renamed.
+- Cutover must be coordinated across Rules, Functions, owner Firestore role, Custom Claims, owner re-authentication/session refresh, and Dashboard/mobile clients. Partial migration is unsafe and not prescribed.

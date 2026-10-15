@@ -53,12 +53,24 @@ Future<void> _scrollToEnd(WidgetTester tester) async {
 void main() {
   setUpAll(_loadGardenia);
 
-  test('static brand constants', () {
-    expect(NewStudentWelcomeScreen.backgroundColor, Colors.white);
-    expect(NewStudentWelcomeScreen.primaryBlue, const Color(0xFF1D4ED8));
-    expect(NewStudentWelcomeScreen.brandRed, const Color(0xFFDC2626));
-    expect(NewStudentWelcomeScreen.designBaseWidth, 393.0);
-    expect(NewStudentWelcomeScreen.logoBaseFontSize, 128.0);
+  testWidgets('hero uses sanitized asset, signature uses brand red',
+      (tester) async {
+    await _pumpOnViewport(tester, const Size(393, 852));
+    // The hero filename must not contain a trailing space before the
+    // extension (breaks web-server asset loading).
+    final images = tester.widgetList<Image>(find.byType(Image));
+    final hero = images.firstWhere(
+      (img) =>
+          img.image is AssetImage &&
+          (img.image as AssetImage).assetName.contains('Welcome'),
+    );
+    expect(
+      (hero.image as AssetImage).assetName,
+      'assets/images/New Student - Welcome photo.png',
+    );
+    final sigStyle =
+        tester.widget<Text>(find.text('Tarek el araby')).style!;
+    expect(sigStyle.color, const Color(0xFFDC2626));
   });
 
   const viewports = <String, Size>{

@@ -132,11 +132,13 @@ class _QuickAnnouncementFormState
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Announcement sent.')),
       );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _sending = false;
-        _error = 'Could not send the announcement. Please try again.';
+        _error = e is StateError
+            ? e.message
+            : 'Could not send the announcement. Please try again.';
       });
     }
   }
@@ -237,30 +239,73 @@ class _QuickAnnouncementFormState
   }
 }
 
-/// Persists a broadcast announcement. The doc lands in the `notifications`
-/// collection the student phones already watch (same wire shape as
-/// `AppNotificationModel.toMap`), plus an audience envelope for the
-/// backend fan-out trigger. Returns the new doc id.
-Future<String> publishAnnouncement({
+/// Persists a broadcast announcement as one `notifications` doc PER targeted
+/// student (each carrying its own `user_id`), in WriteBatch chunks of 400.
+///
+/// The `sendPushNotification` trigger requires `user_id` on every doc, so a
+/// single envelope doc without `user_id` would fail delivery. Targets are
+/// resolved from `users` (`role == 'student'`, `approval_status ==
+/// 'approved'), narrowed by [audienceKey]: `all`, `grade_*`, or
+/// `center_only` (center students). Same per-doc wire shape the phones
+/// already watch, plus the audience envelope. Returns the targeted count.
+Future<int> publishAnnouncement({
   required FirebaseFirestore db,
   required String actorId,
   required String audienceKey,
   required String title,
   required String body,
 }) async {
-  final DocumentReference<Map<String, dynamic>> ref =
-      db.collection('notifications').doc();
-  await ref.set(<String, dynamic>{
-    'title': title,
-    'body': body,
-    'type': 'Announcements',
-    'notification_type': 'Announcements',
-    'priority': 'high',
-    'media_type': 'none',
-    'is_read': false,
-    ...announcementAudienceDoc(audienceKey),
-    'created_at': FieldValue.serverTimestamp(),
-    'created_by': actorId,
-  });
-  return ref.id;
+  Query<Map<String, dynamic>> query = db
+      .collection('users')
+      .where('role', isEqualTo: 'student')
+      .where('approval_status', isEqualTo: 'approved');
+  if (audienceKey == 'center_only') {
+    query = query.where('student_type', isEqualTo: 'center_student');
+  } else if (audienceKey.startsWith('grade_')) {
+    query = query.where('grade', isEqualTo: audienceKey);
+  }
+
+  final QuerySnapshot<Map<String, dynamic>> targets = await query.get();
+  if (targets.docs.isEmpty) {
+    throw StateError('No targeted students found for audience "$audienceKey".');
+  }
+
+  const int batchLimit = 400;
+  int written = 0;
+  WriteBatch batch = db.batch();
+  int ops = 0;
+
+  Future<void> commitBatch() async {
+    if (ops == 0) return;
+    await batch.commit();
+    batch = db.batch();
+    ops = 0;
+  }
+
+  for (final QueryDocumentSnapshot<Map<String, dynamic>> student
+      in targets.docs) {
+    final DocumentReference<Map<String, dynamic>> ref =
+        db.collection('notifications').doc();
+    batch.set(ref, <String, dynamic>{
+      'user_id': student.id,
+      'title': title,
+      'body': body,
+      'type': 'Announcements',
+      'notification_type': 'Announcements',
+      'status': 'queued',
+      'priority': 'high',
+      'media_type': 'none',
+      'is_read': false,
+      ...announcementAudienceDoc(audienceKey),
+      'created_at': FieldValue.serverTimestamp(),
+      'created_by': actorId,
+    });
+    ops += 1;
+    written += 1;
+    if (ops >= batchLimit) {
+      await commitBatch();
+    }
+  }
+  await commitBatch();
+  return written;
 }

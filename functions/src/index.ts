@@ -8,6 +8,7 @@ import {
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
   getFirestore,
+  FieldPath,
   FieldValue,
   Timestamp,
   DocumentData,
@@ -21,6 +22,8 @@ import {defineSecret} from "firebase-functions/params";
 // --- Helpers for restored functions ---
 
 const SECRET_BUNNY_TOKEN_KEY = defineSecret("BUNNY_TOKEN_KEY");
+
+const SECRET_BUNNY_PLAYBACK_URL_TEMPLATE = defineSecret("BUNNY_PLAYBACK_URL_TEMPLATE");
 
 const SECRET_BUNNY_STORAGE_BASE_URL = defineSecret("BUNNY_STORAGE_BASE_URL");
 
@@ -45,18 +48,38 @@ async function assertLoginNotLocked(scope: string, key: string): Promise<void> {
   }
 }
 
-async function recordLoginFailure(scope: string, key: string): Promise<void> {
+async function recordLoginFailure(
+  scope: string,
+  key: string,
+  maxFailures: number = MAX_LOGIN_FAILURES,
+): Promise<void> {
   await db.runTransaction(async (tx) => {
     const ref = throttleRef(scope, key);
     const snap = await tx.get(ref);
+    const prevData = snap.exists ? dataOf(snap.data()) : {};
+    // Staff lockout-stretch hardening (approved, staff_login scope only):
+    // once the staff identity is already inside an active lockout period,
+    // additional failures must not increment the counter, extend the lock,
+    // or create a new lock. The pre-check in verifyStaffPassword already
+    // rejects such attempts, but a concurrent attempt that passed the
+    // pre-check before the lock committed must still be a no-op here.
+    // All other scopes keep their existing behavior.
+    if (scope === "staff_login") {
+      const prevLocked = prevData.locked_until;
+      const prevLockedMs =
+        prevLocked && typeof prevLocked.toMillis === "function" ?
+          prevLocked.toMillis() :
+          0;
+      if (prevLockedMs > Date.now()) {
+        return;
+      }
+    }
     const prevFailures =
-      snap.exists && typeof dataOf(snap.data()).fail_count === "number" ?
-        (dataOf(snap.data()).fail_count as number) :
-        0;
+      typeof prevData.fail_count === "number" ? (prevData.fail_count as number) : 0;
     const failures = prevFailures + 1;
 
     let lockMinutes = 0;
-    if (failures >= MAX_LOGIN_FAILURES) {
+    if (failures >= maxFailures) {
       lockMinutes = calculateLockMinutes(failures);
     }
 
@@ -71,6 +94,27 @@ async function recordLoginFailure(scope: string, key: string): Promise<void> {
         new Date(Date.now() + lockMinutes * 60_000),
       );
       update.last_lock_minutes = lockMinutes;
+      // Audit-only lock-transition event (fresh locks, not every hammered
+      // failure): append-only auth_security_events write using the hashed
+      // throttle doc id — never raw phone/name/IP, never secrets. No
+      // notification behavior (alerting policy undefined).
+      const prevUntil = prevData.locked_until;
+      const prevUntilMs =
+        prevUntil && typeof prevUntil.toMillis === "function" ?
+          prevUntil.toMillis() :
+          0;
+      if (prevUntilMs <= Date.now()) {
+        tx.set(db.collection("auth_security_events").doc(), {
+          event_type: "login_lock_engaged",
+          scope,
+          key_hash: ref.id,
+          fail_count: failures,
+          lock_minutes: lockMinutes,
+          locked_until: update.locked_until,
+          created_at: FieldValue.serverTimestamp(),
+          created_by: "system",
+        });
+      }
     }
     tx.set(ref, update, {merge: true});
   });
@@ -103,12 +147,15 @@ async function slidingWindowAllowed(
   });
 }
 
+function requestIp(request: CallableRequest): string | null {
+  if (typeof request.rawRequest?.ip === "string") return request.rawRequest.ip;
+  const socketAddress = request.rawRequest?.socket?.remoteAddress;
+  if (typeof socketAddress === "string") return socketAddress;
+  return null;
+}
+
 async function assertStaffDirectoryAllowed(request: CallableRequest): Promise<void> {
-  const ip =
-    typeof request.rawRequest?.ip === "string" ? request.rawRequest.ip :
-      typeof request.rawRequest?.socket?.remoteAddress === "string" ?
-        request.rawRequest.socket.remoteAddress :
-        null;
+  const ip = requestIp(request);
   if (!ip) return;
   const key = createHash("sha256").update(`staff_directory:${ip}`).digest("hex");
   const allowed = await slidingWindowAllowed(
@@ -245,6 +292,100 @@ export function resolveGuestPreviewSeconds(opts: {
 }
 
 /**
+ * Audience discriminator for Guest preview verdicts (messaging only).
+ *
+ * The issuance/listing Guest contract historically carried a single
+ * `previewLimitSeconds` integer, so the client could not tell an external
+ * Guest apart from a Center student on an unauthorized device. This
+ * additive, message-level field closes that gap: enforcement, tiers,
+ * windows, and Full-tier response shapes are untouched.
+ * - "guest": Guest identity or Guest plan — the client directs these
+ *   students to Center enrollment instead of a paid-plan upgrade.
+ * - "center": Center student resolving Guest tier (unauthorized-device
+ *   fallback) — the client avoids mislabeling them as Guest.
+ * Derived from plan identity only (isGuestPlan), wherever the plan
+ * document is already loaded. No extra reads. Exported for unit testing.
+ */
+export type PreviewAudience = "guest" | "center";
+
+export function previewAudienceForPlan(
+  planId: string | null | undefined,
+  plan: {student_type?: unknown} | null | undefined,
+): PreviewAudience {
+  return isGuestPlan(planId, plan) ? "guest" : "center";
+}
+
+/**
+ * Atomic Guest issuance verdict constructor (structural contract lock).
+ *
+ * The Guest preview verdict is atomic: `previewLimitSeconds` and
+ * `previewAudience` are ALWAYS emitted together on Guest tier, and
+ * NEVER on Full tier. Emitting one without the other leaves clients
+ * with an unclassifiable verdict (a numeric cap with a null audience),
+ * which degrades to the generic paid wall — an upsell CTA for a
+ * device-blocked student who cannot fix anything by upgrading.
+ * Centralizing construction here makes a partial verdict a
+ * compile-time shape error instead of a runtime ambiguity.
+ * Enforcement and tiers are untouched: this only assembles the
+ * already-decided values. Callers must only invoke it for Guest tier
+ * after the null-preview throw above (guestPreviewSeconds non-null).
+ * Exported for unit testing.
+ * @param {object} input Guest verdict inputs (tier, plan identity, seconds).
+ * @return {object} Both preview keys on Guest; empty object on Full.
+ */
+export function buildGuestIssuanceVerdict(input: {
+  tier: "full" | "guest";
+  subjectPlanId: string | null | undefined;
+  subjectPlan: {student_type?: unknown} | null | undefined;
+  guestPreviewSeconds: number | null;
+}): {previewLimitSeconds: number; previewAudience: PreviewAudience} | Record<string, never> {
+  if (input.tier !== "guest") return {};
+  return {
+    previewLimitSeconds: input.guestPreviewSeconds as number,
+    previewAudience: previewAudienceForPlan(input.subjectPlanId, input.subjectPlan),
+  };
+}
+
+/**
+ * Lecture-identity resolution for `generateBunnySignedUrl` (identity fix).
+ *
+ * The `bunny_video_id` identifies the VIDEO FILE only — never the lecture.
+ * When the caller asserts `requestedLectureId`, only a resource row linking
+ * THAT lecture to the video may resolve (anything else is a mismatch).
+ * Without an asserted identity (legacy clients), a single live row resolves
+ * as before; ZERO rows is missing; MORE THAN ONE live row sharing the video
+ * is ambiguous and must never collapse to `limit(1)` first-match.
+ *
+ * Pure function over pre-mapped rows (no Firestore) — unit-testable.
+ * Exported for unit testing.
+ * @param {Array} candidates Pre-mapped resource rows for the video.
+ * @param {object} opts Resolution inputs.
+ * @return {object} Discriminated match outcome (no Firestore, no throws).
+ */
+export type IssuanceResourceMatch =
+  | {kind: "resolved"; resourceId: string}
+  | {kind: "missing"}
+  | {kind: "mismatch"}
+  | {kind: "ambiguous"};
+
+export function matchIssuanceResource(
+  candidates: Array<{id: string; lectureId: string | null; deleted: boolean}>,
+  opts: {requestedLectureId: string | null},
+): IssuanceResourceMatch {
+  if (opts.requestedLectureId != null) {
+    const hit = candidates
+      .filter((row) => !row.deleted)
+      .find((row) => row.lectureId === opts.requestedLectureId);
+    if (!hit) return {kind: "mismatch"};
+    return {kind: "resolved", resourceId: hit.id};
+  }
+  const live = candidates.filter((row) => !row.deleted);
+  if (live.length === 0) return {kind: "missing"};
+  if (live.length > 1) return {kind: "ambiguous"};
+  return {kind: "resolved", resourceId: live[0].id};
+}
+
+/**
  * Read the Guest preview fields from a lecture document.
  *
  * Canonical schema (Phase 1): `guest_enabled` / `guest_preview_minutes`.
@@ -304,12 +445,29 @@ function contentAuditTrigger(entity: ContentEntity) {
           snapshot.created_by :
           "unknown_staff";
 
+    // Resolve the canonical role server-side (client-written
+    // updated_by/created_by is not trusted for role attribution).
+    // Falls back to the historical generic value on any failure, so audit
+    // logging never breaks content writes. Historical records untouched.
+    let actorRole = "staff_content";
+    try {
+      if (actorId !== "unknown_staff") {
+        const actorSnap = await db.collection("users").doc(actorId).get();
+        const actorRoleValue = actorSnap.exists ? getString(dataOf(actorSnap.data()).role) : null;
+        if (actorRoleValue === "doctor" || actorRoleValue === "admin") {
+          actorRole = actorRoleValue;
+        }
+      }
+    } catch {
+      actorRole = "staff_content";
+    }
+
     await db.collection("admin_audit_log").add({
       action: `content_${change}`,
       entity,
       target_id: event.params.docId,
       actor_id: actorId,
-      actor_role: "staff_content",
+      actor_role: actorRole,
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
@@ -318,6 +476,59 @@ function contentAuditTrigger(entity: ContentEntity) {
 
 
 const MAX_LOGIN_FAILURES = 3;
+
+// Pre-lookup anti-spray protection for verifyPhonePassword (approved):
+// at most STUDENT_LOGIN_IP_MAX_FAILURES *failed* logins per caller IP
+// before the endpoint locks for that IP. Lock durations reuse the
+// existing calculateLockMinutes ladder; the per-account lockout above
+// is unchanged. Keyed by IP (not phone) so rotating phone numbers does
+// not evade it. Successes never clear this counter: a valid login must
+// not reset another caller's spray budget behind the same NAT egress.
+const STUDENT_LOGIN_IP_SCOPE = "student_login_ip";
+const STUDENT_LOGIN_IP_MAX_FAILURES = 5;
+
+// changePassword throttle (approved): at most
+// CHANGE_PASSWORD_MAX_FAILURES *incorrect current-password* attempts per
+// authenticated user before the flow locks for that user. Durations reuse
+// the existing calculateLockMinutes ladder (5 failures -> 10 minutes).
+// Scope/key are dedicated to changePassword: success clears ONLY this
+// scope, and no login scope, lockout, claim, or account state is touched,
+// so normal login is never affected.
+const CHANGE_PASSWORD_SCOPE = "change_password";
+const CHANGE_PASSWORD_MAX_FAILURES = 5;
+
+// Registration abuse protection (approved): at most
+// REGISTRATION_MAX_ATTEMPTS valid registration submissions per caller IP
+// per REGISTRATION_WINDOW_MS, via the existing transactional sliding
+// window (same mechanism as the password-reset request throttle). Counts
+// all valid-shape attempts (successes and duplicate-phone rejections
+// alike); malformed requests never consume budget. Duplicate-phone
+// already-exists behavior is unchanged within budget. No permanent lock:
+// the window slides, and success clears nothing because there is nothing
+// to clear. Scope is isolated from login/changePassword/staff budgets.
+const REGISTRATION_THROTTLE_SCOPE = "registration_throttle";
+const REGISTRATION_MAX_ATTEMPTS = 10;
+const REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
+
+// Staff-login anti-spray protection (approved): at most
+// STAFF_LOGIN_IP_MAX_FAILURES *failed* staff logins per caller IP before
+// the endpoint locks for that IP. Durations reuse the existing
+// calculateLockMinutes ladder (5 failures -> 10 minutes). This complements
+// (never replaces) the per-name staff_login throttle: rotating display
+// names no longer resets the budget. Successes never clear this counter
+// (same semantics as the student IP scope). Unknown/wrong responses stay
+// identical; ambiguous-name behavior is unchanged.
+const STAFF_LOGIN_IP_SCOPE = "staff_login_ip";
+const STAFF_LOGIN_IP_MAX_FAILURES = 5;
+
+// Timing-oracle mitigation for unknown-phone logins: the wrong-password
+// path always performs a scrypt verification, so the unknown-phone path
+// performs a discarded verification against this fixed dummy hash (a hash
+// of a random value nobody knows; the result is never used). This keeps
+// the two failure paths at comparable cost using the existing
+// verifyPassword helper. DB read counts still differ; noted as residual.
+const ENUMERATION_DUMMY_HASH =
+  "scrypt$27b8077d54a3da05e8e266a760e07ad8$99d1c5b0c48b7d5000d7ddfae14bfbb7bec079ffb6d468b3b4192bb6af42a8202d4187252e575816fe1de8290747d77f84bb7bef09f89eda3b02b61eb5072a34$16384";
 
 function throttleRef(scope: string, key: string) {
   // Firestore document IDs must not contain "/". Derive a collision-safe,
@@ -343,6 +554,7 @@ type ContentChange = "created" | "updated" | "deleted";
 
 import {
   createHash,
+  createHmac,
   randomBytes,
   scrypt as scryptCallback,
   timingSafeEqual,
@@ -380,6 +592,25 @@ export function decideVideoWatchWindow(
     return {allowed: true, reason: "same_video"};
   }
   return {allowed: false, reason: "different_video"};
+}
+
+/**
+ * Issuance denial precedence (Center Free A → Exit → C regression fix).
+ *
+ * The rolling-window verdict for the requested lecture is authoritative and
+ * must win over the device-tier Guest denial: the Next flow walls from the
+ * client-side window snapshot without ever calling issuance, while a direct
+ * open after exit calls issuance — a Guest-tier device must still receive
+ * the SAME 24-hour restriction (resource-exhausted), never Guest/device
+ * behavior (Center Free → Guest downgrade). Returns "window" when the
+ * window decision blocks the request (the caller throws resource-exhausted
+ * BEFORE any tier evaluation), otherwise "tier" (defer to the device-tier
+ * verdict below). Pure function — unit-testable without Firestore.
+ */
+export function issuanceDenialPrecedence(windowDecision: {
+  allowed: boolean;
+}): "window" | "tier" {
+  return windowDecision.allowed ? "tier" : "window";
 }
 
 export interface RollingWindowPolicy {
@@ -471,7 +702,7 @@ const MAX_NOTIFICATION_RETRIES = 3;
 const RETRY_DELAY_MINUTES = [1, 5, 15];
 const CRITICAL_NOTIFICATION_TYPES = new Set(["approval", "payment", "security"]);
 const EGYPT_PHONE_REGEX = /^01[0125][0-9]{8}$/;
-const ADMIN_ROLES = new Set(["admin", "teacher"]);
+const ADMIN_ROLES = new Set(["admin", "doctor"]);
 
 function dataOf(value: DocumentData | undefined) {
   return value ?? {};
@@ -489,6 +720,48 @@ function normalizeEgyptianPhone(value: unknown): string | null {
   const phone = getString(value);
   if (!phone || !EGYPT_PHONE_REGEX.test(phone)) return null;
   return phone;
+}
+
+const CANONICAL_STUDENT_GRADES = new Set([
+  "grade_one",
+  "grade_two",
+  "grade_three",
+  "grade_four",
+]);
+
+/**
+ * Normalizes a raw grade input into its canonical `grade_*` key.
+ *
+ * Only the canonical key is ever persisted to `users/{studentId}.grade`;
+ * UI labels (e.g. "Grade Two") and legacy spellings (e.g. "grade_2")
+ * are mapped — never written verbatim. Returns null when unparseable.
+ * Mirrors `normalizeAdminGradeKey` in `lib/features/admin/domain/admin_grades.dart`.
+ * @param {unknown} value Raw grade input from the callable request.
+ * @return {string|null} Canonical grade key, or null when unparseable.
+ */
+function normalizeStudentGrade(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (CANONICAL_STUDENT_GRADES.has(normalized)) return normalized;
+  const aliases: Record<string, string> = {
+    "1": "grade_one",
+    "grade_1": "grade_one",
+    "grade 1": "grade_one",
+    "grade one": "grade_one",
+    "2": "grade_two",
+    "grade_2": "grade_two",
+    "grade 2": "grade_two",
+    "grade two": "grade_two",
+    "3": "grade_three",
+    "grade_3": "grade_three",
+    "grade 3": "grade_three",
+    "grade three": "grade_three",
+    "4": "grade_four",
+    "grade_4": "grade_four",
+    "grade 4": "grade_four",
+    "grade four": "grade_four",
+  };
+  return aliases[normalized] ?? null;
 }
 
 function getNotificationType(data: DocumentData): string {
@@ -570,19 +843,19 @@ function requireAuthenticated(request: CallableRequest<unknown>): string {
   return uid;
 }
 
-function requireTeacher(request: CallableRequest<unknown>): string {
+function requireDoctor(request: CallableRequest<unknown>): string {
   const uid = requireAuthenticated(request);
-  if (callerRole(request) !== "teacher") {
-    throw new HttpsError("permission-denied", "Teacher (Platform Owner) permission is required.");
+  if (callerRole(request) !== "doctor") {
+    throw new HttpsError("permission-denied", "Doctor (Platform Owner) permission is required.");
   }
   return uid;
 }
 
-function requireAdminOrTeacher(request: CallableRequest<unknown>): string {
+function requireAdminOrDoctor(request: CallableRequest<unknown>): string {
   const uid = requireAuthenticated(request);
   const role = callerRole(request);
   if (!role || !ADMIN_ROLES.has(role)) {
-    throw new HttpsError("permission-denied", "Admin or Teacher permission is required.");
+    throw new HttpsError("permission-denied", "Admin or Doctor permission is required.");
   }
   return uid;
 }
@@ -622,13 +895,13 @@ async function syncStaffStoredClaims(userId: string, role: string, forcePassword
 
 async function requireStudentAccessManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
-  actorRole: "teacher" | "admin";
-  permissionBasis: "teacher" | "delegated:admin_students";
+  actorRole: "doctor" | "admin";
+  permissionBasis: "doctor" | "delegated:admin_students";
 }> {
   const actorId = requireAuthenticated(request);
   const role = callerRole(request);
-  if (role === "teacher") {
-    return {actorId, actorRole: "teacher", permissionBasis: "teacher"};
+  if (role === "doctor") {
+    return {actorId, actorRole: "doctor", permissionBasis: "doctor"};
   }
   if (role !== "admin") {
     throw new HttpsError("permission-denied", "Subject Access management permission is required.");
@@ -651,13 +924,13 @@ async function requireStudentAccessManager(request: CallableRequest<unknown>): P
 
 async function requirePasswordResetManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
-  actorRole: "teacher" | "admin";
-  permissionBasis: "teacher" | "delegated:password_reset";
+  actorRole: "doctor" | "admin";
+  permissionBasis: "doctor" | "delegated:password_reset";
 }> {
   const actorId = requireAuthenticated(request);
   const role = callerRole(request);
-  if (role === "teacher") {
-    return {actorId, actorRole: "teacher", permissionBasis: "teacher"};
+  if (role === "doctor") {
+    return {actorId, actorRole: "doctor", permissionBasis: "doctor"};
   }
   if (role !== "admin") {
     throw new HttpsError("permission-denied", "Password reset permission is required.");
@@ -670,7 +943,7 @@ async function requirePasswordResetManager(request: CallableRequest<unknown>): P
     permissionData.is_active !== true ||
     !permissions ||
     typeof permissions !== "object" ||
-    (permissions.password_reset !== true && permissions["password.reset"] !== true)
+    (permissions.password_reset !== true)
   ) {
     throw new HttpsError("permission-denied", "Delegated password-reset permission is required.");
   }
@@ -686,6 +959,16 @@ async function requireEnabledSubjectAccess(studentId: string, subjectId: string)
   }
 
   const assignment = dataOf(assignmentSnap.data());
+  assertEnabledSubjectAccess(studentId, subjectId, assignment);
+  return assignment;
+}
+
+// Pure field predicates of requireEnabledSubjectAccess, factored so a
+// request-scoped caller holding an already-read assignment snapshot can
+// re-apply the IDENTICAL verification without re-reading. Existence is
+// established by the reader (missing docs throw there); these predicates
+// reproduce the exact mismatch verdict. Never skips verification.
+function assertEnabledSubjectAccess(studentId: string, subjectId: string, assignment: DocumentData): void {
   if (
     assignment.student_id !== studentId ||
     assignment.subject_id !== subjectId ||
@@ -694,7 +977,6 @@ async function requireEnabledSubjectAccess(studentId: string, subjectId: string)
   ) {
     throw new HttpsError("permission-denied", "Subject Access is not enabled for this subject.");
   }
-  return assignment;
 }
 
 
@@ -720,13 +1002,13 @@ function subjectAuthorizationId(studentId: string, subjectId: string, deviceHash
 
 async function requireDeviceManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
-  actorRole: "teacher" | "admin";
-  permissionBasis: "teacher" | "delegated:admin_devices";
+  actorRole: "doctor" | "admin";
+  permissionBasis: "doctor" | "delegated:admin_devices";
 }> {
   const actorId = requireAuthenticated(request);
   const role = callerRole(request);
-  if (role === "teacher") {
-    return {actorId, actorRole: "teacher", permissionBasis: "teacher"};
+  if (role === "doctor") {
+    return {actorId, actorRole: "doctor", permissionBasis: "doctor"};
   }
   if (role !== "admin") {
     throw new HttpsError("permission-denied", "Device management permission is required.");
@@ -769,8 +1051,13 @@ async function writeDeviceAudit(entry: {
   });
 }
 
-async function getSubjectAllowance(planId: string): Promise<number> {
-  const feature = await getPlanFeature(planId, "device.max_count");
+async function getSubjectAllowance(planId: string, planFeatures?: DocumentData[]): Promise<number> {
+  // Request-scoped consolidation: when the caller already holds the plan's
+  // full feature set, derive from it (identical values, no re-query).
+  // Standalone callers omit it and keep the exact legacy query behavior.
+  const feature = planFeatures !== undefined
+    ? findPlanFeature(planFeatures, "device.max_count")
+    : await getPlanFeature(planId, "device.max_count");
   const allowance = getNumber(feature?.feature_value);
   if (allowance === null || allowance < 1) {
     throw new HttpsError("failed-precondition", "device.max_count is not configured for the active plan.");
@@ -978,6 +1265,20 @@ async function getPlanFeatures(planId: string): Promise<DocumentData[]> {
   return snap.docs.map((doc) => doc.data());
 }
 
+// Request-scoped lookup into ONE getPlanFeatures result. Mirrors
+// getPlanFeature's single-doc contract (first match wins; null when absent)
+// so consolidated readers observe identical values without re-querying.
+// Plan feature keys are unique per plan; no ordering assumption beyond that.
+function findPlanFeature(
+  features: DocumentData[],
+  featureKey: string,
+): DocumentData | null {
+  for (const feature of features) {
+    if (feature.feature_key === featureKey) return feature;
+  }
+  return null;
+}
+
 function qualityRank(value: string): number {
   const ranks: Record<string, number> = {
     "144p": 144,
@@ -991,6 +1292,18 @@ function qualityRank(value: string): number {
     "4k": 2160,
   };
   return ranks[value.toLowerCase()] ?? 0;
+}
+
+// P1 web fix: Bunny Stream MP4 fallback files exist only up to 1080p
+// (play_144p..play_1080p.mp4). Maps a clamped rank back to a filename
+// quality so higher plan qualities degrade to a real file, never a 404.
+function mp4QualityForRank(rank: number): string {
+  if (rank >= 1080) return "1080p";
+  if (rank >= 720) return "720p";
+  if (rank >= 480) return "480p";
+  if (rank >= 360) return "360p";
+  if (rank >= 240) return "240p";
+  return "144p";
 }
 
 // ADR-004: removed `getUserPlan` (global single-plan resolution with system
@@ -1043,7 +1356,7 @@ async function notifyAdminsWithPermission(
   body: string,
   options: Record<string, unknown> = {},
 ) {
-  await notifyUsersByRole("teacher", type, title, body, options);
+  await notifyUsersByRole("doctor", type, title, body, options);
 
   const permissionsSnap = await db.collection("admin_permissions")
     .where("is_active", "==", true)
@@ -1054,8 +1367,7 @@ async function notifyAdminsWithPermission(
     const permissions = data.permissions;
     if (
       permissions &&
-      (permissions[permissionKey] === true ||
-        (permissionKey === "password_reset" && permissions["password.reset"] === true))
+      (permissions[permissionKey] === true)
     ) {
       await createNotification(permDoc.id, type, title, body, options);
     }
@@ -1083,6 +1395,32 @@ function hashPathToken(secret: string, path: string, expires: number): string {
     .digest("base64url");
 }
 
+// Video-zone directory token (Bunny Advanced / HMAC-SHA256, directory mode).
+// Verified live against pull zone vz-c6abe953-876. Query-string tokens
+// cannot work for HLS: rendition/segment URLs are relative and URI
+// resolution drops the parent query, so children arrive unauthenticated.
+// The path-embedded token below travels INSIDE the URL path, hence every
+// relative child resolved beneath it inherits authentication automatically.
+// Official BunnyWay/BunnyCDN.TokenAuthentication construction
+// (isDirectory=true with token_path scope): message = scope + expires +
+// signingData(`token_path=<scope>`); embedded as
+// `/bcdn_token=<token>&token_path=<enc>&expires=<exp>` ahead of the path.
+// Scoped to Stream video URLs ONLY — the storage-zone signer above is
+// untouched (its enforced mode is unverified; do not unify without proof).
+function hashVideoDirectoryToken(
+  secret: string,
+  directoryScope: string,
+  expires: number,
+): string {
+  const signingData = `token_path=${directoryScope}`;
+  const signature = createHmac("sha256", secret)
+    .update(directoryScope)
+    .update(String(expires))
+    .update(signingData)
+    .digest("base64url");
+  return `HS256-${signature}`;
+}
+
 class NotificationDeliveryError extends Error {
   readonly failedDeviceIds: string[];
 
@@ -1097,6 +1435,186 @@ function getEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new HttpsError("failed-precondition", `Server configuration ${name} is missing.`);
   return value;
+}
+
+// Signed URL for any file under a video's directory scope (posters,
+// custom thumbnails). Same scheme/validity as playback signing.
+function buildBunnyFileUrl(
+  videoId: string,
+  fileName: string,
+  expiresInSeconds = 3600,
+): string {
+  const template = getEnv("BUNNY_PLAYBACK_URL_TEMPLATE");
+  const probe = template
+    .replace("{video_id}", "0")
+    .replace("{videoId}", "0")
+    .replace("{id}", "0")
+    .replace("{quality}", "720p")
+    .replace("{res}", "720p");
+  const origin = new URL(probe).origin;
+  const secret = getEnv("BUNNY_TOKEN_KEY");
+  const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
+  const scope = `/${videoId}/`;
+  const token = hashVideoDirectoryToken(secret, scope, expires);
+  return `${origin}/bcdn_token=${token}` +
+    `&token_path=${encodeURIComponent(scope)}` +
+    `&expires=${expires}/${videoId}/${fileName}`;
+}
+
+// ---- Bunny Stream poster filename lookup (card/cover thumbnails) ----
+// The selected poster is NOT always `thumbnail.jpg` (custom selections
+// live under their own filename) — the only authoritative source is the
+// Stream API (`thumbnailFileName`). Optional by design: configured via
+// functions/.env (gitignored, never committed):
+//   BUNNY_STREAM_API_KEY=<library API key>
+//   BUNNY_STREAM_LIBRARY_ID=<numeric library id>
+// Unset → null (callers keep their existing fallbacks). Results cached
+// per video (1h positive, 10min negative); never throws.
+interface BunnyPosterCacheEntry {
+  file: string | null;
+  hasHQPreview: boolean;
+  cachedAt: number;
+}
+const bunnyPosterCache = new Map<string, BunnyPosterCacheEntry>();
+const BUNNY_POSTER_CACHE_TTL_MS = 60 * 60 * 1000;
+const BUNNY_POSTER_NEG_TTL_MS = 10 * 60 * 1000;
+
+function bunnyStreamApiConfig(): {apiKey: string; libraryId: string} | null {
+  const apiKey = (process.env.BUNNY_STREAM_API_KEY ?? "").trim();
+  const libraryId = (process.env.BUNNY_STREAM_LIBRARY_ID ?? "").trim();
+  return apiKey !== "" && libraryId !== "" ? {apiKey, libraryId} : null;
+}
+
+// Stream video metadata needed for display media: the selected poster
+// filename plus whether an HQ animated preview exists. Cached per video
+// (1h positive, 10min negative); never throws (null on any failure or
+// when unconfigured).
+async function fetchBunnyVideoMeta(
+  videoId: string,
+): Promise<{file: string | null; hasHQPreview: boolean} | null> {
+  const now = Date.now();
+  const cached = bunnyPosterCache.get(videoId);
+  if (cached) {
+    const ttl = cached.file || cached.hasHQPreview ?
+      BUNNY_POSTER_CACHE_TTL_MS :
+      BUNNY_POSTER_NEG_TTL_MS;
+    if (now - cached.cachedAt < ttl) {
+      return {file: cached.file, hasHQPreview: cached.hasHQPreview};
+    }
+  }
+  const config = bunnyStreamApiConfig();
+  if (!config) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://video.bunnycdn.com/library/${encodeURIComponent(config.libraryId)}` +
+          `/videos/${encodeURIComponent(videoId)}`,
+        {headers: {AccessKey: config.apiKey}, signal: controller.signal},
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok) {
+      bunnyPosterCache.set(videoId, {file: null, hasHQPreview: false, cachedAt: now});
+      return null;
+    }
+    const data = (await response.json()) as {
+      thumbnailFileName?: unknown;
+      thumbnailUrl?: unknown;
+      hasHighQualityPreview?: unknown;
+    };
+    const direct = getString(data.thumbnailFileName);
+    let file: string | null = null;
+    if (direct) {
+      file = direct;
+    } else {
+      const thumbUrl = getString(data.thumbnailUrl);
+      const last = thumbUrl?.split("?")[0].split("/").pop();
+      if (last) file = last;
+    }
+    const meta = {file, hasHQPreview: data.hasHighQualityPreview === true};
+    bunnyPosterCache.set(videoId, {...meta, cachedAt: now});
+    return meta;
+  } catch {
+    bunnyPosterCache.set(videoId, {file: null, hasHQPreview: false, cachedAt: now});
+    return null;
+  }
+}
+
+// P2 thumbnail policy (top-level so the single-lecture listing and the
+// batched section-media endpoint share it): raw `thumbnail` storage path
+// → renderable short-lived URL (direct http(s) passes through, bunny
+// paths get a token URL, firebase paths an Admin-SDK signed URL).
+// Best-effort — null on any failure.
+async function resolveResourceThumbnailUrl(
+  resource: DocumentData,
+): Promise<string | null> {
+  const raw = getString(resource.thumbnail);
+  if (!raw) return null;
+  if (isDirectThumbnailUrl(raw)) return raw;
+  const provider = getString(resource.thumbnail_storage_provider) ??
+    getString(resource.thumbnailStorageProvider);
+  try {
+    if (provider === "bunny") {
+      return buildBunnyResourceAccessUrl(raw, 3600).url;
+    }
+    const [signedUrl] = await storage.bucket().file(raw).getSignedUrl({
+      action: "read",
+      expires: Date.now() + 60 * 60 * 1000,
+    });
+    return signedUrl;
+  } catch {
+    return null;
+  }
+}
+
+// Full display media for one resource document: explicit thumbnail first,
+// then the signed Bunny poster fallback chain, plus the signed silent HQ
+// preview clip (`preview_hq.mp4`, muted looping header autoplay) when the
+// Stream API confirms one exists. Read-only — never touches
+// windows/issuance/sessions.
+async function resolveVideoDisplayMedia(
+  resource: DocumentData,
+): Promise<{thumbnailUrl: string | null; previewUrl: string | null}> {
+  let thumbnailUrl = await resolveResourceThumbnailUrl(resource);
+  let previewUrl: string | null = null;
+  const storedBunnyId = getString(resource.bunny_video_id);
+  const posterId = storedBunnyId ?
+    (normalizeBunnyVideoIdForLookup(storedBunnyId) ?? storedBunnyId) :
+    null;
+  let meta: {file: string | null; hasHQPreview: boolean} | null = null;
+  if (posterId) {
+    try {
+      meta = await fetchBunnyVideoMeta(posterId);
+    } catch {
+      meta = null;
+    }
+  }
+  if (!thumbnailUrl && posterId) {
+    try {
+      thumbnailUrl = buildBunnyFileUrl(
+        posterId,
+        meta?.file ?? "thumbnail.jpg",
+        3600,
+      );
+    } catch {
+      thumbnailUrl = null;
+    }
+  }
+  const isVideoRow =
+    (getString(resource.resource_type) ?? "attachment") === "video" &&
+    posterId != null;
+  if (isVideoRow && posterId && meta?.hasHQPreview === true) {
+    try {
+      previewUrl = buildBunnyFileUrl(posterId, "preview_hq.mp4", 3600);
+    } catch {
+      previewUrl = null;
+    }
+  }
+  return {thumbnailUrl, previewUrl};
 }
 
 const VIDEO_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -1135,7 +1653,7 @@ function assertSubjectAccess(subscription: DocumentData | undefined) {
   if (subscription.status !== "active" && subscription.status !== "trial") {
     throw new HttpsError("permission-denied", "Subscription is not active.");
   }
-  if (subscription.manually_disabled === true) throw new HttpsError("permission-denied", "Subscription is disciplinarily disabled by the Teacher.");
+  if (subscription.manually_disabled === true) throw new HttpsError("permission-denied", "Subscription is disciplinarily disabled by the Doctor.");
   const endDate = subscription.end_date;
   if (endDate?.toMillis && endDate.toMillis() <= Date.now()) {
     throw new HttpsError("permission-denied", "Subscription has expired.");
@@ -1162,7 +1680,7 @@ async function getActiveCoreAcademicPeriod(): Promise<{id: string; data: Documen
   if (periods.length === 0) {
     throw new HttpsError(
       "failed-precondition",
-      "No active core academic period. The Teacher must start a period from the dashboard first.",
+      "No active core academic period. The Doctor must start a period from the dashboard first.",
     );
   }
 
@@ -1179,7 +1697,7 @@ async function getActiveCoreAcademicPeriod(): Promise<{id: string; data: Documen
  * Subscription end date is derived from the active core academic period.
  * When the period has no explicit end_date yet, the subscription is stamped
  * with the period id and its end_date is backfilled automatically when the
- * Teacher ends the period (setAcademicPeriodStatus).
+ * Doctor ends the period (setAcademicPeriodStatus).
  */
 async function resolveSubscriptionPeriodBinding(): Promise<{
   academicPeriodId: string;
@@ -1210,6 +1728,31 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   }
   if (password.length < 6) {
     throw new HttpsError("invalid-argument", "Password must contain at least 6 characters.");
+  }
+
+  // Pre-lookup abuse gate: evaluated after shape validation (malformed
+  // requests never consume budget) and before the users query, hashing,
+  // Auth creation, and notification fan-out. Uniform rejection reveals
+  // nothing about phone existence. Absent IP (emulator/local) skips the
+  // gate, matching assertStaffDirectoryAllowed; Firestore errors propagate
+  // and fail closed.
+  const registrationIp = requestIp(request);
+  if (registrationIp) {
+    const registrationKey = createHash("sha256").update(`registration:${registrationIp}`).digest("hex");
+    const registrationAllowed = await slidingWindowAllowed(
+      REGISTRATION_THROTTLE_SCOPE,
+      registrationKey,
+      REGISTRATION_MAX_ATTEMPTS,
+      REGISTRATION_WINDOW_MS,
+    );
+    if (!registrationAllowed) {
+      await db.collection("auth_security_events").add({
+        event_type: "registration_rate_limited",
+        created_at: FieldValue.serverTimestamp(),
+        created_by: "system",
+      });
+      throw new HttpsError("resource-exhausted", "Too many requests. Try again later.");
+    }
   }
 
   const existing = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
@@ -1294,6 +1837,13 @@ const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.
 
 export const changePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
+  // Role scope (intentional, unchanged): authenticated self-service for the
+  // caller's OWN account only — any role (student/new_student/doctor/admin)
+  // may rotate its own password here. Forced-password-change ENFORCEMENT is
+  // student-only by approved product decision (mobile AuthGate +
+  // forced_password_change_screen; "Doctor/Admin must never enter the forced
+  // state" in forced_password_change_test). Doctor/Admin self-service use is
+  // legitimate and must not be removed.
   const currentPassword = getString(request.data?.currentPassword);
   const newPassword = getString(request.data?.newPassword);
 
@@ -1312,6 +1862,11 @@ export const changePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     );
   }
 
+  // Throttle checked after auth + shape + policy validation (malformed and
+  // weak-new-password requests never consume the budget) and before the
+  // expensive scrypt verification. Firestore errors propagate fail-closed.
+  await assertLoginNotLocked(CHANGE_PASSWORD_SCOPE, userId);
+
   const secretSnap = await db.collection("user_secrets").doc(userId).get();
   if (!secretSnap.exists) {
     throw new HttpsError("not-found", "User credentials record not found.");
@@ -1324,12 +1879,15 @@ export const changePassword = onCall(SECURE_CALL_OPTS, async (request) => {
 
   const isValid = await verifyPassword(currentPassword, storedHash);
   if (!isValid) {
+    await recordLoginFailure(CHANGE_PASSWORD_SCOPE, userId, CHANGE_PASSWORD_MAX_FAILURES);
     throw new HttpsError("permission-denied", "Current password is incorrect.");
   }
 
   const newHash = await hashPassword(newPassword);
   await auth.updateUser(userId, {password: newPassword});
   const currentUser = await auth.getUser(userId);
+  const hadForcedChange =
+    (currentUser.customClaims ?? {}).force_password_change === true;
   const claims = {...(currentUser.customClaims ?? {}), force_password_change: false};
   await auth.setCustomUserClaims(userId, claims);
 
@@ -1348,11 +1906,29 @@ export const changePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   }, {merge: true});
 
   await writeAnalyticsEvent(userId, "Password Changed", userId, {});
+  // Completion confirmation (approved): when this rotation clears a FORCED
+  // state, the earlier "Password Reset" notice ("sign in and change it")
+  // goes stale the moment this succeeds — the student reads notifications
+  // AFTER completing the change. Send a success notice so the latest item
+  // states reality. Plain self-service rotations (no forced flag) stay
+  // silent to avoid notification spam.
+  if (hadForcedChange) {
+    await createNotification(
+      userId,
+      "system",
+      "تم تغيير كلمة المرور بنجاح",
+      "كلمة المرور الجديدة تعمل الآن. كلمة المرور المؤقتة لم تعد صالحة.",
+      {priority: "normal"},
+    );
+  }
+  // Success clears ONLY this flow's throttle for this user. Login scopes,
+  // per-account lockout counters, claims, and account state are untouched.
+  await clearLoginFailures(CHANGE_PASSWORD_SCOPE, userId);
   return {success: true};
 });
 
 export const createCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const name = getString(request.data?.name);
   const description = getString(request.data?.description);
   const grade = getString(request.data?.grade);
@@ -1367,8 +1943,8 @@ export const createCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
     is_active: true,
     created_at: now,
     updated_at: now,
-    created_by: teacherId,
-    updated_by: teacherId,
+    created_by: doctorId,
+    updated_by: doctorId,
   });
 
   await db.collection("admin_audit_log").add({
@@ -1376,8 +1952,8 @@ export const createCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
     entity: "custom_groups",
     target_id: groupRef.id,
     group_name: name,
-    actor_id: teacherId,
-    actor_role: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
     created_at: now,
     timestamp: now,
   });
@@ -1386,7 +1962,7 @@ export const createCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
 });
 
 export const updateCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const groupId = getString(request.data?.groupId);
   const name = getString(request.data?.name);
   const description = getString(request.data?.description);
@@ -1401,7 +1977,7 @@ export const updateCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
   const now = FieldValue.serverTimestamp();
   const updates: Record<string, unknown> = {
     updated_at: now,
-    updated_by: teacherId,
+    updated_by: doctorId,
   };
   if (name) updates.name = name;
   if (description !== undefined) updates.description = description;
@@ -1414,8 +1990,8 @@ export const updateCustomGroup = onCall(SECURE_CALL_OPTS, async (request) => {
     entity: "custom_groups",
     target_id: groupId,
     updates,
-    actor_id: teacherId,
-    actor_role: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
     created_at: now,
     timestamp: now,
   });
@@ -1440,6 +2016,16 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     throw new HttpsError("invalid-argument", "Valid Egyptian phone number and password are required.");
   }
 
+  // Pre-lookup anti-spray gate: evaluated before the users query and
+  // before any account-state branch, so throttled callers learn nothing
+  // about phone existence. Absent IP (emulator/local) skips the gate,
+  // matching assertStaffDirectoryAllowed; Firestore errors propagate and
+  // fail closed.
+  const loginIp = requestIp(request);
+  if (loginIp) {
+    await assertLoginNotLocked(STUDENT_LOGIN_IP_SCOPE, loginIp);
+  }
+
   const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
   if (userSnap.empty) {
     await db.collection("auth_security_events").add({
@@ -1448,26 +2034,25 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
       created_at: FieldValue.serverTimestamp(),
       created_by: "system",
     });
+    // Discarded verification keeps unknown-phone timing comparable to the
+    // wrong-password path below (both responses stay generic).
+    await verifyPassword(password, ENUMERATION_DUMMY_HASH);
+    if (loginIp) {
+      await recordLoginFailure(STUDENT_LOGIN_IP_SCOPE, loginIp, STUDENT_LOGIN_IP_MAX_FAILURES);
+    }
     throw new HttpsError("unauthenticated", "Invalid phone number or password.");
   }
 
   const userDoc = userSnap.docs[0];
   const user = dataOf(userDoc.data());
 
-  if (user.account_status && user.account_status !== "active") {
-    throw new HttpsError("permission-denied", "Account is not active.");
-  }
-
-  if (user.approval_status !== "approved") {
-    throw new HttpsError("permission-denied", "Account approval is required before login.");
-  }
-
+  // Enumeration hardening: account-state branches (disabled / pending /
+  // rejected / locked) are evaluated ONLY after a correct password, so a
+  // wrong password yields the generic response for every account state.
+  // Correct-password behavior (messages, lockout enforcement, clearing)
+  // is unchanged.
   const secretSnap = await db.collection("user_secrets").doc(userDoc.id).get();
   const secretData = secretSnap.exists ? dataOf(secretSnap.data()) : {};
-
-  if (secretData.locked_until && secretData.locked_until.toDate() > new Date()) {
-    throw new HttpsError("resource-exhausted", "Account locked due to too many failed attempts. Try again later.");
-  }
 
   const passwordHash = getString(secretData.password_hash) ?? getString(user.password_hash);
   if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
@@ -1483,7 +2068,22 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     await db.collection("user_secrets").doc(userDoc.id).set(updateData, {merge: true});
 
     await writeAnalyticsEvent(userDoc.id, "Failed Login", userDoc.id, {reason: "invalid_credentials"}, request);
+    if (loginIp) {
+      await recordLoginFailure(STUDENT_LOGIN_IP_SCOPE, loginIp, STUDENT_LOGIN_IP_MAX_FAILURES);
+    }
     throw new HttpsError("unauthenticated", "Invalid phone number or password.");
+  }
+
+  if (user.account_status && user.account_status !== "active") {
+    throw new HttpsError("permission-denied", "Account is not active.");
+  }
+
+  if (user.approval_status !== "approved") {
+    throw new HttpsError("permission-denied", "Account approval is required before login.");
+  }
+
+  if (secretData.locked_until && secretData.locked_until.toDate() > new Date()) {
+    throw new HttpsError("resource-exhausted", "Account locked due to too many failed attempts. Try again later.");
   }
 
   // Clear failures on success
@@ -1599,6 +2199,23 @@ async function evaluateSubjectTier(input: {
   // Guest without claiming a slot. Heartbeat and other validations use
   // this so revocation/reset take effect instead of silently rebinding.
   bindIfFree?: boolean;
+  // Request-scoped consolidation: callers holding the plan's full feature
+  // set pass it so device.max_count derives without re-querying. Omitted
+  // everywhere else — legacy query behavior preserved exactly.
+  planFeatures?: DocumentData[];
+  // Request-scoped consolidation: a caller that has ALREADY read and
+  // validated the assignment, subscription, and plan through the same
+  // checks below passes the snapshots so the duplicate reads are skipped.
+  // Verification is NOT skipped: the identical pure predicates
+  // (assertEnabledSubjectAccess, assertSubjectAccess, plan presence and
+  // is_active) are re-applied to the passed snapshots. Omitted everywhere
+  // else — legacy read path preserved exactly.
+  verifiedSubjectContext?: {
+    assignment: DocumentData;
+    subscription: DocumentData;
+    planId: string;
+    plan: DocumentData;
+  };
 }): Promise<{
   tier: "full" | "guest";
   allowance: number;
@@ -1610,9 +2227,28 @@ async function evaluateSubjectTier(input: {
   boundNow: boolean;
 }> {
   const {studentId, subjectId, deviceId} = input;
-  await requireEnabledSubjectAccess(studentId, subjectId);
-  const {planId, plan} = await getActiveSubjectSubscription(studentId, subjectId);
-  const allowance = await getSubjectAllowance(planId);
+  // Verified-context fast path: the caller already read these documents
+  // through the same checks. The pure predicates are re-applied to the
+  // passed snapshots (never skipped); only the duplicate I/O is removed.
+  // Without the context, the legacy read path below runs unchanged.
+  let planId: string;
+  let plan: DocumentData;
+  if (input.verifiedSubjectContext) {
+    const verified = input.verifiedSubjectContext;
+    assertEnabledSubjectAccess(studentId, subjectId, verified.assignment);
+    assertSubjectAccess(verified.subscription);
+    const verifiedPlanId = getString(verified.subscription.plan_id);
+    if (!verifiedPlanId) throw new HttpsError("failed-precondition", "Subject subscription plan is missing.");
+    if (verified.plan.is_active !== true) {
+      throw new HttpsError("failed-precondition", "Subject subscription plan is not available.");
+    }
+    planId = verifiedPlanId;
+    plan = verified.plan;
+  } else {
+    await requireEnabledSubjectAccess(studentId, subjectId);
+    ({planId, plan} = await getActiveSubjectSubscription(studentId, subjectId));
+  }
+  const allowance = await getSubjectAllowance(planId, input.planFeatures);
   const planKey = getString(plan.plan_key);
 
   const deviceHash = computeDeviceHash(studentId, deviceId);
@@ -2455,6 +3091,314 @@ export const convertStudentType = onCall(SECURE_CALL_OPTS, async (request) => {
   return result;
 });
 
+export const updateStudentGrade = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  if (!studentId) {
+    throw new HttpsError("invalid-argument", "studentId is required.");
+  }
+  const newGrade = normalizeStudentGrade(request.data?.grade);
+  if (!newGrade) {
+    throw new HttpsError(
+      "invalid-argument",
+      "grade must be one of: grade_one, grade_two, grade_three, grade_four.",
+    );
+  }
+
+  const userRef = db.collection("users").doc(studentId);
+  const auditRef = db.collection("admin_audit_log").doc();
+  const result = await db.runTransaction(async (transaction) => {
+    const userSnap = await transaction.get(userRef);
+    if (!userSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    const user = dataOf(userSnap.data());
+    if (user.role !== "student" && user.role !== "new_student") {
+      throw new HttpsError("failed-precondition", "Target user is not a student.");
+    }
+    const previousGrade = getString(user.grade);
+    // Normalized comparison: stored grades may be non-canonical aliases
+    // (registration stores the grade verbatim), so a raw comparison would
+    // miss the no-op case for such students. The raw value is kept for
+    // the audit trail below.
+    if (normalizeStudentGrade(previousGrade) === newGrade) {
+      return {changed: false, previousGrade, newGrade};
+    }
+
+    transaction.update(userRef, {
+      grade: newGrade,
+      updated_by: authorization.actorId,
+      updated_at: FieldValue.serverTimestamp(),
+    });
+    transaction.set(auditRef, {
+      action: "update_student_grade",
+      entity: "user",
+      target_id: studentId,
+      student_id: studentId,
+      previous_grade: previousGrade ?? null,
+      new_grade: newGrade,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    return {changed: true, previousGrade, newGrade};
+  });
+
+  return {
+    success: true,
+    studentId,
+    previousGrade: result.previousGrade ?? null,
+    newGrade: result.newGrade,
+    changed: result.changed,
+  };
+});
+
+/**
+ * Staff edit of a student's display profile (full name / phone number).
+ *
+ * Client direct updates of `users/{userId}` are denied for staff by
+ * `firestore.rules` (only the owning student may touch a narrow key set),
+ * so the dashboard edits Name/Phone through this audited callable, gated
+ * by the same `requireStudentAccessManager` permission as the other
+ * student-management mutations. At least one of `fullName` / `phoneNumber`
+ * must be supplied; phone numbers are normalized to the Egyptian format
+ * and must be unique across `users` (excluding the target student).
+ */
+export const updateStudentProfileByStaff = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  if (!studentId) {
+    throw new HttpsError("invalid-argument", "studentId is required.");
+  }
+
+  const rawFullName = getString(request.data?.fullName);
+  const fullName = rawFullName === null ? null : rawFullName.trim();
+  const rawPhone = getString(request.data?.phoneNumber);
+  const phone = rawPhone === null ? null : normalizeEgyptianPhone(rawPhone);
+
+  if (fullName === null && rawPhone === null) {
+    throw new HttpsError("invalid-argument", "fullName or phoneNumber is required.");
+  }
+  if (rawFullName !== null && (!fullName || fullName.length > 100)) {
+    throw new HttpsError("invalid-argument", "Full name must be 1-100 characters.");
+  }
+  if (rawPhone !== null && phone === null) {
+    throw new HttpsError("invalid-argument", "Valid Egyptian phone number is required.");
+  }
+
+  // ---- Read phase (no writes): target + phone uniqueness.
+  const userSnap = await db.collection("users").doc(studentId).get();
+  if (!userSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const user = dataOf(userSnap.data());
+  if (user.role !== "student" && user.role !== "new_student") {
+    throw new HttpsError("failed-precondition", "Target user is not a student.");
+  }
+  if (phone !== null) {
+    const existing = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
+    if (!existing.empty && existing.docs[0].id !== studentId) {
+      throw new HttpsError("already-exists", "An account with this phone number already exists.");
+    }
+  }
+
+  const previousName = getString(user.full_name);
+  const previousPhone = getString(user.phone_number);
+  const update: Record<string, unknown> = {
+    updated_by: authorization.actorId,
+    updated_at: FieldValue.serverTimestamp(),
+  };
+  if (fullName !== null) update.full_name = fullName;
+  if (phone !== null) update.phone_number = phone;
+  if (
+    (fullName === null || fullName === previousName) &&
+    (phone === null || phone === previousPhone)
+  ) {
+    return {success: true, studentId, changed: false};
+  }
+
+  const auditRef = db.collection("admin_audit_log").doc();
+  await db.runTransaction(async (transaction) => {
+    transaction.update(db.collection("users").doc(studentId), update);
+    transaction.set(auditRef, {
+      action: "update_student_profile",
+      entity: "user",
+      target_id: studentId,
+      student_id: studentId,
+      previous_full_name: previousName ?? null,
+      new_full_name: fullName ?? previousName ?? null,
+      previous_phone_number: previousPhone ?? null,
+      new_phone_number: phone ?? previousPhone ?? null,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {success: true, studentId, changed: true};
+});
+
+/**
+ * Atomic grade change with old-grade disentitlement.
+ *
+ * In a SINGLE Firestore transaction:
+ * 1. Updates `users/{studentId}.grade` to the new canonical grade.
+ * 2. Soft-deletes (`is_deleted: true`, `enabled: false`) every non-deleted
+ *    `subject_access_assignments` row of this student whose subject belongs
+ *    to the OLD grade, so the student is never silently still entitled to
+ *    old-grade content after the grade field has already changed.
+ *
+ * New-grade subjects are deliberately NOT auto-created here: subject
+ * selection for the new grade is a manual Admin step done afterward via
+ * the Subjects tab (`grantSubjectAccessWithPlan` per subject). If any part
+ * of steps 1-2 fails, the whole transaction rolls back — grade and old
+ * assignments both stay as they were.
+ *
+ * `updateStudentGrade` is left untouched for callers that only need the
+ * grade-field write.
+ */
+export const changeStudentGrade = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  if (!studentId) {
+    throw new HttpsError("invalid-argument", "studentId is required.");
+  }
+  const newGrade = normalizeStudentGrade(request.data?.grade);
+  if (!newGrade) {
+    throw new HttpsError(
+      "invalid-argument",
+      "grade must be one of: grade_one, grade_two, grade_three, grade_four.",
+    );
+  }
+
+  // ---- Read phase (no writes): resolve the old grade and its assignments.
+  const userSnap = await db.collection("users").doc(studentId).get();
+  if (!userSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const user = dataOf(userSnap.data());
+  if (user.role !== "student" && user.role !== "new_student") {
+    throw new HttpsError("failed-precondition", "Target user is not a student.");
+  }
+  const previousGrade = normalizeStudentGrade(getString(user.grade));
+  if (previousGrade === newGrade) {
+    return {success: true, studentId, previousGrade, newGrade, changed: false, archivedCount: 0};
+  }
+
+  const assignmentsSnap = await db.collection("subject_access_assignments")
+    .where("student_id", "==", studentId)
+    .get();
+  const liveRows = assignmentsSnap.docs.filter(
+    (doc) => dataOf(doc.data()).is_deleted !== true,
+  );
+  const oldGradeSubjectIds: string[] = [];
+  for (const doc of liveRows) {
+    const subjectId = getString(doc.data().subject_id);
+    if (!subjectId) continue;
+    const subjectSnap = await db.collection("subjects").doc(subjectId).get();
+    if (!subjectSnap.exists) continue;
+    if (previousGrade !== null && normalizeStudentGrade(subjectSnap.data()?.grade) === previousGrade) {
+      oldGradeSubjectIds.push(subjectId);
+    }
+  }
+
+  // ---- Atomic phase: grade update + old-grade archival together. ----
+  const userRef = db.collection("users").doc(studentId);
+  const auditRef = db.collection("admin_audit_log").doc();
+  const result = await db.runTransaction(async (transaction) => {
+    const liveUserSnap = await transaction.get(userRef);
+    if (!liveUserSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    const liveUser = dataOf(liveUserSnap.data());
+    // Compare normalized-to-normalized: stored grades may be non-canonical
+    // aliases (registration stores the grade verbatim), so comparing the
+    // raw stored value against the normalized read-phase value would
+    // falsely report a concurrent change on every call for such students.
+    if (normalizeStudentGrade(getString(liveUser.grade)) !== previousGrade) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Student grade changed while this request was in flight. Please retry.",
+      );
+    }
+
+    let archivedCount = 0;
+    const archived: Array<Record<string, unknown>> = [];
+    // Reads first: Firestore transactions require every read to precede
+    // every write, so the user update and all archival writes happen only
+    // after every snapshot below has been fetched.
+    const assignmentSnaps = await Promise.all(
+      oldGradeSubjectIds.map((subjectId) =>
+        transaction.get(
+          db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`),
+        ),
+      ),
+    );
+
+    transaction.update(userRef, {
+      grade: newGrade,
+      updated_by: authorization.actorId,
+      updated_at: FieldValue.serverTimestamp(),
+    });
+    for (let index = 0; index < oldGradeSubjectIds.length; index += 1) {
+      const subjectId = oldGradeSubjectIds[index];
+      const assignmentRef =
+        db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`);
+      const assignmentSnap = assignmentSnaps[index];
+      if (!assignmentSnap.exists) continue;
+      const current = dataOf(assignmentSnap.data());
+      if (current.is_deleted === true) continue;
+      transaction.set(assignmentRef, {
+        student_id: studentId,
+        subject_id: subjectId,
+        enabled: false,
+        is_deleted: true,
+        deleted_at: FieldValue.serverTimestamp(),
+        deleted_by: authorization.actorId,
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: authorization.actorId,
+      }, {merge: true});
+      archived.push({
+        subject_id: subjectId,
+        previous_enabled: current.enabled ?? null,
+        previous_is_deleted: current.is_deleted ?? null,
+      });
+      archivedCount += 1;
+    }
+
+    transaction.set(auditRef, {
+      action: "change_student_grade",
+      entity: "user",
+      target_id: studentId,
+      student_id: studentId,
+      previous_grade: previousGrade ?? null,
+      new_grade: newGrade,
+      archived_assignments: archived,
+      archived_count: archivedCount,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    return {archivedCount};
+  });
+
+  await writeAnalyticsEvent(studentId, "Student Grade Changed", studentId, {
+    previous_grade: previousGrade ?? null,
+    new_grade: newGrade,
+    archived_count: result.archivedCount,
+    changed_by: authorization.actorId,
+  });
+
+  return {
+    success: true,
+    studentId,
+    previousGrade: previousGrade ?? null,
+    newGrade,
+    changed: true,
+    archivedCount: result.archivedCount,
+  };
+});
+
 export const onStudentApproved = onDocumentUpdated("users/{userId}", async (event) => {
   const before = event.data?.before.data();
   const after = event.data?.after.data();
@@ -2467,9 +3411,9 @@ export const onStudentApproved = onDocumentUpdated("users/{userId}", async (even
     throw new Error(`Invalid student_type for approved student: ${userId}`);
   }
 
-  const settingsSnap = await db.collection("system_settings").limit(1).get();
-  if (settingsSnap.empty) throw new Error("system_settings configuration was not found.");
-  const settings = dataOf(settingsSnap.docs[0].data());
+  const settingsDoc = await db.collection("system_settings").doc("default").get();
+  if (!settingsDoc.exists) throw new Error("system_settings/default configuration was not found.");
+  const settings = dataOf(settingsDoc.data());
   if (settings.free_plan_enabled !== true) throw new Error("Free Plan is disabled in system settings.");
 
   const configuredDefaultPlan = getString(settings.default_plan);
@@ -2537,7 +3481,9 @@ export async function calculateAndSetSubjectProgress(db: any, studentId: string,
   const lectureIds: string[] = [];
   for (const currentSectionId of sectionIds) {
     const lecturesSnap = await db.collection("lectures").where("section_id", "==", currentSectionId).get();
-    lectureIds.push(...lecturesSnap.docs.map((doc: any) => doc.id));
+    lectureIds.push(...lecturesSnap.docs
+      .filter((doc: any) => doc.data().is_deleted !== true && doc.data().status === "published")
+      .map((doc: any) => doc.id));
   }
 
   if (lectureIds.length === 0) {
@@ -2562,7 +3508,7 @@ export async function calculateAndSetSubjectProgress(db: any, studentId: string,
 
     const completed = new Set(
       progressSnap.docs
-        .filter((doc: any) => doc.data().is_completed === true)
+        .filter((doc: any) => doc.data().is_completed === true || doc.data().completed === true)
         .map((doc: any) => getString(doc.data().lecture_id))
     );
     completedLectures += completed.size;
@@ -2590,7 +3536,9 @@ export async function calculateAndSetSubjectProgress(db: any, studentId: string,
 export const recalculateSubjectProgress = onDocumentUpdated("lecture_progress/{progressId}", async (event) => {
   const before = event.data?.before.data();
   const after = event.data?.after.data();
-  if (!before || !after || before.is_completed === after.is_completed) return;
+  if (!before || !after ||
+    (before.is_completed === true || before.completed === true) ===
+    (after.is_completed === true || after.completed === true)) return;
 
   const studentId = getString(after.student_id);
   const lectureId = getString(after.lecture_id);
@@ -2608,7 +3556,7 @@ export const enforceDisplayHandleUniqueness = onCall(SECURE_CALL_OPTS, async (re
     throw new HttpsError("invalid-argument", "displayHandle must be a string or null.");
   }
 
-  if (userId !== requesterId && callerRole(request) !== "teacher" && callerRole(request) !== "admin") {
+  if (userId !== requesterId && callerRole(request) !== "doctor" && callerRole(request) !== "admin") {
     throw new HttpsError("permission-denied", "You cannot validate another user's display handle.");
   }
 
@@ -2954,7 +3902,7 @@ export const processNotificationQueue = onSchedule("every 1 minutes", async () =
 });
 
 export const setPlanQualityFeature = onCall(SECURE_CALL_OPTS, async (request) => {
-  const actorId = requireAdminOrTeacher(request);
+  const actorId = requireAdminOrDoctor(request);
   const planId = getString(request.data?.planId);
   const quality = getString(request.data?.quality)?.toLowerCase();
   const enabled = request.data?.enabled;
@@ -3006,9 +3954,9 @@ export const setPlanQualityFeature = onCall(SECURE_CALL_OPTS, async (request) =>
  *
  * Accidentally enabling the rolling watch window on a paid plan (or
  * disabling it on Center Free) changes what paying students receive, so
- * these keys are Teacher (Platform Owner) only — consistent with doc 14
- * ("Configure Feature Matrix: Teacher only"). All other keys remain
- * Admin-or-Teacher, matching the existing quality-matrix precedent.
+ * these keys are Doctor (Platform Owner) only — consistent with doc 14
+ * ("Configure Feature Matrix: Doctor only"). All other keys remain
+ * Admin-or-Doctor, matching the existing quality-matrix precedent.
  * The dashboard mirrors this by locking these rows for Admin sessions;
  * the backend gate below is the true enforcement boundary.
  */
@@ -3042,10 +3990,10 @@ export const setPlanFeature = onCall(SECURE_CALL_OPTS, async (request) => {
     );
   }
   if (SENSITIVE_PLAN_FEATURES.has(featureKey)) {
-    if (callerRole(request) !== "teacher") {
+    if (callerRole(request) !== "doctor") {
       throw new HttpsError(
         "permission-denied",
-        "Teacher (Platform Owner) permission is required for this feature.",
+        "Doctor (Platform Owner) permission is required for this feature.",
       );
     }
   } else {
@@ -3053,11 +4001,11 @@ export const setPlanFeature = onCall(SECURE_CALL_OPTS, async (request) => {
     if (!role || !ADMIN_ROLES.has(role)) {
       throw new HttpsError(
         "permission-denied",
-        "Admin or Teacher permission is required.",
+        "Admin or Doctor permission is required.",
       );
     }
   }
-  const actorRole = callerRole(request) === "teacher" ? "teacher" : "admin";
+  const actorRole = callerRole(request) === "doctor" ? "doctor" : "admin";
   const enabled = request.data?.enabled;
   const rawValue = request.data?.value;
   const valueType = getString(request.data?.valueType) ?? "boolean";
@@ -3135,50 +4083,165 @@ export const setPlanFeature = onCall(SECURE_CALL_OPTS, async (request) => {
   return {ok: true, planId, featureKey, enabled, value};
 });
 
-export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) => {
+export const generateBunnySignedUrl = onCall({
+  ...SECURE_CALL_OPTS,
+  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+}, async (request) => {
   const userId = requireAuthenticated(request);
   const videoId = getString(request.data?.videoId);
   const requestedQuality = getString(request.data?.quality);
   const subjectId = getString(request.data?.subjectId);
   const deviceId = getString(request.data?.deviceId);
+  // Identity fix: the route lecture asserted by the client (optional for
+  // backward compatibility). When present it — not the video file — is the
+  // authorization identity; the video file only selects the bytes.
+  const requestedLectureId = getString(request.data?.lectureId);
 
   if (!videoId) throw new HttpsError("invalid-argument", "videoId is required.");
+  // VIDEO-ID-ONLY: URLs/embed links are invalid even when they embed a
+  // GUID segment — only a bare GUID may issue playback.
+  if (!isValidBunnyVideoId(videoId)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "videoId must be a bare Bunny Video ID (GUID) — URLs are not accepted.",
+    );
+  }
   if (!deviceId) throw new HttpsError("invalid-argument", "deviceId is required.");
-  await assertVideoRequestAllowed(userId, deviceId);
+  // Startup-latency optimization (I/O concurrency only): the rate-limit
+  // check, the issuer user read, and the lecture-resource lookup depend
+  // only on request fields — none consumes another's result. They are
+  // issued together so one round trip covers all three. Verdicts below
+  // are enforced in the EXACT original order, so allow/deny outcomes and
+  // error codes/messages are identical.
+  // VIDEO-ID-ONLY: exact GUID match only — no URL → GUID fallback.
+  // Identity fix: when the client asserts a lecture, the lookup is scoped
+  // to (lecture, video) so a shared bunny_video_id can never resolve the
+  // wrong lecture. Legacy lookups fetch up to 2 rows so a duplicated video
+  // fails closed (ambiguous) instead of collapsing to limit(1) first-match.
+  const [rateLimitOutcome, issuerOutcome, resourceOutcome] = await Promise.allSettled([
+    assertVideoRequestAllowed(userId, deviceId),
+    db.collection("users").doc(userId).get(),
+    (async () => {
+      if (requestedLectureId != null) {
+        return db.collection("lecture_resources")
+          .where("lecture_id", "==", requestedLectureId)
+          .where("bunny_video_id", "==", videoId.trim())
+          .limit(1)
+          .get();
+      }
+      return db.collection("lecture_resources")
+        .where("bunny_video_id", "==", videoId.trim())
+        .limit(2)
+        .get();
+    })(),
+  ]);
+  // Ordered rethrow preserves the original sequential error precedence:
+  // rate-limit verdict first, then user existence, then resource lookup.
+  if (rateLimitOutcome.status === "rejected") throw rateLimitOutcome.reason;
+  if (issuerOutcome.status === "rejected") throw issuerOutcome.reason;
+  const issuerSnap = issuerOutcome.value;
+  if (!issuerSnap.exists) throw new HttpsError("not-found", "User not found.");
 
   // ADR-004: no global plan is consulted. The student's type comes from
   // their own user document; the Subject's plan comes from that Subject's
   // subscription below; the device tier resolves server-side per Subject.
-  const issuerSnap = await db.collection("users").doc(userId).get();
-  if (!issuerSnap.exists) throw new HttpsError("not-found", "User not found.");
   const issuerStudentType = getString(dataOf(issuerSnap.data()).student_type);
 
-  const resourceSnap = await db.collection("lecture_resources")
-    .where("bunny_video_id", "==", videoId)
-    .limit(1)
-    .get();
-  if (resourceSnap.empty) throw new HttpsError("not-found", "Video resource not found.");
-
-  const resource = resourceSnap.docs[0].data();
-  const lectureId = getString(resource.lecture_id);
-  if (!lectureId) throw new HttpsError("failed-precondition", "Video resource is not linked to a lecture.");
+  if (resourceOutcome.status === "rejected") throw resourceOutcome.reason;
+  const resourceSnap = resourceOutcome.value;
+  // Identity fix: resolve through the pure matcher (fail-closed). Legacy
+  // outcomes are byte-identical (missing keeps its exact error); every new
+  // denial below only fires on states the old code resolved unsoundly.
+  const resourceMatch = matchIssuanceResource(
+    resourceSnap.docs.map((doc) => {
+      const data = dataOf(doc.data());
+      return {
+        id: doc.id,
+        lectureId: getString(data.lecture_id),
+        deleted: data.is_deleted === true,
+      };
+    }),
+    {requestedLectureId},
+  );
+  if (resourceMatch.kind === "mismatch") {
+    throw new HttpsError(
+      "invalid-argument",
+      "The requested lecture is not linked to this video.",
+    );
+  }
+  if (resourceMatch.kind === "missing") {
+    throw new HttpsError("not-found", "Video resource not found.");
+  }
+  if (resourceMatch.kind === "ambiguous") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Video resource is ambiguous; lecture identity cannot be resolved.",
+    );
+  }
+  const resourceDoc = resourceSnap.docs.find(
+    (doc) => doc.id === resourceMatch.resourceId,
+  );
+  if (!resourceDoc) {
+    throw new HttpsError("not-found", "Video resource not found.");
+  }
+  const resource = dataOf(resourceDoc.data());
+  const derivedLectureId = getString(resource.lecture_id);
+  if (!derivedLectureId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Video resource is not linked to a lecture.",
+    );
+  }
+  // Defense in depth: the scoped lookup above already guarantees this, but
+  // an asserted identity must never silently resolve elsewhere.
+  if (requestedLectureId != null && derivedLectureId !== requestedLectureId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Lecture identity mismatch for this video.",
+    );
+  }
+  // The route lecture (asserted by the client, verified above) is the
+  // authorization identity; the video file only selects the bytes.
+  const lectureId = requestedLectureId ?? derivedLectureId;
   // V1 per-lecture access: explicit deny wins before any plan checks.
   await assertLectureAccessNotDenied(userId, lectureId);
 
   const lectureSnap = await db.collection("lectures").doc(lectureId).get();
-  if (!lectureSnap.exists) throw new HttpsError("not-found", "Lecture not found.");
+  if (!lectureSnap.exists) {
+    // A client-asserted identity pointing nowhere is a client fault.
+    if (requestedLectureId != null) {
+      throw new HttpsError(
+        "invalid-argument",
+        "The requested lecture does not exist.",
+      );
+    }
+    throw new HttpsError("not-found", "Lecture not found.");
+  }
   const lecture = dataOf(lectureSnap.data());
-  const linkedSubjectId = subjectId ?? getString(lecture.subject_id);
+  const lectureSubjectId = getString(lecture.subject_id);
+  const linkedSubjectId = subjectId ?? lectureSubjectId;
 
   let resolvedSubjectId = linkedSubjectId;
+  let sectionSubjectId: string | null = null;
   if (!resolvedSubjectId) {
     const sectionId = getString(lecture.section_id);
     if (!sectionId) throw new HttpsError("failed-precondition", "Lecture section is missing.");
     const sectionSnap = await db.collection("subject_sections").doc(sectionId).get();
-    resolvedSubjectId = getString(sectionSnap.data()?.subject_id);
+    sectionSubjectId = getString(sectionSnap.data()?.subject_id);
+    resolvedSubjectId = sectionSubjectId;
   }
   if (!resolvedSubjectId) throw new HttpsError("failed-precondition", "Subject cannot be resolved.");
-  await requireEnabledSubjectAccess(userId, resolvedSubjectId);
+  // Fail closed on cross-subject mismatch: the lecture's own subject
+  // (lecture.subject_id, else its section's subject_id) is authoritative.
+  // A caller-supplied subjectId that disagrees must never authorize issuance
+  // under a different subject's subscription/plan/device verdicts below.
+  const authoritativeSubjectId = lectureSubjectId ?? sectionSubjectId;
+  if (authoritativeSubjectId && resolvedSubjectId !== authoritativeSubjectId) {
+    throw new HttpsError("invalid-argument", "Subject does not match this video.");
+  }
+  // The returned assignment snapshot is preserved below for the
+  // request-scoped verifiedSubjectContext (same call, same verdict).
+  const subjectAssignment = await requireEnabledSubjectAccess(userId, resolvedSubjectId);
 
   const subscriptionSnap = await db.collection("subscriptions")
     .where("student_id", "==", userId)
@@ -3209,6 +4272,54 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
     throw new HttpsError("permission-denied", "Subject subscription plan is not valid for this student.");
   }
 
+  // Request-scoped consolidation: ONE plan_features read for this issuance.
+  // video.access, device.max_count (via the tier evaluator below),
+  // video.preview_duration, the quality matrix, and the rolling-window
+  // policy ALL derive from this single result — identical values, no
+  // re-queries. Missing features behave exactly as before (null lookups).
+  const planFeatures = await getPlanFeatures(subjectPlanId);
+
+  // Rolling watch window ("تحديد المشاهدة كل 24 ساعة"): matrix-driven
+  // on any plan via video.rolling_window.enabled/_hours, with a legacy
+  // fallback to free/24h while the matrix is unconfigured.
+  const windowPolicy = resolveRollingWindowPolicy({
+    enabledFeature: findPlanFeature(planFeatures, "video.rolling_window.enabled"),
+    hoursFeature: findPlanFeature(planFeatures, "video.rolling_window.hours"),
+    studentType: issuerStudentType,
+    planKey: getString(subjectPlan.plan_key),
+    planId: subjectPlanId,
+  });
+
+  // Window-before-tier precedence (Center Free A → Exit → C regression
+  // fix): when the caller's rolling window is active for a DIFFERENT
+  // lecture, issuance must fail with the SAME 24-hour restriction
+  // (resource-exhausted) regardless of device tier — never Guest preview,
+  // public fallback, or device-unauthorized behavior. Read-only: blocked
+  // requests throw before any tier evaluation or window write; allowed
+  // requests fall through to the existing transactional check+create
+  // below unchanged (identical side effects).
+  if (windowPolicy.enforced) {
+    const precheckSnap = await db.collection("video_watch_windows").doc(userId).get();
+    const precheckDecision = decideVideoWatchWindow(
+      precheckSnap.data() as any,
+      lectureId,
+      Date.now(),
+    );
+    if (issuanceDenialPrecedence(precheckDecision) === "window") {
+      const precheckWindow = precheckSnap.data() as any;
+      console.log(
+        `generateBunnySignedUrl identity requestedLecture=${requestedLectureId ?? "-"} ` +
+        `resolvedLecture=${lectureId} subject=${resolvedSubjectId} video=${videoId} ` +
+        `tier=preempted window=blocked:${precheckDecision.reason}`,
+      );
+      throw new HttpsError("resource-exhausted", FREE_WINDOW_BLOCKED_MESSAGE, {
+        windowExpiresAtMs: precheckWindow.window_expires_at.toMillis(),
+        activeLectureId: precheckWindow.active_lecture_id,
+        windowHours: windowPolicy.hours,
+      });
+    }
+  }
+
   // ADR-004 tier gate: Full proceeds below; Guest receives the existing
   // structural preview contract (per-lecture gate + plan default) or a
   // permission-denied when preview is not enabled. No consumption
@@ -3218,11 +4329,21 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
     subjectId: resolvedSubjectId,
     deviceId,
     ipAddress: typeof request.rawRequest?.ip === "string" ? request.rawRequest.ip : null,
+    planFeatures,
+    // Request-scoped verified snapshots: the assignment, subscription, and
+    // plan above already passed the same checks the tier evaluator would
+    // re-read. Predicates are re-applied inside; only duplicate I/O is cut.
+    verifiedSubjectContext: {
+      assignment: subjectAssignment,
+      subscription: subjectSubscription,
+      planId: subjectPlanId,
+      plan: subjectPlan,
+    },
   });
   let guestPreviewSeconds: number | null = null;
   if (tier.tier === "guest") {
     const guestFields = readGuestPreviewFields(lecture);
-    const planDefault = await getPlanFeature(subjectPlanId, "video.preview_duration");
+    const planDefault = findPlanFeature(planFeatures, "video.preview_duration");
     guestPreviewSeconds = resolveGuestPreviewSeconds({
       guestEnabled: guestFields.guestEnabled,
       lectureMinutes: guestFields.lectureMinutes,
@@ -3252,42 +4373,58 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
     });
   }
 
-  const accessFeature = await getPlanFeature(subjectPlanId, "video.access");
+  const accessFeature = findPlanFeature(planFeatures, "video.access");
   if (accessFeature?.enabled !== true) {
-    throw new HttpsError("permission-denied", "Video access is not enabled for this plan.");
+    throw new HttpsError("permission-denied", "Video access is not enabled for your plan.");
   }
 
-  const qualityFeatures = (await getPlanFeatures(subjectPlanId))
+  const qualityFeatures = planFeatures
     .filter((feature) =>
       typeof feature.feature_key === "string" &&
       feature.feature_key.startsWith("video.quality.") &&
       feature.enabled === true,
     );
-  const allowedQualities = new Set(
-    qualityFeatures
-      .map((feature) => getString(feature.feature_key)?.replace("video.quality.", ""))
-      .filter((quality): quality is string => Boolean(quality)),
-  );
+  // Mirror the Flutter entitlement contract: `video.quality.max` is a cap,
+  // not a literal quality. Expand it to every quality at or below the cap
+  // and never emit the literals `max`/`auto` as a Bunny quality segment.
+  const allowedQualities = new Set<string>();
+  const RANK_ORDER = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "4k"];
+  const rankOf = (q: string) => qualityRank(q);
+  for (const feature of qualityFeatures) {
+    const suffix = getString(feature.feature_key)?.replace("video.quality.", "") ?? "";
+    if (!suffix) continue;
+    const lower = suffix.toLowerCase();
+    if (lower === "max") {
+      const capRaw = getString(feature.feature_value) ?? getString((feature as any).value);
+      const cap = (capRaw ?? "").toLowerCase();
+      const capRank = rankOf(cap);
+      if (capRank <= 0) continue;
+      for (const q of RANK_ORDER) {
+        if (rankOf(q) <= capRank) allowedQualities.add(q);
+      }
+      continue;
+    }
+    if (lower === "auto") continue;
+    if (rankOf(lower) > 0) allowedQualities.add(lower);
+  }
   if (allowedQualities.size === 0) {
     throw new HttpsError("failed-precondition", "No video quality is configured for this plan.");
   }
-  if (requestedQuality && !allowedQualities.has(requestedQuality)) {
+  const normalizedRequested = requestedQuality?.toLowerCase() ?? null;
+  if (normalizedRequested && !allowedQualities.has(normalizedRequested)) {
     throw new HttpsError("permission-denied", "Requested video quality is not enabled for this plan.");
   }
-  const selectedQuality = requestedQuality ??
+  const selectedQuality = normalizedRequested ??
     [...allowedQualities].sort((left, right) => qualityRank(right) - qualityRank(left))[0];
 
-  // Rolling watch window ("تحديد المشاهدة كل 24 ساعة"): matrix-driven
-  // on any plan via video.rolling_window.enabled/_hours, with a legacy
-  // fallback to free/24h while the matrix is unconfigured.
-  const windowPolicy = resolveRollingWindowPolicy({
-    enabledFeature: await getPlanFeature(subjectPlanId, "video.rolling_window.enabled"),
-    hoursFeature: await getPlanFeature(subjectPlanId, "video.rolling_window.hours"),
-    studentType: issuerStudentType,
-    planKey: getString(subjectPlan.plan_key),
-    planId: subjectPlanId,
-  });
+  // Transactional window check+create. The policy was resolved above
+  // (shared with the read-only window-before-tier pre-check); this
+  // transaction re-decides atomically and owns all window writes.
+  // Blocked requests never reach this point (the pre-check threw first).
 
+  // Diagnostic identity line (§15): requested vs resolved lecture, subject,
+  // resource, tier and window decision. IDs only — never URLs or secrets.
+  let windowDecision = windowPolicy.enforced ? "unknown" : "not_enforced";
   if (windowPolicy.enforced) {
     const windowRef = db.collection("video_watch_windows").doc(userId);
     await db.runTransaction(async (t) => {
@@ -3295,6 +4432,9 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
       const existingWindow = windowSnap.data() as any;
       const now = Date.now();
       const decision = decideVideoWatchWindow(existingWindow, lectureId, now);
+      windowDecision = decision.allowed ?
+        `allowed:${decision.reason}` :
+        `blocked:${decision.reason}`;
 
       if (!decision.allowed) {
         throw new HttpsError("resource-exhausted", FREE_WINDOW_BLOCKED_MESSAGE, {
@@ -3314,15 +4454,58 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
       }
     });
   }
+  console.log(
+    `generateBunnySignedUrl identity requestedLecture=${requestedLectureId ?? "-"} ` +
+    `resolvedLecture=${lectureId} subject=${resolvedSubjectId} video=${videoId} ` +
+    `tier=${tier.tier} window=${windowDecision}`,
+  );
 
   const template = getEnv("BUNNY_PLAYBACK_URL_TEMPLATE");
   const secret = getEnv("BUNNY_TOKEN_KEY");
   const expires = Math.floor(Date.now() / 1000) + 300;
-  const rawUrl = template.replace("{video_id}", encodeURIComponent(videoId)).replace("{quality}", encodeURIComponent(selectedQuality));
+  // Accept every historical placeholder spelling so a misconfigured
+  // template fails loudly instead of emitting a URL with `{...}` in it.
+  let rawUrl = template
+    .replace("{video_id}", encodeURIComponent(videoId))
+    .replace("{videoId}", encodeURIComponent(videoId))
+    .replace("{id}", encodeURIComponent(videoId))
+    .replace("{quality}", encodeURIComponent(selectedQuality))
+    .replace("{res}", encodeURIComponent(selectedQuality));
+  if (rawUrl.includes("{") && rawUrl.includes("}")) {
+    throw new HttpsError("failed-precondition", "Server configuration BUNNY_PLAYBACK_URL_TEMPLATE has unresolved placeholders.");
+  }
+  // P1 web fix: Flutter Web (Chrome/Edge/Firefox) feeds the URL into a
+  // plain <video> element, which cannot demux HLS playlists
+  // (DEMUXER_ERROR_COULD_NOT_PARSE). When the client passes format=mp4
+  // (web only), rewrite the Bunny Stream HLS playlist path to the
+  // direct-play MP4 rendition (`.../playlist.m3u8` -> `.../play_720p.mp4`).
+  // Per Bunny docs the MP4 filename is play_{height}p.mp4 capped at 1080p
+  // (higher renditions have no MP4 file and would 404), and only videos
+  // uploaded after enabling "MP4 Fallback" on the library have MP4 files
+  // at all. Requires "MP4 Fallback / Direct MP4" enabled on the Bunny
+  // Stream library; non-playlist templates pass through unchanged. The
+  // directory token below authorizes the whole video directory, so both
+  // playlist and MP4 paths validate.
+  const requestedFormat = getString(request.data?.format)?.toLowerCase();
+  if (requestedFormat === "mp4" && /playlist\.m3u8/i.test(rawUrl)) {
+    const mp4Rank = Math.min(qualityRank(selectedQuality), qualityRank("1080p"));
+    const mp4Quality = mp4QualityForRank(mp4Rank);
+    rawUrl = rawUrl.replace(/playlist\.m3u8/i, `play_${mp4Quality}.mp4`);
+  }
   const url = new URL(rawUrl);
-  const token = hashPathToken(secret, url.pathname, expires);
-  url.searchParams.set("token", token);
-  url.searchParams.set("expires", String(expires));
+  // Directory-token mode: authorizes the video directory `/{videoId}/`
+  // (master playlist, rendition playlists, segments, MP4 rendition alike),
+  // so relative HLS children inherit authentication by path resolution.
+  // The returned contract (url, expiresAt, quality, session fields) and
+  // the expiry policy are unchanged; only the URL shape carries the token
+  // in-path instead of in-query.
+  const directoryScope = `/${videoId}/`;
+  const token = hashVideoDirectoryToken(secret, directoryScope, expires);
+  const signedUrl =
+    `${url.origin}/bcdn_token=${token}` +
+    `&token_path=${encodeURIComponent(directoryScope)}` +
+    `&expires=${expires}${url.pathname}`;
+  const signed = new URL(signedUrl);
 
   await writeAnalyticsEvent(userId, "Open Video", videoId, {
     subject_id: resolvedSubjectId,
@@ -3331,13 +4514,22 @@ export const generateBunnySignedUrl = onCall(SECURE_CALL_OPTS, async (request) =
     preview_limit_seconds: guestPreviewSeconds,
   });
   // Full responses keep their exact existing shape. Guest responses add
-  // only previewLimitSeconds from the existing structural preview contract
-  // (0 means the client shows the upgrade prompt immediately).
+  // previewLimitSeconds from the existing structural preview contract
+  // (0 means the client shows the upgrade prompt immediately) plus the
+  // additive previewAudience discriminator (messaging only — enforcement
+  // and tiers are unchanged). Assembled atomically: both keys together
+  // on Guest, neither on Full — never one without the other.
+  const guestVerdict = buildGuestIssuanceVerdict({
+    tier: tier.tier,
+    subjectPlanId,
+    subjectPlan,
+    guestPreviewSeconds,
+  });
   return {
-    url: url.toString(),
+    url: signed.toString(),
     expiresAt: expires,
     quality: selectedQuality,
-    ...(tier.tier === "guest" ? {previewLimitSeconds: guestPreviewSeconds as number} : {}),
+    ...guestVerdict,
     ...(playbackSession ? {
       sessionToken: playbackSession.sessionToken,
       positionSeconds: playbackSession.positionSeconds,
@@ -3558,7 +4750,14 @@ export const generatePdfDownloadUrl = onCall(SECURE_CALL_OPTS, async (request) =
   return {url: signedUrl, expiresAt: Date.now() + 5 * 60 * 1000};
 });
 
-export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
+export const getLectureResources = onCall({
+  ...SECURE_CALL_OPTS,
+  // P2 thumbnails: bunny-hosted thumbnail bytes reuse the token-signing
+  // scheme, so both secrets must be present at runtime. The playback
+  // template origin is additionally needed for the signed Bunny poster
+  // fallback (selected library poster per video).
+  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STORAGE_BASE_URL, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+}, async (request) => {
   const userId = requireAuthenticated(request);
   const lectureId = getString(request.data?.lectureId);
   const deviceId = normalizeDeviceId(request.data?.deviceId);
@@ -3569,26 +4768,58 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
   const lecture = dataOf(lectureSnap.data());
   const subjectId = getString(lecture.subject_id);
   if (!subjectId) throw new HttpsError("failed-precondition", "Lecture subject is missing.");
-  await requireEnabledSubjectAccess(userId, subjectId);
+  // Startup-latency optimization (I/O concurrency only): once subjectId is
+  // known, the Subject-access check, the per-lecture deny check, the active
+  // subscription query, and the visible-resources listing are mutually
+  // independent — none consumes another's result. They are issued together
+  // so one round trip covers all four. Verdicts below are enforced in the
+  // EXACT original order, so allow/deny outcomes and error codes/messages
+  // are identical; resources are never returned unless every check passes.
   // V1 per-lecture access: explicit deny wins over subscription/plan.
-  await assertLectureAccessNotDenied(userId, lectureId);
-
-  const subscriptionSnap = await db.collection("subscriptions")
-    .where("student_id", "==", userId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
+  const resourcesQuery = db.collection("lecture_resources")
+    .where("lecture_id", "==", lectureId)
+    .where("is_visible", "==", true)
+    .orderBy("display_order")
     .get();
+  const [accessOutcome, grantOutcome, subscriptionOutcome, resourcesOutcome] = await Promise.allSettled([
+    requireEnabledSubjectAccess(userId, subjectId),
+    assertLectureAccessNotDenied(userId, lectureId),
+    db.collection("subscriptions")
+      .where("student_id", "==", userId)
+      .where("subject_id", "==", subjectId)
+      .where("status", "==", "active")
+      .limit(1)
+      .get(),
+    resourcesQuery,
+  ]);
+  // Ordered rethrow preserves the original sequential error precedence:
+  // assignment verdict first, then per-lecture deny, then subscription.
+  if (accessOutcome.status === "rejected") throw accessOutcome.reason;
+  if (grantOutcome.status === "rejected") throw grantOutcome.reason;
+  if (subscriptionOutcome.status === "rejected") throw subscriptionOutcome.reason;
+  const subscriptionSnap = subscriptionOutcome.value;
   if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
   const subjectSubscription = subscriptionSnap.docs[0].data();
   assertSubjectAccess(subjectSubscription);
+  if (resourcesOutcome.status === "rejected") throw resourcesOutcome.reason;
+  const resourcesSnap = resourcesOutcome.value;
+  // Phase 2 alignment: drop soft-deleted rows (still marked visible) before
+  // serialization so they can never become the first video — or be served
+  // at all. Both response branches below share this filtered list.
+  const liveDocs = resourcesSnap.docs.filter((doc) => isServedLectureResource(dataOf(doc.data())));
 
   const subjectPlanId = getString(subjectSubscription.plan_id);
   let guestPreviewSeconds: number | null = null;
+  // Messaging-only audience for the Guest verdicts below (same helper as
+  // issuance; plan-based, no extra reads). The plan document is hoisted so
+  // both the legacy and the tier-aware branches share it.
+  let listingPlan: DocumentData | null = null;
+  let listingAudience: PreviewAudience | null = null;
   if (subjectPlanId) {
     const subjectPlanSnap = await db.collection("plans").doc(subjectPlanId).get();
     if (subjectPlanSnap.exists) {
       const subjectPlan = dataOf(subjectPlanSnap.data());
+      listingPlan = subjectPlan;
       // Identity-safe Guest check: document ID + student_type. Never
       // `plan_key == "free"` alone — plans/free shares that key.
       if (isGuestPlan(subjectPlanId, subjectPlan)) {
@@ -3601,25 +4832,33 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
           lectureMinutes: previewFields.lectureMinutes,
           planDefaultMinutes: previewFeature ? getNumber(previewFeature.feature_value) : null,
         });
+        listingAudience = previewAudienceForPlan(subjectPlanId, subjectPlan);
       }
     }
   }
 
-  const resourcesSnap = await db.collection("lecture_resources")
-    .where("lecture_id", "==", lectureId)
-    .where("is_visible", "==", true)
-    .orderBy("display_order")
-    .get();
+  // `resourcesSnap` was already fetched concurrently with the authorization
+  // reads above; display media below resolves per resource through the
+  // shared top-level helper (explicit thumbnails, Bunny poster fallback,
+  // silent preview). Best-effort per resource — nulls on any failure,
+  // never fails the listing. The legacy `thumbnail` key is preserved so
+  // older clients keep parsing.
 
-  const serializeResource = (doc: (typeof resourcesSnap.docs)[number]) => {
+  const serializeResource = async (doc: (typeof liveDocs)[number]) => {
     const resource = dataOf(doc.data());
+    const media = await resolveVideoDisplayMedia(resource);
     return {
       id: doc.id,
       resourceType: getString(resource.resource_type) ?? "attachment",
-      title: getString(resource.title) ?? getString(resource.resource_title) ?? "Ã™â€¦Ã™Ë†Ã˜Â±Ã˜Â¯ Ã˜ÂªÃ˜Â¹Ã™â€žÃ™Å Ã™â€¦Ã™Å ",
+      title: getString(resource.title) ?? getString(resource.resource_title) ?? "مورد تعليمي",
       bunnyVideoId: getString(resource.bunny_video_id),
       storagePath: getString(resource.storage_path),
       thumbnail: getString(resource.thumbnail),
+      thumbnailUrl: media.thumbnailUrl,
+      previewUrl: media.previewUrl,
+      thumbnailProvider: getString(resource.thumbnail_storage_provider) ??
+        getString(resource.thumbnailStorageProvider) ??
+        undefined,
       duration: resource.duration,
       displayOrder: typeof resource.display_order === "number" ? resource.display_order : 0,
     };
@@ -3628,11 +4867,18 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
   // Canonical Phase 1 contract: `guestPreview`. The legacy `publicFreePreview`
   // key is a BOUNDED transition alias for pre-Phase-2 Flutter clients only.
   // TODO(PHASE2): remove `publicFreePreview` once Flutter reads `guestPreview`.
-  const guestPreview = guestPreviewSeconds != null ? {previewLimitSeconds: guestPreviewSeconds} : null;
+  // Both keys carry the additive previewAudience discriminator (messaging
+  // only); legacy-branch verdicts are Guest-plan verdicts by construction.
+  const guestPreview = guestPreviewSeconds != null ?
+    {
+      previewLimitSeconds: guestPreviewSeconds,
+      previewAudience: listingAudience ?? previewAudienceForPlan(subjectPlanId, listingPlan),
+    } :
+    null;
   const fullResponse = {
     guestPreview,
     publicFreePreview: guestPreview,
-    resources: resourcesSnap.docs.map(serializeResource),
+    resources: await Promise.all(liveDocs.map(serializeResource)),
   };
 
   // ADR-004: when the caller identifies its device, the listing becomes
@@ -3659,18 +4905,93 @@ export const getLectureResources = onCall(SECURE_CALL_OPTS, async (request) => {
     planDefaultMinutes: deviceGuestDefault ? getNumber(deviceGuestDefault.feature_value) : null,
   });
   const deviceGuestPreview =
-    deviceGuestSeconds != null ? {previewLimitSeconds: deviceGuestSeconds} : null;
+    deviceGuestSeconds != null ?
+      {
+        previewLimitSeconds: deviceGuestSeconds,
+        previewAudience: previewAudienceForPlan(subjectPlanId, listingPlan),
+      } :
+      null;
+  const deviceResources = await Promise.all(liveDocs.map(serializeResource));
   return {
     guestPreview: deviceGuestPreview,
     publicFreePreview: deviceGuestPreview,
-    resources: resourcesSnap.docs
-      .map(serializeResource)
+    resources: deviceResources
       .filter((resource) => resource.resourceType === "video" || resource.bunnyVideoId !== null),
   };
 });
 
+// Batched display media for a whole section (subject-page cards + header
+// cover): ONE callable round trip for every lecture instead of one
+// `getLectureResources` per card (~4s each). Same read-only posture —
+// auth + enabled subject access + active subscription are verified ONCE
+// for the section's subject; device tiers, windows, and issuance are
+// untouched (posters/previews are non-protected teaser art, and no signed
+// playback URL is ever minted here). Per-lecture failures degrade to
+// nulls; the listing itself never fails because of media.
+export const getSectionDisplayMedia = onCall({
+  ...SECURE_CALL_OPTS,
+  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STORAGE_BASE_URL, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+}, async (request) => {
+  const userId = requireAuthenticated(request);
+  const sectionId = getString(request.data?.sectionId);
+  if (!sectionId) throw new HttpsError("invalid-argument", "sectionId is required.");
+
+  const sectionSnap = await db.collection("subject_sections").doc(sectionId).get();
+  if (!sectionSnap.exists) throw new HttpsError("not-found", "Section not found.");
+  const subjectId = getString(sectionSnap.data()?.subject_id);
+  if (!subjectId) throw new HttpsError("failed-precondition", "Section subject is missing.");
+
+  await requireEnabledSubjectAccess(userId, subjectId);
+  const subscriptionSnap = await db.collection("subscriptions")
+    .where("student_id", "==", userId)
+    .where("subject_id", "==", subjectId)
+    .where("status", "==", "active")
+    .limit(1)
+    .get();
+  if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
+  assertSubjectAccess(subscriptionSnap.docs[0].data());
+
+  const lecturesSnap = await db.collection("lectures")
+    .where("section_id", "==", sectionId)
+    .where("is_deleted", "==", false)
+    .where("status", "==", "published")
+    .orderBy("display_order")
+    .get();
+
+  const items = await Promise.all(lecturesSnap.docs.map(async (ldoc) => {
+    try {
+      const lectureData = dataOf(ldoc.data());
+      const docThumb =
+        getString(lectureData.thumbnail_url) ?? getString(lectureData.thumbnail);
+      const resourcesSnap = await db.collection("lecture_resources")
+        .where("lecture_id", "==", ldoc.id)
+        .where("is_visible", "==", true)
+        .orderBy("display_order")
+        .get();
+      const firstVideoDoc = resourcesSnap.docs
+        .map((doc) => dataOf(doc.data()))
+        .filter((resource) => isServedLectureResource(resource))
+        .find((resource) =>
+          (getString(resource.resource_type) ?? "attachment") === "video" &&
+          getString(resource.bunny_video_id) != null,
+        );
+      let thumbnailUrl = (docThumb && docThumb.length > 0) ? docThumb : null;
+      let previewUrl: string | null = null;
+      if (firstVideoDoc) {
+        const media = await resolveVideoDisplayMedia(firstVideoDoc);
+        if (!thumbnailUrl) thumbnailUrl = media.thumbnailUrl;
+        previewUrl = media.previewUrl;
+      }
+      return {lectureId: ldoc.id, thumbnailUrl, previewUrl};
+    } catch {
+      return {lectureId: ldoc.id, thumbnailUrl: null, previewUrl: null};
+    }
+  }));
+  return {items};
+});
+
 export const onDeviceChangeRequest = onCall(SECURE_CALL_OPTS, async (request) => {
-  // ADR-004: device management requires the Teacher or an Admin explicitly
+  // ADR-004: device management requires the Doctor or an Admin explicitly
   // holding the device-management delegation (see 15_Admin_Permissions).
   const deviceAuthorization = await requireDeviceManager(request);
   const approverId = deviceAuthorization.actorId;
@@ -3778,16 +5099,69 @@ export const onPasswordResetApproved = onCall(SECURE_CALL_OPTS, async (request) 
   const requestId = getString(request.data?.requestId);
   const newPassword = getString(request.data?.newPassword);
   if (!requestId || !newPassword) throw new HttpsError("invalid-argument", "requestId and newPassword are required.");
-  if (newPassword.length < 6) throw new HttpsError("invalid-argument", "Password must contain at least 6 characters.");
+  // Temporary-password policy (intentionally SIMPLE — approved product
+  // decision): staff set short, easy-to-dictate passwords (e.g. letter +
+  // digits) because the student MUST replace it on next login
+  // (force_password_change = true below) and all sessions are revoked
+  // (revokeRefreshTokens). Floor is 6 chars — the Firebase Auth minimum
+  // (auth.updateUser rejects shorter). NO complexity requirement here.
+  // The STUDENT-chosen permanent password keeps the strong policy in
+  // `changePassword` (8 + upper/lower/digit/special) — unchanged.
+  if (newPassword.length < 6) {
+    throw new HttpsError("invalid-argument", "Password must contain at least 6 characters.");
+  }
 
   const requestRef = db.collection("password_reset_requests").doc(requestId);
+  // Single-flight claim (transactional): exactly one approval proceeds past
+  // this point. Mirrors the approveStudent/submitAssessmentAttempt
+  // status-claim pattern. A "processing" claim owned by the SAME actor is
+  // reclaimable (safe retry after a crash between claim and resolve);
+  // other actors get failed-precondition. This guards Firestore-side
+  // double-execution; Auth writes below cannot be transactional, so Auth
+  // atomicity is explicitly NOT claimed here.
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists) throw new HttpsError("not-found", "Password reset request not found.");
+    const current = dataOf(snap.data());
+    if (current.status === "processing") {
+      if (getString(current.claimed_by) === authorization.actorId) {
+        transaction.update(requestRef, {
+          claimed_at: FieldValue.serverTimestamp(),
+          updated_at: FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+      throw new HttpsError("failed-precondition", "Password reset request is already being processed.");
+    }
+    if (current.status !== "pending") throw new HttpsError("failed-precondition", "Password reset request is not pending.");
+    transaction.update(requestRef, {
+      status: "processing",
+      claimed_by: authorization.actorId,
+      claimed_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+  });
+
   const requestSnap = await requestRef.get();
   if (!requestSnap.exists) throw new HttpsError("not-found", "Password reset request not found.");
   const resetRequest = dataOf(requestSnap.data());
-  if (resetRequest.status !== "pending") throw new HttpsError("failed-precondition", "Password reset request is not pending.");
 
   const studentId = getString(resetRequest.student_id);
   if (!studentId) throw new HttpsError("failed-precondition", "Student ID is missing.");
+
+  // Staff-target hardening: the reset workflow is student-only. Creation is
+  // student-gated (submitPasswordResetRequest), but approval must re-validate
+  // the target because request docs are staff-writable — otherwise a crafted
+  // request pointing at a doctor/admin UID would overwrite a staff account's
+  // Auth password, claims, users doc, and secrets (staff-account takeover).
+  // new_student is a student lifecycle state and stays eligible; doctor/admin
+  // targets are rejected. Legitimate student resets are unchanged.
+  const targetSnap = await db.collection("users").doc(studentId).get();
+  if (!targetSnap.exists) throw new HttpsError("not-found", "Target user not found.");
+  const targetRole = getString(targetSnap.data()?.role);
+  if (targetRole !== "student" && targetRole !== "new_student") {
+    throw new HttpsError("permission-denied", "Password reset is available for student accounts only.");
+  }
 
   const passwordHash = await hashPassword(newPassword);
 
@@ -3809,6 +5183,14 @@ export const onPasswordResetApproved = onCall(SECURE_CALL_OPTS, async (request) 
     password_hash: passwordHash,
     updated_at: now,
   }, {merge: true});
+
+  // Mid-session staleness fix (approved): revoke all refresh tokens AFTER
+  // the password change and the student reset data are durably updated, so
+  // a revoke failure can never strand mismatched credentials (new password
+  // in Auth while users/secrets still carry the old state). Existing
+  // sequential error handling applies: a revoke failure propagates, the
+  // request stays processing, and the same actor can reclaim and retry.
+  await auth.revokeRefreshTokens(studentId);
 
   await requestRef.update({
     status: "resolved",
@@ -3858,7 +5240,7 @@ export const onSecurityEvent = onCall(SECURE_CALL_OPTS, async (request) => {
   await writeAnalyticsEvent(userId, "Security Event", securityRef.id, {event_type: eventType, severity, context});
 
   if (["high", "critical"].includes(severity)) {
-    await notifyUsersByRole("teacher", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
+    await notifyUsersByRole("doctor", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
     await notifyUsersByRole("admin", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
   }
 
@@ -3958,6 +5340,307 @@ async function getActiveEntitlements(planId: string): Promise<string[]> {
     .map((f) => f.feature_key);
 }
 
+/**
+ * Shared read of the subject-access plan gate in `system_settings/default`.
+ *
+ * The canonical settings document is `system_settings/default` (fixed ID —
+ * never an unordered `.limit(1)` first-doc read, which is ambiguous when
+ * the collection holds more than one document). Returns whether the Free
+ * plan may currently be granted together with the configured default plan
+ * key. Throws when the settings document itself is missing so callers
+ * fail closed instead of inventing a plan.
+ */
+async function readSubjectAccessSettings(): Promise<{
+  freePlanEnabled: boolean;
+  defaultPlanKey: string | null;
+}> {
+  const settingsDoc = await db.collection("system_settings").doc("default").get();
+  if (!settingsDoc.exists) {
+    throw new HttpsError("failed-precondition", "System settings configuration was not found.");
+  }
+  const settings = dataOf(settingsDoc.data());
+  return {
+    freePlanEnabled: settings.free_plan_enabled === true,
+    defaultPlanKey: getString(settings.default_plan),
+  };
+}
+
+function normalizeSubjectPlan(value: unknown): "free" | "pro" | "max" | null {
+  const plan = getString(value)?.toLowerCase() ?? null;
+  if (plan === "free" || plan === "pro" || plan === "max") return plan;
+  return null;
+}
+
+/**
+ * Server-side plan resolution for one (studentType, plan) pair.
+ *
+ * Mirrors the dashboard `_resolvePlanDocId` data-driven lookup (`plan_key`
+ * suffix + matching `student_type` + `is_active`) without hardcoding plan
+ * document IDs. The FREE tier resolves through the configured
+ * `system_settings.default_plan` key, exactly like `activateFreePlan`.
+ * @param {string} studentType Student type (`center_student` or `guest`).
+ * @param {string} plan Requested tier (`free`, `pro` or `max`).
+ * @param {string|null} defaultPlanKey Configured default plan key.
+ * @return {Promise<{id: string, data: object}>} Resolved plan reference.
+ */
+async function resolveSubjectPlanDoc(
+  studentType: string,
+  plan: "free" | "pro" | "max",
+  defaultPlanKey: string | null,
+): Promise<{id: string; data: DocumentData}> {
+  if (plan === "free") {
+    if (!defaultPlanKey) {
+      throw new HttpsError("failed-precondition", "Default plan is not configured.");
+    }
+    const freeSnap = await db.collection("plans")
+      .where("plan_key", "==", defaultPlanKey)
+      .where("student_type", "==", studentType)
+      .where("is_active", "==", true)
+      .limit(1)
+      .get();
+    if (freeSnap.empty) {
+      throw new HttpsError("failed-precondition", "Active default plan was not found.");
+    }
+    return {id: freeSnap.docs[0].id, data: dataOf(freeSnap.docs[0].data())};
+  }
+  const paidSnap = await db.collection("plans")
+    .where("student_type", "==", studentType)
+    .where("is_active", "==", true)
+    .get();
+  for (const doc of paidSnap.docs) {
+    const key = (getString(doc.data().plan_key) ?? "").toLowerCase();
+    if (key === plan || key.endsWith(`_${plan}`)) {
+      return {id: doc.id, data: dataOf(doc.data())};
+    }
+  }
+  throw new HttpsError(
+    "failed-precondition",
+    `No active ${plan} plan is configured for this student type.`,
+  );
+}
+
+/**
+ * Staff-readable subject-access plan configuration.
+ *
+ * `system_settings` is directly readable only by the Doctor or
+ * `admin_settings` delegates (see firestore.rules), while subject managers
+ * (Doctor or delegated `admin_students`) still need to know whether FREE
+ * may be offered. This callable bridges that gap without weakening any
+ * rule: same `requireStudentAccessManager` gate as the mutation callables,
+ * read-only, no writes.
+ */
+export const getSubjectAccessConfig = onCall(SECURE_CALL_OPTS, async (request) => {
+  await requireStudentAccessManager(request);
+  const settings = await readSubjectAccessSettings();
+  return {freePlanEnabled: settings.freePlanEnabled};
+});
+
+/**
+ * Atomic per-subject grant: assignment + subscription in ONE transaction.
+ *
+ * For a single (studentId, subjectId, plan) tuple this performs the entire
+ * operation — enabling/restoring the `subject_access_assignments` row,
+ * validating the plan (including the `free_plan_enabled` gate), creating
+ * or retargeting the subject-scoped `subscriptions` row at the resolved
+ * plan tier, and stamping the assignment entitlements — inside a single
+ * Firestore transaction. Validation that can reject the request (unknown
+ * student/subject, type mismatch, disabled Free plan, unresolvable paid
+ * plan) runs BEFORE the transaction opens, so a rejection writes nothing
+ * at all — never an enabled assignment without a subscription.
+ *
+ * PRO/MAX subscriptions are created directly at the resolved tier; the
+ * legacy "activate free first, then upgrade" two-step chain is NOT used
+ * here. `setSubjectAccess`, `activateFreePlan`, and `changeMembershipPlan`
+ * are left untouched for their other callers.
+ */
+export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  const subjectId = getString(request.data?.subjectId);
+  const requestedStudentType = getString(request.data?.studentType);
+  const plan = normalizeSubjectPlan(request.data?.plan);
+  if (!studentId || !subjectId || !requestedStudentType || !plan) {
+    throw new HttpsError(
+      "invalid-argument",
+      "studentId, subjectId, studentType and plan (free, pro or max) are required.",
+    );
+  }
+
+  // ---- Validation phase (reads only — nothing is written yet). ----
+  const studentSnap = await db.collection("users").doc(studentId).get();
+  if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+  const student = dataOf(studentSnap.data());
+  if (student.role !== "student" || student.approval_status !== "approved") {
+    throw new HttpsError("failed-precondition", "Target user is not an approved student.");
+  }
+  if (student.student_type !== requestedStudentType) {
+    throw new HttpsError("failed-precondition", "Student type does not match the student record.");
+  }
+
+  const subjectSnap = await db.collection("subjects").doc(subjectId).get();
+  if (!subjectSnap.exists || subjectSnap.data()?.is_deleted === true) {
+    throw new HttpsError("not-found", "Subject not found.");
+  }
+
+  const settings = await readSubjectAccessSettings();
+  if (plan === "free" && !settings.freePlanEnabled) {
+    throw new HttpsError("failed-precondition", "Free Plan is disabled in system settings.");
+  }
+
+  const resolvedPlan = await resolveSubjectPlanDoc(requestedStudentType, plan, settings.defaultPlanKey);
+  const binding = await resolveSubscriptionPeriodBinding();
+  const entitlements = await getActiveEntitlements(resolvedPlan.id);
+
+  const existingSnap = await db.collection("subscriptions")
+    .where("student_id", "==", studentId)
+    .where("subject_id", "==", subjectId)
+    .where("status", "==", "active")
+    .limit(1)
+    .get();
+  const existingRef = existingSnap.empty ? null : existingSnap.docs[0].ref;
+  const existingData = existingSnap.empty ? null : dataOf(existingSnap.docs[0].data());
+
+  // ---- Atomic phase: assignment + subscription (+ audit) together. ----
+  const assignmentId = `${studentId}_${subjectId}`;
+  const assignmentRef = db.collection("subject_access_assignments").doc(assignmentId);
+  const auditRef = db.collection("admin_audit_log").doc();
+
+  const result = await db.runTransaction(async (transaction) => {
+    const studentRef = db.collection("users").doc(studentId);
+    const subjectRef = db.collection("subjects").doc(subjectId);
+    const liveStudentSnap = await transaction.get(studentRef);
+    const liveSubjectSnap = await transaction.get(subjectRef);
+    const liveAssignmentSnap = await transaction.get(assignmentRef);
+    if (!liveStudentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    const liveStudent = dataOf(liveStudentSnap.data());
+    if (liveStudent.role !== "student" || liveStudent.approval_status !== "approved") {
+      throw new HttpsError("failed-precondition", "Target user is not an approved student.");
+    }
+    if (!liveSubjectSnap.exists || liveSubjectSnap.data()?.is_deleted === true) {
+      throw new HttpsError("not-found", "Subject not found.");
+    }
+
+    const previous = liveAssignmentSnap.exists ? dataOf(liveAssignmentSnap.data()) : null;
+    if (
+      previous &&
+      (previous.student_id !== studentId || previous.subject_id !== subjectId)
+    ) {
+      throw new HttpsError("failed-precondition", "Subject Access assignment identity is invalid.");
+    }
+    const action = !previous ?
+      "create" :
+      previous.is_deleted === true ? "restore" : "update";
+
+    const now = FieldValue.serverTimestamp();
+    const assignmentData: Record<string, unknown> = {
+      student_id: studentId,
+      subject_id: subjectId,
+      enabled: true,
+      is_deleted: false,
+      deleted_at: null,
+      deleted_by: null,
+      entitlements,
+      subscription_expires_at: binding.endDate,
+      updated_at: now,
+      updated_by: authorization.actorId,
+    };
+    if (!previous) {
+      assignmentData.created_at = now;
+      assignmentData.created_by = authorization.actorId;
+    }
+    transaction.set(assignmentRef, assignmentData, {merge: true});
+
+    let subscriptionId: string;
+    let alreadyActive = false;
+    if (existingRef && existingData && existingData.is_deleted !== true) {
+      const currentPlanId = getString(existingData.plan_id);
+      if (currentPlanId === resolvedPlan.id) {
+        alreadyActive = true;
+        subscriptionId = existingRef.id;
+        transaction.update(existingRef, {
+          academic_period_id: binding.academicPeriodId,
+          end_date: binding.endDate,
+          updated_at: now,
+          updated_by: authorization.actorId,
+        });
+      } else {
+        subscriptionId = existingRef.id;
+        transaction.update(existingRef, {
+          previous_plan_id: currentPlanId,
+          plan_id: resolvedPlan.id,
+          academic_period_id: binding.academicPeriodId,
+          end_date: binding.endDate,
+          status: "active",
+          updated_at: now,
+          updated_by: authorization.actorId,
+        });
+      }
+    } else {
+      const subscriptionRef = db.collection("subscriptions").doc();
+      subscriptionId = subscriptionRef.id;
+      transaction.set(subscriptionRef, {
+        student_id: studentId,
+        subject_id: subjectId,
+        plan_id: resolvedPlan.id,
+        duration_type: "semester",
+        academic_period_id: binding.academicPeriodId,
+        start_date: FieldValue.serverTimestamp(),
+        end_date: binding.endDate,
+        status: "active",
+        is_frozen: false,
+        frozen_at: null,
+        resumed_at: null,
+        is_gifted: false,
+        gifted_by: null,
+        renewal_count: 0,
+        previous_plan_id: existingData ? getString(existingData.plan_id) : null,
+        is_deleted: false,
+        created_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+        created_by: authorization.actorId,
+        updated_by: authorization.actorId,
+      });
+    }
+
+    transaction.set(auditRef, {
+      action: `subject_access_granted_with_plan:${action}`,
+      entity: "subject_access_assignment",
+      target_id: assignmentId,
+      student_id: studentId,
+      subject_id: subjectId,
+      plan,
+      plan_id: resolvedPlan.id,
+      subscription_id: subscriptionId,
+      previous_enabled: previous?.enabled ?? null,
+      new_enabled: true,
+      previous_is_deleted: previous?.is_deleted ?? null,
+      new_is_deleted: false,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    return {assignmentId, subscriptionId, action, alreadyActive};
+  });
+
+  await writeAnalyticsEvent(studentId, "Subject Access Granted With Plan", result.subscriptionId, {
+    subject_id: subjectId,
+    plan,
+    plan_id: resolvedPlan.id,
+    granted_by: authorization.actorId,
+  });
+
+  return {
+    assignmentId: result.assignmentId,
+    subscriptionId: result.subscriptionId,
+    planId: resolvedPlan.id,
+    plan,
+    alreadyActive: result.alreadyActive,
+  };
+});
+
 export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireStudentAccessManager(request);
   const studentId = getString(request.data?.studentId);
@@ -3980,9 +5663,9 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   }
   await requireEnabledSubjectAccess(studentId, subjectId);
 
-  const settingsSnap = await db.collection("system_settings").limit(1).get();
-  if (settingsSnap.empty) throw new HttpsError("failed-precondition", "System settings configuration was not found.");
-  const settings = dataOf(settingsSnap.docs[0].data());
+  const settingsDoc = await db.collection("system_settings").doc("default").get();
+  if (!settingsDoc.exists) throw new HttpsError("failed-precondition", "System settings configuration was not found.");
+  const settings = dataOf(settingsDoc.data());
   if (settings.free_plan_enabled !== true) {
     throw new HttpsError("failed-precondition", "Free Plan is disabled in system settings.");
   }
@@ -3997,40 +5680,51 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
     .get();
   if (planSnap.empty) throw new HttpsError("failed-precondition", "Active default plan was not found.");
 
-  const existingSnap = await db.collection("subscriptions")
-    .where("student_id", "==", studentId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  if (!existingSnap.empty) return {subscriptionId: existingSnap.docs[0].id, alreadyActive: true};
-
   const binding = await resolveSubscriptionPeriodBinding();
-  const subscriptionRef = db.collection("subscriptions").doc();
-  await subscriptionRef.set({
-    student_id: studentId,
-    subject_id: subjectId,
-    plan_id: planSnap.docs[0].id,
-    duration_type: "semester",
-    academic_period_id: binding.academicPeriodId,
-    start_date: FieldValue.serverTimestamp(),
-    end_date: binding.endDate,
-    status: "active",
-    is_frozen: false,
-    frozen_at: null,
-    resumed_at: null,
-    is_gifted: false,
-    gifted_by: null,
-    renewal_count: 0,
-    previous_plan_id: null,
-    is_deleted: false,
-    created_at: FieldValue.serverTimestamp(),
-    updated_at: FieldValue.serverTimestamp(),
-    created_by: authorization.actorId,
-    updated_by: authorization.actorId,
-  });
 
-  await writeAnalyticsEvent(studentId, "Free Plan Activated", subscriptionRef.id, {subject_id: subjectId, plan_id: planSnap.docs[0].id, activated_by: authorization.actorId});
+  // Duplicate protection (approved single-operator hardening against
+  // double-click / retry): the active-subscription check and the creation
+  // run inside one transaction, so two concurrent or sequential duplicate
+  // submissions resolve to a single active subscription. Reference-data
+  // reads above stay outside the transaction; only check-and-create is
+  // transactional. Same query as before — no new index required.
+  const activation = await db.runTransaction(async (tx) => {
+    const existingTxSnap = await tx.get(db.collection("subscriptions")
+      .where("student_id", "==", studentId)
+      .where("subject_id", "==", subjectId)
+      .where("status", "==", "active")
+      .limit(1));
+    if (!existingTxSnap.empty) {
+      return {subscriptionId: existingTxSnap.docs[0].id, alreadyActive: true};
+    }
+    const subscriptionRef = db.collection("subscriptions").doc();
+    tx.set(subscriptionRef, {
+      student_id: studentId,
+      subject_id: subjectId,
+      plan_id: planSnap.docs[0].id,
+      duration_type: "semester",
+      academic_period_id: binding.academicPeriodId,
+      start_date: FieldValue.serverTimestamp(),
+      end_date: binding.endDate,
+      status: "active",
+      is_frozen: false,
+      frozen_at: null,
+      resumed_at: null,
+      is_gifted: false,
+      gifted_by: null,
+      renewal_count: 0,
+      previous_plan_id: null,
+      is_deleted: false,
+      created_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+      created_by: authorization.actorId,
+      updated_by: authorization.actorId,
+    });
+    return {subscriptionId: subscriptionRef.id, alreadyActive: false};
+  });
+  if (activation.alreadyActive) return {subscriptionId: activation.subscriptionId, alreadyActive: true};
+
+  await writeAnalyticsEvent(studentId, "Free Plan Activated", activation.subscriptionId, {subject_id: subjectId, plan_id: planSnap.docs[0].id, activated_by: authorization.actorId});
 
   const entitlements = await getActiveEntitlements(planSnap.docs[0].id);
   await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
@@ -4038,14 +5732,14 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
     subscription_expires_at: binding.endDate,
   });
 
-  return {subscriptionId: subscriptionRef.id, alreadyActive: false};
+  return {subscriptionId: activation.subscriptionId, alreadyActive: false};
 });
 
 /**
  * Approved payment-transcription helpers (student-level payment model —
  * payments_student_level_database_change_authority.md).
  *
- * Payments are external paper transactions transcribed by the Teacher
+ * Payments are external paper transactions transcribed by the Doctor
  * (Platform Owner) for record-keeping only. No collection, processing,
  * verification, or routing of payments occurs here. Each payment is a
  * student-level transaction against the student's financial account;
@@ -4174,11 +5868,11 @@ async function sumPaidForStudent(
 }
 
 export const onPaymentLogged = onCall(SECURE_CALL_OPTS, async (request) => {
-  // Teacher-only: payment recording is transcription by the Platform Owner.
+  // Doctor-only: payment recording is transcription by the Platform Owner.
   // Student-level financial transaction (approved student-level payment
   // model). subjectId, when supplied, is nullable legacy/descriptive
   // metadata only and never participates in financial enforcement.
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId)?.trim() || null;
   const amount = getNumber(request.data?.amount);
@@ -4209,26 +5903,49 @@ export const onPaymentLogged = onCall(SECURE_CALL_OPTS, async (request) => {
     );
   }
 
+  // Idempotency (approved single-operator hardening against double-click /
+  // client / network retry): deterministic document ID derived from the
+  // request's own business identity (student + paper receipt + amount +
+  // method + date). An identical repeat resolves to the same document, so
+  // it cannot create a second ledger row; any genuinely different payment
+  // (different receipt, amount, method, or date) yields a different ID and
+  // records normally. No new fields, no new collections, no new indexes:
+  // single-document get-or-create inside one transaction (serialized under
+  // concurrency). Side effects below run only on first creation.
+  const rawPaymentDateInput = getString(request.data?.paymentDate)?.trim() ?? "";
+  const paymentId =
+    "pay_" +
+    createHash("sha256")
+      .update([studentId, receiptNumber, String(amount), paymentMethod, rawPaymentDateInput].join("|"))
+      .digest("hex")
+      .slice(0, 32);
+  const paymentRef = db.collection("payment_logs").doc(paymentId);
   const now = FieldValue.serverTimestamp();
-  const paymentRef = await db.collection("payment_logs").add({
-    student_id: studentId,
-    ...(subjectId ? {subject_id: subjectId} : {}),
-    amount,
-    payment_date: paymentDate,
-    payment_method: paymentMethod,
-    // Collector = person who physically received the money (paper record).
-    // Recorder = Teacher below (created_by). Never the same source.
-    collected_by: collectorName,
-    receipt_number: receiptNumber,
-    notes: notes,
-    created_at: now,
-    updated_at: now,
-    created_by: teacherId,
-    updated_by: teacherId,
-    is_deleted: false,
-    deleted_at: null,
-    deleted_by: null,
+  const isDuplicate = await db.runTransaction(async (tx) => {
+    const existingSnap = await tx.get(paymentRef);
+    if (existingSnap.exists) return true;
+    tx.set(paymentRef, {
+      student_id: studentId,
+      ...(subjectId ? {subject_id: subjectId} : {}),
+      amount,
+      payment_date: paymentDate,
+      payment_method: paymentMethod,
+      // Collector = person who physically received the money (paper record).
+      // Recorder = Doctor below (created_by). Never the same source.
+      collected_by: collectorName,
+      receipt_number: receiptNumber,
+      notes: notes,
+      created_at: now,
+      updated_at: now,
+      created_by: doctorId,
+      updated_by: doctorId,
+      is_deleted: false,
+      deleted_at: null,
+      deleted_by: null,
+    });
+    return false;
   });
+  if (isDuplicate) return {logged: true, paymentId};
 
   await db.collection("admin_audit_log").add({
     action: "payment_logged",
@@ -4238,9 +5955,9 @@ export const onPaymentLogged = onCall(SECURE_CALL_OPTS, async (request) => {
     ...(subjectId ? {subject_id: subjectId} : {}),
     amount,
     receipt_number: receiptNumber,
-    actor_id: teacherId,
-    actor_role: "teacher",
-    permission_basis: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
+    permission_basis: "doctor",
     created_at: now,
     timestamp: now,
   });
@@ -4252,18 +5969,18 @@ export const onPaymentLogged = onCall(SECURE_CALL_OPTS, async (request) => {
 });
 
 /**
- * Teacher-only student-level financial account (approved student-level
+ * Doctor-only student-level financial account (approved student-level
  * payment model — payments_student_level_database_change_authority.md).
  *
  * Each student has exactly ONE financial account at
  * `student_financial_accounts/{studentId}`. Price and Discount are
- * entered manually by the Teacher. Net = Price − Discount. Accounting
+ * entered manually by the Doctor. Net = Price − Discount. Accounting
  * is independent from membership/subscriptions; never stored on
  * subjects, plans, or subscriptions documents. Replaces the retired
  * per-Subject `setStudentSubjectAccount`.
  */
 export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const studentId = getString(request.data?.studentId);
   const price = getNumber(request.data?.priceEgp);
   const discount = getNumber(request.data?.discountEgp);
@@ -4309,7 +6026,7 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
       deleted_at: null,
       deleted_by: null,
       updated_at: now,
-      updated_by: teacherId,
+      updated_by: doctorId,
     });
     await db.collection("admin_audit_log").add({
       action: "financial_account_updated",
@@ -4318,9 +6035,9 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
       student_id: studentId,
       previous_net: prev.net_egp ?? null,
       net_egp: net,
-      actor_id: teacherId,
-      actor_role: "teacher",
-      permission_basis: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
+      permission_basis: "doctor",
       created_at: now,
       timestamp: now,
     });
@@ -4332,8 +6049,8 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
       net_egp: net,
       created_at: now,
       updated_at: now,
-      created_by: teacherId,
-      updated_by: teacherId,
+      created_by: doctorId,
+      updated_by: doctorId,
       is_deleted: false,
       deleted_at: null,
       deleted_by: null,
@@ -4344,9 +6061,9 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
       target_id: accountRef.id,
       student_id: studentId,
       net_egp: net,
-      actor_id: teacherId,
-      actor_role: "teacher",
-      permission_basis: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
+      permission_basis: "doctor",
       created_at: now,
       timestamp: now,
     });
@@ -4356,12 +6073,12 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
 });
 
 /**
- * Teacher-only manual per-Student x Subject pricing reference (approved
+ * Doctor-only manual per-Student x Subject pricing reference (approved
  * student_subject_pricing_database_change_authority.md).
  *
  * ONE callable for both Create and Correct at the deterministic document
  * `student_subject_pricing/{studentId}_{subjectId}`. Price and Discount
- * are entered manually by the Teacher; Net = Price - Discount is always
+ * are entered manually by the Doctor; Net = Price - Discount is always
  * derived server-side and any client-supplied net value is ignored.
  *
  * DISPLAY / FINANCIAL-REFERENCE ONLY. This callable never authorizes
@@ -4370,7 +6087,7 @@ export const setStudentFinancialAccount = onCall(SECURE_CALL_OPTS, async (reques
  * student_subject_accounts, subscriptions, or subject_access_assignments.
  */
 export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const studentId = getString(request.data?.studentId);
   const subjectId = getString(request.data?.subjectId);
   const price = getNumber(request.data?.priceEgp);
@@ -4414,7 +6131,7 @@ export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request)
       deleted_at: null,
       deleted_by: null,
       updated_at: now,
-      updated_by: teacherId,
+      updated_by: doctorId,
     });
     await db.collection("admin_audit_log").add({
       action: "subject_pricing_updated",
@@ -4432,9 +6149,9 @@ export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request)
         discount_egp: discount,
         net_egp: net,
       },
-      actor_id: teacherId,
-      actor_role: "teacher",
-      permission_basis: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
+      permission_basis: "doctor",
       created_at: now,
       timestamp: now,
     });
@@ -4447,8 +6164,8 @@ export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request)
       net_egp: net,
       created_at: now,
       updated_at: now,
-      created_by: teacherId,
-      updated_by: teacherId,
+      created_by: doctorId,
+      updated_by: doctorId,
       is_deleted: false,
       deleted_at: null,
       deleted_by: null,
@@ -4462,9 +6179,9 @@ export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request)
       price_egp: price,
       discount_egp: discount,
       net_egp: net,
-      actor_id: teacherId,
-      actor_role: "teacher",
-      permission_basis: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
+      permission_basis: "doctor",
       created_at: now,
       timestamp: now,
     });
@@ -4474,16 +6191,16 @@ export const setStudentSubjectPricing = onCall(SECURE_CALL_OPTS, async (request)
 });
 
 /**
-  * Teacher-only in-place correction of a transcribed payment record.
+  * Doctor-only in-place correction of a transcribed payment record.
   *
   * The record keeps its identity; student_id linkage, created_by and
   * created_at are immutable (a historical subject_id memo, if present,
   * is frozen descriptive text and is never edited here).
   * updated_by/updated_at track the correcting
-  * Teacher, and the before/after values are written to the audit log.
+  * Doctor, and the before/after values are written to the audit log.
   */
 export const correctPaymentLog = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const paymentId = getString(request.data?.paymentId)?.trim();
   if (!paymentId) {
     throw new HttpsError("invalid-argument", "paymentId is required.");
@@ -4580,7 +6297,7 @@ export const correctPaymentLog = onCall(SECURE_CALL_OPTS, async (request) => {
   await paymentRef.update({
     ...patch,
     updated_at: now,
-    updated_by: teacherId,
+    updated_by: doctorId,
   });
 
   await db.collection("admin_audit_log").add({
@@ -4591,9 +6308,9 @@ export const correctPaymentLog = onCall(SECURE_CALL_OPTS, async (request) => {
     ...auditSubject,
     before,
     after: patch,
-    actor_id: teacherId,
-    actor_role: "teacher",
-    permission_basis: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
+    permission_basis: "doctor",
     created_at: now,
     timestamp: now,
   });
@@ -4670,6 +6387,19 @@ async function changeMembershipPlan(
     updated_by: authorization.actorId,
   });
   await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: authorization.actorId});
+  await db.collection("admin_audit_log").add({
+    action: "membership_plan_changed",
+    entity: "subscriptions",
+    target_id: studentId,
+    subscription_id: membership.ref.id,
+    previous_plan_id: getString(membership.data.plan_id),
+    new_plan_id: newPlanId,
+    actor_id: authorization.actorId,
+    actor_role: authorization.actorRole,
+    permission_basis: authorization.permissionBasis,
+    created_at: FieldValue.serverTimestamp(),
+    timestamp: FieldValue.serverTimestamp(),
+  });
 
   const entitlements = await getActiveEntitlements(newPlanId);
   await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
@@ -4690,20 +6420,46 @@ export const renew = onCall(SECURE_CALL_OPTS, async (request) => {
   if (!studentId || !subjectId) throw new HttpsError("invalid-argument", "studentId and subjectId are required.");
   const membership = await getMembershipForMutation(studentId, subjectId);
   const binding = await resolveSubscriptionPeriodBinding();
-  await membership.ref.update({
-    academic_period_id: binding.academicPeriodId,
-    end_date: binding.endDate,
-    status: "active",
-    renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
-    updated_at: FieldValue.serverTimestamp(),
-    updated_by: authorization.actorId,
+  // Renew mirror sync (subscription-expiry drift fix): the assignment row's
+  // subscription_expires_at is the server-maintained mirror of
+  // subscriptions.end_date, so renew writes both with the same value in one
+  // transaction — no new fields, no logic change, same return contract. The
+  // mirror update is skipped only when no assignment row exists (renew keeps
+  // succeeding exactly as before in that case).
+  await db.runTransaction(async (tx) => {
+    const assignmentRef = db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`);
+    const assignmentSnap = await tx.get(assignmentRef);
+    tx.update(membership.ref, {
+      academic_period_id: binding.academicPeriodId,
+      end_date: binding.endDate,
+      status: "active",
+      renewal_count: (typeof membership.data.renewal_count === "number" ? membership.data.renewal_count : 0) + 1,
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: authorization.actorId,
+    });
+    if (assignmentSnap.exists) {
+      tx.update(assignmentRef, {
+        subscription_expires_at: binding.endDate,
+      });
+    }
   });
   await writeAnalyticsEvent(studentId, "Membership Renewed", membership.ref.id, {subject_id: subjectId, renewed_by: authorization.actorId});
+  await db.collection("admin_audit_log").add({
+    action: "membership_renewed",
+    entity: "subscriptions",
+    target_id: studentId,
+    subscription_id: membership.ref.id,
+    actor_id: authorization.actorId,
+    actor_role: authorization.actorRole,
+    permission_basis: authorization.permissionBasis,
+    created_at: FieldValue.serverTimestamp(),
+    timestamp: FieldValue.serverTimestamp(),
+  });
   return {subscriptionId: membership.ref.id};
 });
 
 export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const subscriptionId = getString(request.data?.subscriptionId);
   const disabled = request.data?.disabled;
   const reason = getString(request.data?.reason);
@@ -4721,7 +6477,7 @@ export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async 
 
     transaction.update(subscriptionRef, {
       manually_disabled: disabled,
-      disabled_by: disabled ? teacherId : null,
+      disabled_by: disabled ? doctorId : null,
       disabled_at: disabled ? FieldValue.serverTimestamp() : null,
       disabled_reason: disabled ? (reason ?? null) : null,
       updated_at: FieldValue.serverTimestamp(),
@@ -4734,7 +6490,7 @@ export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async 
       student_id: previous.student_id ?? null,
       subject_id: previous.subject_id ?? null,
       reason: reason ?? null,
-      actor_id: teacherId,
+      actor_id: doctorId,
       created_at: FieldValue.serverTimestamp(),
     });
   });
@@ -4744,7 +6500,7 @@ export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async 
 
 /* ============================================================
  * ACADEMIC PERIODS
- * Teacher (Platform Owner) ONLY - no delegated admin permission.
+ * Doctor (Platform Owner) ONLY - no delegated admin permission.
  *
  * Approved schema (collection: academic_periods):
  *   id, period_type (term_1 | term_2 | summer_course | free text),
@@ -4755,9 +6511,9 @@ export const setSubscriptionDisciplinaryStatus = onCall(SECURE_CALL_OPTS, async 
 const ACADEMIC_PERIOD_STATUSES = new Set(["active", "ended"]);
 
 const CORE_ACADEMIC_PERIODS = [
-  {id: "term_1", periodType: "term_1", label: "Ø§Ù„ØªØ±Ù… Ø§Ù„Ø£ÙˆÙ„", displayOrder: 1},
-  {id: "term_2", periodType: "term_2", label: "Ø§Ù„ØªØ±Ù… Ø§Ù„Ø«Ø§Ù†ÙŠ", displayOrder: 2},
-  {id: "summer_course", periodType: "summer_course", label: "Ø§Ù„Ø³Ù…Ø± ÙƒÙˆØ±Ø³", displayOrder: 3},
+  {id: "term_1", periodType: "term_1", label: "الترم الأول", displayOrder: 1},
+  {id: "term_2", periodType: "term_2", label: "الترم الثاني", displayOrder: 2},
+  {id: "summer_course", periodType: "summer_course", label: "السمر كورس", displayOrder: 3},
 ];
 
 function normalizePeriodStatus(value: unknown): string {
@@ -4789,7 +6545,7 @@ function serializeAcademicPeriod(doc: DocumentData) {
 }
 
 export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
 
   const batch = db.batch();
   let created = 0;
@@ -4809,10 +6565,10 @@ export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request
         display_order: period.displayOrder,
         started_at: null,
         ended_at: null,
-        created_by: teacherId,
+        created_by: doctorId,
         created_at: FieldValue.serverTimestamp(),
         updated_at: FieldValue.serverTimestamp(),
-        updated_by: teacherId,
+        updated_by: doctorId,
         is_deleted: false,
       });
     } else {
@@ -4830,7 +6586,7 @@ export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request
       }
       if (Object.keys(patch).length > 0) {
         patch.updated_at = FieldValue.serverTimestamp();
-        patch.updated_by = teacherId;
+        patch.updated_by = doctorId;
         batch.set(ref, patch, {merge: true});
       }
     }
@@ -4840,8 +6596,8 @@ export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request
 
   await db.collection("admin_audit_log").add({
     action: "academic_periods_initialized",
-    actor_id: teacherId,
-    actor_role: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
     target_type: "academic_periods",
     previous_state: null,
     new_state: "INITIALIZED",
@@ -4858,7 +6614,7 @@ export const initializeAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request
 
 
 export const getAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request) => {
-  requireTeacher(request);
+  requireDoctor(request);
 
   const snapshot = await db
     .collection("academic_periods")
@@ -4876,7 +6632,7 @@ export const getAcademicPeriods = onCall(SECURE_CALL_OPTS, async (request) => {
 });
 
 export const createExceptionalAcademicPeriod = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
 
   const label = getString(request.data?.label) ?? getString(request.data?.name);
   const periodType = getString(request.data?.periodType) ?? "exceptional";
@@ -4899,17 +6655,17 @@ export const createExceptionalAcademicPeriod = onCall(SECURE_CALL_OPTS, async (r
     display_order: 99,
     started_at: null,
     ended_at: null,
-    created_by: teacherId,
+    created_by: doctorId,
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp(),
-    updated_by: teacherId,
+    updated_by: doctorId,
     is_deleted: false,
   });
 
   await db.collection("admin_audit_log").add({
     action: "academic_period_created",
-    actor_id: teacherId,
-    actor_role: "teacher",
+    actor_id: doctorId,
+    actor_role: "doctor",
     target_id: ref.id,
     target_type: "academic_period",
     previous_state: null,
@@ -4925,7 +6681,7 @@ export const createExceptionalAcademicPeriod = onCall(SECURE_CALL_OPTS, async (r
 });
 
 export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
 
   const periodId = getString(request.data?.periodId);
   const requestedStatus = getString(request.data?.status);
@@ -4981,7 +6737,7 @@ export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) 
     const update: Record<string, unknown> = {
       status: newStatus,
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     };
 
     if (newStatus === "active") {
@@ -5000,8 +6756,8 @@ export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) 
 
     transaction.set(auditRef, {
       action: "academic_period_status_changed",
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       target_id: periodId,
       target_type: "academic_period",
       previous_state: previousStatus,
@@ -5028,7 +6784,7 @@ export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) 
         status: "expired",
         end_date: endedAt,
         updated_at: FieldValue.serverTimestamp(),
-        updated_by: teacherId,
+        updated_by: doctorId,
       });
       operations++;
 
@@ -5062,19 +6818,19 @@ export const setAcademicPeriodStatus = onCall(SECURE_CALL_OPTS, async (request) 
 
 /* ============================================================
  * SUBJECT MANAGEMENT (Dashboard)
- * Same permission pattern as setSubjectAccess: Teacher always,
+ * Same permission pattern as setSubjectAccess: Doctor always,
  * delegated admin only with the matching admin_permissions key.
  * ============================================================ */
 
 async function requireContentManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
-  actorRole: "teacher" | "admin";
-  permissionBasis: "teacher" | "delegated:admin_content";
+  actorRole: "doctor" | "admin";
+  permissionBasis: "doctor" | "delegated:admin_content";
 }> {
   const actorId = requireAuthenticated(request);
   const role = callerRole(request);
-  if (role === "teacher") {
-    return {actorId, actorRole: "teacher", permissionBasis: "teacher"};
+  if (role === "doctor") {
+    return {actorId, actorRole: "doctor", permissionBasis: "doctor"};
   }
   if (role !== "admin") {
     throw new HttpsError("permission-denied", "Content management permission is required.");
@@ -5252,7 +7008,7 @@ export const deleteSubject = onCall(SECURE_CALL_OPTS, async (request) => {
 
 /* ============================================================
  * ADMIN MANAGEMENT (Dashboard)
- * Teacher (Platform Owner) ONLY - no delegated permission.
+ * Doctor (Platform Owner) ONLY - no delegated permission.
  * ============================================================ */
 
 const ADMIN_PERMISSION_KEYS = [
@@ -5265,7 +7021,6 @@ const ADMIN_PERMISSION_KEYS = [
   "admin_payments",
   "admin_settings",
   "password_reset",
-  "password.reset",
   "admin_academic_terms",
 ];
 
@@ -5279,7 +7034,7 @@ function sanitizeAdminPermissions(value: unknown): Record<string, boolean> {
 }
 
 export const addAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
     throw new HttpsError("invalid-argument", "userId is required.");
@@ -5293,43 +7048,46 @@ export const addAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
     const userSnap = await transaction.get(userRef);
     if (!userSnap.exists) throw new HttpsError("not-found", "User not found.");
     const user = dataOf(userSnap.data());
-    if (user.role === "teacher") {
-      throw new HttpsError("failed-precondition", "The Teacher role cannot be reassigned.");
+    if (user.role === "doctor") {
+      throw new HttpsError("failed-precondition", "The Doctor role cannot be reassigned.");
     }
 
     transaction.update(userRef, {
       role: "admin",
       approval_status: "approved",
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     });
     transaction.set(permissionRef, {
       admin_id: userId,
       is_active: true,
       permissions,
       created_at: FieldValue.serverTimestamp(),
-      created_by: teacherId,
+      created_by: doctorId,
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     }, {merge: true});
     transaction.set(db.collection("admin_audit_log").doc(), {
       action: "admin_added",
       entity: "admin_permissions",
       target_id: userId,
       permissions,
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
   });
 
-  await auth.setCustomUserClaims(userId, {role: "admin", approved: true});
+  // Merge-preserving claims write (mirrors changePassword/syncStaffStoredClaims):
+  // a full overwrite here would silently strip unrelated stored claims.
+  const currentAdmin = await auth.getUser(userId);
+  await auth.setCustomUserClaims(userId, {...(currentAdmin.customClaims ?? {}), role: "admin", approved: true});
   return {success: true, userId};
 });
 
 export const removeAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
     throw new HttpsError("invalid-argument", "userId is required.");
@@ -5350,31 +7108,34 @@ export const removeAdmin = onCall(SECURE_CALL_OPTS, async (request) => {
       role: "student",
       account_status: "disabled",
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     });
     transaction.set(permissionRef, {
       is_active: false,
       permissions: sanitizeAdminPermissions(null),
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     }, {merge: true});
     transaction.set(db.collection("admin_audit_log").doc(), {
       action: "admin_removed",
       entity: "admin_permissions",
       target_id: userId,
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
   });
 
-  await auth.setCustomUserClaims(userId, {role: "student", approved: false});
+  // Merge-preserving claims write (mirrors changePassword/syncStaffStoredClaims):
+  // a full overwrite here would silently strip unrelated stored claims.
+  const currentRemoved = await auth.getUser(userId);
+  await auth.setCustomUserClaims(userId, {...(currentRemoved.customClaims ?? {}), role: "student", approved: false});
   return {success: true, userId};
 });
 
 export const setAdminPermissions = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const userId = getString(request.data?.userId);
   if (!userId) {
     throw new HttpsError("invalid-argument", "userId is required.");
@@ -5396,15 +7157,15 @@ export const setAdminPermissions = onCall(SECURE_CALL_OPTS, async (request) => {
       is_active: true,
       permissions,
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     }, {merge: true});
     transaction.set(db.collection("admin_audit_log").doc(), {
       action: "admin_permissions_updated",
       entity: "admin_permissions",
       target_id: userId,
       permissions,
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
@@ -5416,11 +7177,11 @@ export const setAdminPermissions = onCall(SECURE_CALL_OPTS, async (request) => {
 /* ============================================================
  * PLATFORM FEATURE MATRIX (Dashboard)
  * Platform-wide feature toggles, independent from plan features.
- * Teacher (Platform Owner) ONLY.
+ * Doctor (Platform Owner) ONLY.
  * ============================================================ */
 
 export const setPlatformFeature = onCall(SECURE_CALL_OPTS, async (request) => {
-  const teacherId = requireTeacher(request);
+  const doctorId = requireDoctor(request);
   const featureKey = getString(request.data?.featureKey);
   const enabled = request.data?.enabled;
   const label = getString(request.data?.label);
@@ -5440,10 +7201,10 @@ export const setPlatformFeature = onCall(SECURE_CALL_OPTS, async (request) => {
       label: label ?? previous?.label ?? featureKey,
       enabled,
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
       ...(previous ? {} : {
         created_at: FieldValue.serverTimestamp(),
-        created_by: teacherId,
+        created_by: doctorId,
       }),
     }, {merge: true});
     transaction.set(db.collection("admin_audit_log").doc(), {
@@ -5452,8 +7213,8 @@ export const setPlatformFeature = onCall(SECURE_CALL_OPTS, async (request) => {
       target_id: featureKey,
       previous_enabled: previous?.enabled ?? null,
       new_enabled: enabled,
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
@@ -5583,13 +7344,52 @@ export function isDirectThumbnailUrl(url: any): boolean {
   return lower.startsWith("http://") || lower.startsWith("https://");
 }
 
+/**
+ * Canonical listing alignment for the first-video predicate (Phase 2):
+ * soft-deleted rows are never served, even while still marked visible —
+ * dashboard soft-delete keeps `is_visible: true` by design, and the
+ * indexed query filters visibility only. The remaining clauses stay where
+ * they belong: lecture scoping, visibility, and ordering in the indexed
+ * query; entitlement in the checks above; bunny presence in selection.
+ * In-memory (no new composite index required). Pure — unit-testable.
+ */
+export function isServedLectureResource(resource: DocumentData): boolean {
+  return resource?.is_deleted !== true;
+}
+
+const BUNNY_VIDEO_GUID_STRICT =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * VIDEO-ID-ONLY policy: only a bare Bunny GUID validates. Player/share
+ * URLs are NEVER normalized — they are invalid input and must fail
+ * closed. Kept as a pure helper so issuance + future writes share it.
+ */
+export function isValidBunnyVideoId(value: unknown): boolean {
+  const raw = getString(value);
+  if (!raw) return false;
+  return BUNNY_VIDEO_GUID_STRICT.test(raw.trim());
+}
+
+/**
+ * Canonical Bunny identifier for the issuance lookup — VIDEO-ID-ONLY:
+ * returns the trimmed raw value unchanged (no URL → GUID extraction).
+ * URLs therefore never match a stored GUID and fail closed with the
+ * exact-match query below.
+ */
+export function normalizeBunnyVideoIdForLookup(value: unknown): string | null {
+  const raw = getString(value);
+  if (!raw) return null;
+  return raw.trim();
+}
+
 
 // ============================================================
 // RESTORED FUNCTIONS (recovered from dr_tarek_platform_code_review — 2026-09-01)
 // Reason: functions were present on server but missing from local code after legacy sync
 // ============================================================
 
-export const getActiveCustomGroups = onCall(async (request) => {
+export const getActiveCustomGroups = onCall(SECURE_CALL_OPTS, async (request) => {
   await assertStaffDirectoryAllowed(request);
   const snap = await db.collection("custom_groups")
     .where("is_active", "==", true)
@@ -5605,9 +7405,9 @@ export const getActiveCustomGroups = onCall(async (request) => {
   return {groups};
 });
 
-export const listStaffDirectory = onCall(async (request) => {
+export const listStaffDirectory = onCall(SECURE_CALL_OPTS, async (request) => {
   await assertStaffDirectoryAllowed(request);
-  const snap = await db.collection("users").where("role", "in", ["teacher", "admin"]).get();
+  const snap = await db.collection("users").where("role", "in", ["doctor", "admin"]).get();
 
   const staff = snap.docs
     .map((doc) => ({id: doc.id, data: dataOf(doc.data())}))
@@ -5617,7 +7417,7 @@ export const listStaffDirectory = onCall(async (request) => {
     })
     .map(({data}) => ({
       displayName: getString(data.full_name)?.trim() ?? "",
-      roleKind: data.role === "teacher" ? "dr" : "admin",
+      roleKind: data.role === "doctor" ? "dr" : "admin",
     }))
     .filter((entry) => entry.displayName.length > 0)
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
@@ -5634,10 +7434,19 @@ export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
     throw new HttpsError("invalid-argument", "Display name and password are required.");
   }
 
+  // Pre-lookup anti-spray gate (staff path only): evaluated before the
+  // users query and before any name-state branch, so throttled callers
+  // learn nothing about name existence. Absent IP skips, matching the
+  // student-login gate; Firestore errors propagate and fail closed.
+  const staffLoginIp = requestIp(request);
+  if (staffLoginIp) {
+    await assertLoginNotLocked(STAFF_LOGIN_IP_SCOPE, staffLoginIp);
+  }
+
   const throttleKey = displayName.toLowerCase();
   await assertLoginNotLocked("staff_login", throttleKey);
 
-  const snap = await db.collection("users").where("role", "in", ["teacher", "admin"]).get();
+  const snap = await db.collection("users").where("role", "in", ["doctor", "admin"]).get();
   const matches = snap.docs.filter((doc) => {
     const user = dataOf(doc.data());
     if (!user || typeof user !== "object") return false;
@@ -5650,6 +7459,9 @@ export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
 
   if (matches.length === 0) {
     await recordLoginFailure("staff_login", throttleKey);
+    if (staffLoginIp) {
+      await recordLoginFailure(STAFF_LOGIN_IP_SCOPE, staffLoginIp, STAFF_LOGIN_IP_MAX_FAILURES);
+    }
     throw new HttpsError("unauthenticated", "Invalid name or password.");
   }
   if (matches.length > 1) {
@@ -5667,6 +7479,9 @@ export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
   const passwordHash = getString(secretData.password_hash) ?? getString(user.password_hash);
   if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
     await recordLoginFailure("staff_login", throttleKey);
+    if (staffLoginIp) {
+      await recordLoginFailure(STAFF_LOGIN_IP_SCOPE, staffLoginIp, STAFF_LOGIN_IP_MAX_FAILURES);
+    }
     await writeAnalyticsEvent(userDoc.id, "Failed Login", userDoc.id, {reason: "invalid_staff_credentials"}, request);
     throw new HttpsError("unauthenticated", "Invalid name or password.");
   }
@@ -5689,6 +7504,7 @@ export const verifyStaffPassword = onCall(SECURE_CALL_OPTS, async (request) => {
 
 export const uploadBunnyResource = onCall(
   {
+    ...SECURE_CALL_OPTS,
     secrets: [
       SECRET_BUNNY_TOKEN_KEY,
       SECRET_BUNNY_STORAGE_BASE_URL,
@@ -5697,14 +7513,8 @@ export const uploadBunnyResource = onCall(
     ],
   },
   async (request) => {
-    const actorId = await (async () => {
-      const uid = requireAuthenticated(request);
-      const role = callerRole(request);
-      if (!role || !ADMIN_ROLES.has(role)) {
-        throw new HttpsError("permission-denied", "Admin or Teacher permission is required.");
-      }
-      return uid;
-    })();
+    const authorization = await requireContentManager(request);
+    const actorId = authorization.actorId;
 
     const lectureId = getString(request.data?.lectureId);
     const resourceId = getString(request.data?.resourceId);
@@ -5736,7 +7546,7 @@ export const uploadBunnyResource = onCall(
       storage_path: storagePath,
       byte_size: bytes.length,
       actor_id: actorId,
-      actor_role: callerRole(request),
+      actor_role: authorization.actorRole,
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
@@ -5746,6 +7556,7 @@ export const uploadBunnyResource = onCall(
 
 export const deleteBunnyResource = onCall(
   {
+    ...SECURE_CALL_OPTS,
     secrets: [
       SECRET_BUNNY_TOKEN_KEY,
       SECRET_BUNNY_STORAGE_BASE_URL,
@@ -5754,11 +7565,9 @@ export const deleteBunnyResource = onCall(
     ],
   },
   async (request) => {
-    const uid = requireAuthenticated(request);
-    const role = callerRole(request);
-    if (!role || !ADMIN_ROLES.has(role)) {
-      throw new HttpsError("permission-denied", "Admin or Teacher permission is required.");
-    }
+    const authorization = await requireContentManager(request);
+    const uid = authorization.actorId;
+    const role = authorization.actorRole;
     const storagePath = getString(request.data?.storagePath);
     if (!storagePath || storagePath.includes("..")) {
       throw new HttpsError("invalid-argument", "A valid storagePath is required.");
@@ -5778,6 +7587,7 @@ export const deleteBunnyResource = onCall(
 
 export const generateBunnyResourceUrl = onCall(
   {
+    ...SECURE_CALL_OPTS,
     secrets: [
       SECRET_BUNNY_TOKEN_KEY,
       SECRET_BUNNY_STORAGE_BASE_URL,
@@ -5865,6 +7675,156 @@ export const submitPasswordResetRequest = onCall(SECURE_CALL_OPTS, async (reques
   return {submitted: true};
 });
 
+/**
+ * O6-B sanitized question delivery (Option B: results only after final submit).
+ *
+ * `getAssessmentQuestions` returns display-only question payloads for a
+ * caller-owned, still-started attempt. It NEVER returns answer keys
+ * (correct_answer/correctAnswer), explanations, scores, or grading
+ * metadata — by construction `sanitizeAssessmentQuestion` below does not
+ * read those fields. There is intentionally NO per-question evaluation
+ * endpoint: correctness is computed only inside `submitAssessmentAttempt`
+ * at final submission. Post-submit question review is not offered (the
+ * score/total returned at submit is the result surface); explanations are
+ * omitted entirely because no Approved assessment policy field authorizes
+ * their release.
+ */
+export type SanitizedAssessmentQuestionType = "mcq" | "true-false" | "essay";
+
+export interface SanitizedAssessmentQuestion {
+  id: string;
+  type: SanitizedAssessmentQuestionType;
+  text: string;
+  options: string[];
+  marks: number;
+  order: number;
+}
+
+export function normalizeAssessmentQuestionType(raw: unknown): SanitizedAssessmentQuestionType {
+  const t = (typeof raw === "string" ? raw : "").trim().toLowerCase().replace(/[\s_/]+/g, "-");
+  if (t === "true-false" || t === "truefalse" || t === "tf" || t === "boolean") return "true-false";
+  if (t === "essay" || t === "written" || t === "free-text" || t === "freetext") return "essay";
+  return "mcq";
+}
+
+export function sanitizeAssessmentQuestion(
+  link: {questionId: string; marks: number; order: number},
+  bank: DocumentData | null | undefined,
+): SanitizedAssessmentQuestion | null {
+  if (!bank) return null;
+  let text = "";
+  for (const candidate of [bank.question_text, bank.text, bank.question]) {
+    if (typeof candidate === "string" && candidate.length > 0) {
+      text = candidate;
+      break;
+    }
+  }
+  const rawOptions = Array.isArray(bank.options) ?
+    bank.options :
+    (Array.isArray(bank.choices) ? bank.choices : []);
+  const options = (rawOptions as unknown[])
+    .filter((o): o is string => typeof o === "string")
+    .slice(0, 12);
+  const marks = typeof link.marks === "number" && link.marks > 0 ? Math.floor(link.marks) : 1;
+  const order = typeof link.order === "number" ? link.order : 0;
+  return {
+    id: link.questionId,
+    type: normalizeAssessmentQuestionType(bank.question_type ?? bank.type),
+    text,
+    options,
+    marks,
+    order,
+  };
+}
+
+export const getAssessmentQuestions = onCall(SECURE_CALL_OPTS, async (request) => {
+  const userId = requireAuthenticated(request);
+  const attemptId = getString(request.data?.attemptId);
+  const attemptType = getString(request.data?.attemptType) === "quiz" ? "quiz" : "exam";
+  if (!attemptId) throw new HttpsError("invalid-argument", "attemptId is required.");
+
+  const attemptsCollection = attemptType === "quiz" ? "quiz_attempts" : "exam_attempts";
+  const assessmentsCollection = attemptType === "quiz" ? "timeline_quizzes" : "exams";
+  const linksCollection = attemptType === "quiz" ? "quiz_questions" : "exam_questions";
+  const linkKeyField = attemptType === "quiz" ? "quiz_id" : "exam_id";
+
+  const attemptSnap = await db.collection(attemptsCollection).doc(attemptId).get();
+  if (!attemptSnap.exists) {
+    throw new HttpsError("not-found", `${attemptType} attempt not found.`);
+  }
+  const attempt = dataOf(attemptSnap.data());
+  if (getString(attempt.student_id) !== userId) {
+    throw new HttpsError("permission-denied", "Attempt does not belong to the caller.");
+  }
+  if (getString(attempt.status) !== "started") {
+    throw new HttpsError("failed-precondition", "Questions are available only before final submission.");
+  }
+  const assessmentId = getString(attempt.assessment_id);
+  if (!assessmentId) throw new HttpsError("failed-precondition", "Attempt is missing its assessment reference.");
+
+  const assessmentSnap = await db.collection(assessmentsCollection).doc(assessmentId).get();
+  if (!assessmentSnap.exists || dataOf(assessmentSnap.data()).is_deleted === true) {
+    throw new HttpsError("not-found", `${attemptType} not found.`);
+  }
+  const assessment = dataOf(assessmentSnap.data());
+  const published =
+    assessment.is_published === true || getString(assessment.status) === "published";
+  if (!published) {
+    throw new HttpsError("failed-precondition", `${attemptType} is not published.`);
+  }
+
+  // Subject/term entitlement (O6-B): live assignment required; staff bypass
+  // covers owner preview/diagnostics. Missing subject reference fails closed.
+  const subjectId = getString(assessment.subject_id);
+  if (!subjectId) {
+    throw new HttpsError("failed-precondition", `${attemptType} is missing its subject reference.`);
+  }
+  const role = callerRole(request);
+  if (!role || !ADMIN_ROLES.has(role)) {
+    await requireEnabledSubjectAccess(userId, subjectId);
+  }
+
+  // Same server-side time gate as final submission: expired attempts cannot
+  // fetch questions. Quizzes carry no duration field → no gate (mirrors submit).
+  const startedAt = attempt.started_at;
+  const durationMinutes =
+    getNumber(assessment.duration_minutes) ?? getNumber(assessment.duration);
+  const startedMs =
+    startedAt && typeof startedAt.toMillis === "function" ? startedAt.toMillis() : null;
+  if (
+    durationMinutes !== null &&
+    durationMinutes >= 0 &&
+    startedMs !== null &&
+    Date.now() > startedMs + durationMinutes * 60_000 + EXAM_SUBMIT_TIME_GRACE_MS
+  ) {
+    throw new HttpsError("deadline-exceeded", "The assessment time limit has elapsed.");
+  }
+
+  const linksSnap = await db.collection(linksCollection).where(linkKeyField, "==", assessmentId).get();
+  const questions: SanitizedAssessmentQuestion[] = [];
+  const links = linksSnap.docs
+    .map((doc) => {
+      const data = doc.data();
+      return {
+        questionId: getString((data as Record<string, unknown>).question_id) ?? "",
+        marks: getNumber((data as Record<string, unknown>).marks) ?? 1,
+        order: getNumber((data as Record<string, unknown>).order) ?? 0,
+      };
+    })
+    .filter((link) => link.questionId.length > 0)
+    .sort((a, b) => a.order - b.order);
+  for (const link of links) {
+    const qSnap = await db.collection("question_bank").doc(link.questionId).get();
+    const sanitized = sanitizeAssessmentQuestion(
+      link,
+      qSnap.exists ? dataOf(qSnap.data()) : null,
+    );
+    if (sanitized) questions.push(sanitized);
+  }
+
+  return {attemptType, questions};
+});
+
 export const submitAssessmentAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const attemptId = getString(request.data?.attemptId);
@@ -5916,6 +7876,26 @@ export const submitAssessmentAttempt = onCall(SECURE_CALL_OPTS, async (request) 
       assessment.is_published === true || getString(assessment.status) === "published";
     if (!published) {
       throw new HttpsError("failed-precondition", `${attemptType} is not published.`);
+    }
+
+    // O6-B subject/term entitlement: live assignment required; staff bypass
+    // covers owner preview/diagnostics. Missing subject reference fails closed.
+    // Transactional read (tx.get) so the entitlement decision joins the
+    // submission snapshot; repeated submits stay idempotent via the
+    // started-status gate above.
+    const submitSubjectId = getString(assessment.subject_id);
+    const submitRole = callerRole(request);
+    if (!submitRole || !ADMIN_ROLES.has(submitRole)) {
+      if (!submitSubjectId) {
+        throw new HttpsError("failed-precondition", `${attemptType} is missing its subject reference.`);
+      }
+      const assignSnap = await tx.get(
+        db.collection("subject_access_assignments").doc(`${userId}_${submitSubjectId}`),
+      );
+      if (!assignSnap.exists) {
+        throw new HttpsError("permission-denied", "Subject Access assignment is required.");
+      }
+      assertEnabledSubjectAccess(userId, submitSubjectId, dataOf(assignSnap.data()));
     }
 
     // Server-side time limit (duration in minutes; 90s network grace).
@@ -6037,12 +8017,18 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
   let publishedCount = 0;
 
   // Paged scan so a large backlog cannot exceed function memory/time.
+  // Cursor-based pagination (startAfter) guarantees forward progress even
+  // when a full page holds zero due lectures (missing/future publish_date),
+  // which would otherwise re-fetch the same first page forever.
+  let lastDoc: any = null;
   for (;;) {
-    const snap = await db.collection("lectures")
+    let pageQuery = db.collection("lectures")
       .where("status", "==", "draft")
       .where("is_deleted", "==", false)
-      .limit(200)
-      .get();
+      .orderBy(FieldPath.documentId())
+      .limit(200);
+    if (lastDoc) pageQuery = pageQuery.startAfter(lastDoc);
+    const snap = await pageQuery.get();
     if (snap.empty) break;
 
     const due = pickDueLectures(
@@ -6087,6 +8073,7 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
       publishedCount += 1;
     }
 
+    lastDoc = snap.docs[snap.docs.length - 1];
     if (snap.size < 200) break;
   }
 
@@ -6095,33 +8082,35 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
   }
 });
 
-export const setDefaultStorageProvider = onCall(async (request) => {
-  const teacherId = requireTeacher(request);
+export const setDefaultStorageProvider = onCall(SECURE_CALL_OPTS, async (request) => {
+  const doctorId = requireDoctor(request);
   const provider = getString(request.data?.provider)?.toLowerCase();
 
   if (provider !== "bunny" && provider !== "firebase") {
     throw new HttpsError("invalid-argument", "provider must be 'bunny' or 'firebase'.");
   }
 
-  const settingsSnap = await db.collection("system_settings").limit(1).get();
-  const settingsRef = settingsSnap.empty ?
-    db.collection("system_settings").doc() :
-    settingsSnap.docs[0].ref;
+  // Canonical settings document is `system_settings/default` (fixed ID).
+  // A previous revision read an unordered first document and, when empty,
+  // created a random auto-ID document — both behaviors orphan settings
+  // when the collection holds more than one document.
+  const settingsRef = db.collection("system_settings").doc("default");
+  const settingsSnap = await settingsRef.get();
 
   await db.runTransaction(async (transaction) => {
     transaction.set(settingsRef, {
       default_storage_provider: provider,
       updated_at: FieldValue.serverTimestamp(),
-      updated_by: teacherId,
+      updated_by: doctorId,
     }, {merge: true});
     transaction.set(db.collection("admin_audit_log").doc(), {
       action: "default_storage_provider_set",
       entity: "system_settings",
       target_id: settingsRef.id,
-      previous_provider: settingsSnap.empty ? null : getString(settingsSnap.docs[0].data().default_storage_provider),
+      previous_provider: !settingsSnap.exists ? null : getString(settingsSnap.data()?.default_storage_provider),
       new_provider: provider,
-      actor_id: teacherId,
-      actor_role: "teacher",
+      actor_id: doctorId,
+      actor_role: "doctor",
       created_at: FieldValue.serverTimestamp(),
       timestamp: FieldValue.serverTimestamp(),
     });
@@ -6187,18 +8176,27 @@ interface DeletionCounts {
   chat_messages: number;
   video_watch_windows: number;
   device_change_requests: number;
+  subject_device_authorizations: number;
+  playback_sessions: number;
+  student_financial_accounts: number;
+  student_subject_pricing: number;
   payment_logs_updated: number;
 }
 
+// Purge writes are chunked so a large account can never exceed the
+// Firestore 500-writes-per-batch limit (commit every 400 ops).
+const MAX_PURGE_BATCH_OPS = 400;
+
 async function deleteBatchWithQuery(
   query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>,
-  batch: FirebaseFirestore.WriteBatch,
-  counter: {value: number}
+  queueDelete: (ref: FirebaseFirestore.DocumentReference) => Promise<void>,
+  counts: DeletionCounts,
+  key: keyof DeletionCounts,
 ): Promise<void> {
   const snapshot = await query.get();
   for (const doc of snapshot.docs) {
-    batch.delete(doc.ref);
-    counter.value += 1;
+    await queueDelete(doc.ref);
+    counts[key] += 1;
   }
 }
 
@@ -6206,7 +8204,7 @@ async function purgeUserAccount(
   targetUid: string,
   targetSnapshot: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>,
   actorUid: string,
-  actorRole: "teacher" | "student",
+  actorRole: "doctor" | "student",
   actionType: "account_deleted_self" | "account_deleted_by_owner"
 ): Promise<DeletionCounts> {
   const targetData = targetSnapshot.data() as Record<string, unknown> | undefined;
@@ -6253,127 +8251,154 @@ async function purgeUserAccount(
     chat_messages: 0,
     video_watch_windows: 0,
     device_change_requests: 0,
+    subject_device_authorizations: 0,
+    playback_sessions: 0,
+    student_financial_accounts: 0,
+    student_subject_pricing: 0,
     payment_logs_updated: 0,
   };
 
   try {
-    const batch = db.batch();
+    let batch = db.batch();
+    let batchOps = 0;
+    const flushPurgeBatch = async (force = false): Promise<void> => {
+      if (force || batchOps >= MAX_PURGE_BATCH_OPS) {
+        if (batchOps > 0) {
+          await batch.commit();
+          batch = db.batch();
+          batchOps = 0;
+        }
+      }
+    };
+    const queueDelete = async (ref: FirebaseFirestore.DocumentReference): Promise<void> => {
+      batch.delete(ref);
+      batchOps += 1;
+      await flushPurgeBatch();
+    };
+    const queueUpdate = async (
+      ref: FirebaseFirestore.DocumentReference,
+      data: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>,
+    ): Promise<void> => {
+      batch.update(ref, data);
+      batchOps += 1;
+      await flushPurgeBatch();
+    };
 
-    batch.delete(db.collection("users").doc(targetUid));
+    await queueDelete(db.collection("users").doc(targetUid));
     counts.users = 1;
 
-    batch.delete(db.collection("user_secrets").doc(targetUid));
+    await queueDelete(db.collection("user_secrets").doc(targetUid));
     counts.user_secrets = 1;
 
     await deleteBatchWithQuery(
       db.collection("devices").where("user_id", "==", targetUid),
-      batch,
-      {value: counts.devices}
+      queueDelete,
+      counts,
+      "devices",
     );
-    counts.devices = (counts.devices || 0);
 
     await deleteBatchWithQuery(
       db.collection("notifications").where("user_id", "==", targetUid),
-      batch,
-      {value: counts.notifications}
+      queueDelete,
+      counts,
+      "notifications",
     );
-    counts.notifications = (counts.notifications || 0);
 
     await deleteBatchWithQuery(
       db.collection("analytics_events").where("user_id", "==", targetUid),
-      batch,
-      {value: counts.analytics_events}
+      queueDelete,
+      counts,
+      "analytics_events",
     );
-    counts.analytics_events = (counts.analytics_events || 0);
 
     await deleteBatchWithQuery(
       db.collection("security_events").where("user_id", "==", targetUid),
-      batch,
-      {value: counts.security_events}
+      queueDelete,
+      counts,
+      "security_events",
     );
-    counts.security_events = (counts.security_events || 0);
 
     const studentCollections = ["student", "new_student"];
     if (studentCollections.includes(targetRole)) {
       await deleteBatchWithQuery(
         db.collection("notes").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.notes}
+        queueDelete,
+        counts,
+        "notes",
       );
-      counts.notes = (counts.notes || 0);
 
       await deleteBatchWithQuery(
         db.collection("bookmarks").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.bookmarks}
+        queueDelete,
+        counts,
+        "bookmarks",
       );
-      counts.bookmarks = (counts.bookmarks || 0);
 
       await deleteBatchWithQuery(
         db.collection("learning_progress").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.learning_progress}
+        queueDelete,
+        counts,
+        "learning_progress",
       );
-      counts.learning_progress = (counts.learning_progress || 0);
 
       await deleteBatchWithQuery(
         db.collection("lecture_progress").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.lecture_progress}
+        queueDelete,
+        counts,
+        "lecture_progress",
       );
-      counts.lecture_progress = (counts.lecture_progress || 0);
 
       await deleteBatchWithQuery(
         db.collection("subject_progress_summary").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.subject_progress_summary}
+        queueDelete,
+        counts,
+        "subject_progress_summary",
       );
-      counts.subject_progress_summary = (counts.subject_progress_summary || 0);
 
       await deleteBatchWithQuery(
         db.collection("subscriptions").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.subscriptions}
+        queueDelete,
+        counts,
+        "subscriptions",
       );
-      counts.subscriptions = (counts.subscriptions || 0);
 
       await deleteBatchWithQuery(
         db.collection("subject_access_assignments").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.subject_access_assignments}
+        queueDelete,
+        counts,
+        "subject_access_assignments",
       );
-      counts.subject_access_assignments = (counts.subject_access_assignments || 0);
 
       await deleteBatchWithQuery(
         db.collection("quiz_attempts").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.quiz_attempts}
+        queueDelete,
+        counts,
+        "quiz_attempts",
       );
-      counts.quiz_attempts = (counts.quiz_attempts || 0);
 
       await deleteBatchWithQuery(
         db.collection("exam_attempts").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.exam_attempts}
+        queueDelete,
+        counts,
+        "exam_attempts",
       );
-      counts.exam_attempts = (counts.exam_attempts || 0);
 
       await deleteBatchWithQuery(
         db.collection("password_reset_requests").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.password_reset_requests}
+        queueDelete,
+        counts,
+        "password_reset_requests",
       );
-      counts.password_reset_requests = (counts.password_reset_requests || 0);
 
       const questionsSnap = await db.collection("student_questions").where("student_id", "==", targetUid).get();
       const questionIds = questionsSnap.docs.map((doc) => doc.id);
       for (const qId of questionIds) {
-        batch.delete(db.collection("student_questions").doc(qId));
+        await queueDelete(db.collection("student_questions").doc(qId));
         counts.student_questions += 1;
 
         const repliesSnap = await db.collection("student_question_replies").where("question_id", "==", qId).get();
         for (const replyDoc of repliesSnap.docs) {
-          batch.delete(replyDoc.ref);
+          await queueDelete(replyDoc.ref);
           counts.student_question_replies += 1;
         }
       }
@@ -6381,38 +8406,66 @@ async function purgeUserAccount(
       const chatRoomsSnap = await db.collection("chat_rooms").where("student_id", "==", targetUid).get();
       const roomIds = chatRoomsSnap.docs.map((doc) => doc.id);
       for (const roomId of roomIds) {
-        batch.delete(db.collection("chat_rooms").doc(roomId));
+        await queueDelete(db.collection("chat_rooms").doc(roomId));
         counts.chat_rooms += 1;
 
         const messagesSnap = await db.collection("chat_messages").where("room_id", "==", roomId).get();
         for (const msgDoc of messagesSnap.docs) {
-          batch.delete(msgDoc.ref);
+          await queueDelete(msgDoc.ref);
           counts.chat_messages += 1;
         }
       }
 
       await deleteBatchWithQuery(
-        db.collection("video_watch_windows").where("user_id", "==", targetUid),
-        batch,
-        {value: counts.video_watch_windows}
+        db.collection("subject_device_authorizations").where("student_id", "==", targetUid),
+        queueDelete,
+        counts,
+        "subject_device_authorizations",
       );
-      counts.video_watch_windows = (counts.video_watch_windows || 0);
+
+      await deleteBatchWithQuery(
+        db.collection("playback_sessions").where("student_id", "==", targetUid),
+        queueDelete,
+        counts,
+        "playback_sessions",
+      );
+
+      await deleteBatchWithQuery(
+        db.collection("student_subject_pricing").where("student_id", "==", targetUid),
+        queueDelete,
+        counts,
+        "student_subject_pricing",
+      );
+
+      const financialAccountRef = db.collection("student_financial_accounts").doc(targetUid);
+      const financialAccountSnap = await financialAccountRef.get();
+      if (financialAccountSnap.exists) {
+        await queueDelete(financialAccountRef);
+        counts.student_financial_accounts = 1;
+      }
+
+      await deleteBatchWithQuery(
+        db.collection("video_watch_windows").where("user_id", "==", targetUid),
+        queueDelete,
+        counts,
+        "video_watch_windows",
+      );
 
       await deleteBatchWithQuery(
         db.collection("device_change_requests").where("student_id", "==", targetUid),
-        batch,
-        {value: counts.device_change_requests}
+        queueDelete,
+        counts,
+        "device_change_requests",
       );
-      counts.device_change_requests = (counts.device_change_requests || 0);
     }
 
     const paymentLogsSnap = await db.collection("payment_logs").where("student_id", "==", targetUid).get();
     for (const doc of paymentLogsSnap.docs) {
-      batch.update(doc.ref, {student_account_deleted: true, updated_at: FieldValue.serverTimestamp(), updated_by: actorUid});
+      await queueUpdate(doc.ref, {student_account_deleted: true, updated_at: FieldValue.serverTimestamp(), updated_by: actorUid});
       counts.payment_logs_updated += 1;
     }
 
-    await batch.commit();
+    await flushPurgeBatch(true);
 
     const storage = getStorage();
     const bucket = storage.bucket();
@@ -6482,16 +8535,10 @@ export const deleteMyAccount = onCall({...SECURE_CALL_OPTS, timeoutSeconds: 300}
 });
 
 export const deleteAccountByOwner = onCall({...SECURE_CALL_OPTS, timeoutSeconds: 300}, async (request) => {
-  const callerUid = requireAuthenticated(request);
-
-  const callerSnap = await db.collection("users").doc(callerUid).get();
-  if (!callerSnap.exists) {
-    throw new HttpsError("not-found", "Caller user not found.");
-  }
-  const callerData = callerSnap.data();
-  if (getString(callerData?.role) !== "teacher") {
-    throw new HttpsError("permission-denied", "Only the platform owner (teacher) can delete other accounts.");
-  }
+  // Canonical authorization: trust the server-minted token claim (same as
+  // every other doctor-only path), not the Firestore users doc, so claim
+  // revocation/refresh semantics apply uniformly here.
+  const callerUid = requireDoctor(request);
 
   const password = getString(request.data?.password);
   if (!password) {
@@ -6513,11 +8560,11 @@ export const deleteAccountByOwner = onCall({...SECURE_CALL_OPTS, timeoutSeconds:
   }
   const targetData = targetSnap.data();
   const targetRole = getString(targetData?.role);
-  if (targetRole === "teacher") {
+  if (targetRole === "doctor") {
     throw new HttpsError("permission-denied", "Owner accounts cannot be deleted via this function.");
   }
 
-  const counts = await purgeUserAccount(targetUid, targetSnap, callerUid, "teacher", "account_deleted_by_owner");
+  const counts = await purgeUserAccount(targetUid, targetSnap, callerUid, "doctor", "account_deleted_by_owner");
 
   return {success: true, deleted: counts};
 });

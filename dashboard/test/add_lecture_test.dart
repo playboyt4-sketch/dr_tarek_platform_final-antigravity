@@ -38,7 +38,7 @@ class FakeLectureController implements SubjectDetailsController {
     int? previewMinutes,
     required List<NewLectureResource> resources,
     required Map<String, bool> accessByStudent,
-    String actorId = 'dashboard',
+    String? actorId,
   }) async {
     if (failCreate) throw DecisionFailure('Rules deny lecture writes.');
     created.add(<String, Object?>{
@@ -87,6 +87,37 @@ class FakeLectureController implements SubjectDetailsController {
     String? gradeKey,
     String? coverUrl,
   }) async {}
+
+  @override
+  Future<LectureEditData> getLectureForEdit(String lectureId) async =>
+      LectureEditData(
+        lectureId: lectureId,
+        title: 'Existing',
+        displayOrder: 0,
+        status: 'draft',
+        guestEnabled: false,
+        resources: const <LectureEditResource>[],
+        accessOverrides: const <String, bool>{},
+      );
+
+  @override
+  Future<void> updateLectureFull({
+    required String lectureId,
+    required String title,
+    required int displayOrder,
+    required bool publishNow,
+    DateTime? publishDateTime,
+    bool preserveStatus = false,
+    bool clearPublishDate = false,
+    required bool guestEnabled,
+    int? previewMinutes,
+    required List<NewLectureResource> newResources,
+    required List<String> deleteResourceIds,
+    List<UpdatedLectureResource> updatedResources =
+        const <UpdatedLectureResource>[],
+    required Map<String, bool> accessByStudent,
+    String? actorId,
+  }) async {}
 }
 
 const GradeStudentsData _roster = GradeStudentsData(
@@ -96,7 +127,6 @@ const GradeStudentsData _roster = GradeStudentsData(
       id: 's-ahmed',
       name: 'Ahmed',
       isCenter: true,
-      plan: 'PRO',
       isActive: true,
       lastSignIn: '',
     ),
@@ -104,7 +134,6 @@ const GradeStudentsData _roster = GradeStudentsData(
       id: 's-mohamed',
       name: 'Mohamed',
       isCenter: true,
-      plan: 'FREE',
       isActive: true,
       lastSignIn: '',
     ),
@@ -204,26 +233,29 @@ void main() {
       expect(fake.created, isEmpty);
     });
 
-    testWidgets('3. display order starts empty with an 01 hint',
+    testWidgets('3. display order starts prefilled with a 00 hint',
         (WidgetTester tester) async {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       final TextField orderField =
           tester.widget<TextField>(find.byType(TextField).at(1));
-      expect(orderField.controller?.text, '');
-      expect(orderField.decoration?.hintText, '01');
+      // Locked context (subject known): prefilled from initialOrder.
+      expect(orderField.controller?.text, '04');
+      expect(orderField.decoration?.hintText, '00');
       await _fillName(tester, 'Algebra');
-      await tester.enterText(find.byType(TextField).at(1), '0');
+      // Numbering starts at 00: -1 is rejected...
+      await tester.enterText(find.byType(TextField).at(1), '-1');
       await _scrollFormDown(tester);
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect(find.text('Enter a valid display order.'), findsOneWidget);
       expect(fake.created, isEmpty);
-      await tester.enterText(find.byType(TextField).at(1), '2');
+      // ...while 0 is accepted.
+      await tester.enterText(find.byType(TextField).at(1), '0');
       await _scrollFormDown(tester);
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      expect(fake.created.single['displayOrder'], 2);
+      expect(fake.created.single['displayOrder'], 0);
     });
 
     testWidgets('4/5. date picker selects a day and Save returns it',
@@ -490,7 +522,7 @@ void main() {
           find.byType(TextField);
       await tester.enterText(
           fields.at(fieldCount - 3), 'Part 01');
-      await tester.enterText(fields.at(fieldCount - 2), 'abc123');
+      await tester.enterText(fields.at(fieldCount - 2), '22222222-2222-4222-8222-222222222222');
       await tester.tap(find.byKey(const Key('resourceDialogSave')));
       await tester.pumpAndSettle();
       expect(find.textContaining('Video - Part 01'), findsOneWidget);
@@ -580,3 +612,4 @@ void main() {
     });
   });
 }
+

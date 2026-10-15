@@ -91,25 +91,31 @@ class NotesRemoteDataSource {
         .map((snap) => snap.docs.map(NoteModel.fromFirestore).toList());
   }
 
-  /// Quick note without lecture/subject context (hub-level capture).
-  /// Preserves the exact document shape historically written by the app.
+  /// Quick note (hub-level capture). `subject_id` is REQUIRED: the
+  /// `match /notes/{noteId}` rules gate create AND read on
+  /// `hasEntitlement(uid, subject_id, 'notes.create')`, so a subject-less
+  /// row could never be written nor listed.
   Future<NoteModel> createQuickNote({
     required String studentId,
+    required String subjectId,
     required String title,
     required String content,
   }) async {
     final docRef = _notesRef.doc();
     final data = <String, dynamic>{
       'student_id': studentId,
+      'subject_id': subjectId,
+      'lecture_id': '',
       'title': title,
       'content': content,
       'created_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
     };
     await docRef.set(data);
     return NoteModel(
       id: docRef.id,
       studentId: studentId,
-      subjectId: '',
+      subjectId: subjectId,
       lectureId: '',
       title: title,
       content: content,

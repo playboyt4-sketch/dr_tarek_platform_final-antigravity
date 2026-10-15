@@ -47,7 +47,7 @@ class AdminHomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            user.role == 'teacher' ? 'المعلم المسؤول عن المنصة' : 'مدير المنصة',
+            user.role == 'doctor' ? 'المعلم المسؤول عن المنصة' : 'مدير المنصة',
           ),
           const SizedBox(height: 20),
           _AdminStatsGrid(),
@@ -121,7 +121,7 @@ class AdminHomeScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 10),
-          if (user.role == 'teacher')
+          if (user.role == 'doctor')
             AppButton(
               label: 'الفترات الدراسية',
               icon: Icons.calendar_month_outlined,
@@ -132,8 +132,8 @@ class AdminHomeScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          if (user.role == 'teacher') const SizedBox(height: 10),
-          if (user.role == 'teacher')
+          if (user.role == 'doctor') const SizedBox(height: 10),
+          if (user.role == 'doctor')
             AppButton(
               label: 'إدارة الأدمنز',
               icon: Icons.admin_panel_settings_outlined,
@@ -144,8 +144,8 @@ class AdminHomeScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          if (user.role == 'teacher') const SizedBox(height: 10),
-          if (user.role == 'teacher')
+          if (user.role == 'doctor') const SizedBox(height: 10),
+          if (user.role == 'doctor')
             AppButton(
               label: 'ميزات المنصة',
               icon: Icons.toggle_on_outlined,
@@ -156,7 +156,7 @@ class AdminHomeScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          if (user.role == 'teacher') const SizedBox(height: 10),
+          if (user.role == 'doctor') const SizedBox(height: 10),
           AppButton(
             label: 'إنشاء وإرسال إشعار جديد',
             icon: Icons.campaign_outlined,

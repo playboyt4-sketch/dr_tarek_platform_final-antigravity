@@ -169,12 +169,14 @@ async function run() {
   assert.ok(r1.url.includes("cdn.example.com"), "Signed URL issued");
   assert.equal(r1.quality, "720p");
   assert.ok(!("previewLimitSeconds" in r1), "Full response keeps its existing shape");
+  assert.ok(!("previewAudience" in r1), "Full response carries no audience key");
   console.log("ok 1 - Full Free video URL issued");
 
   // 2. Second Free device resolves Guest (limited preview URL, no record).
   const before2 = await authzCount(SUB_V);
   const r2 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-B"});
   assert.equal(r2.previewLimitSeconds, 300, "Guest preview from per-lecture minutes");
+  assert.equal(r2.previewAudience, "center", "Center unauthorized-device audience");
   assert.equal(await authzCount(SUB_V), before2, "Guest issuance binds nothing");
   console.log("ok 2 - Second Free device Guest with preview cap");
 
@@ -203,6 +205,128 @@ async function run() {
   assert.equal(r7.previewLimitSeconds, 240);
   assert.equal(await authzCount(SUB_M), before7);
   console.log("ok 7 - Third Max device Guest");
+
+  // 7b-7e. Zero-preview chain on the Free plan (legacy-enforced window).
+  // Fresh student; device WA bound directly (no issuance, so no window yet);
+  // minuteless Guest-enabled lectures W0/W2 on the Free subject. Device WB
+  // is therefore Guest with zero playable minutes — the reported case.
+  const WSTUDENT = "pcont_student_W";
+  const WDEV_A = "pcont-test-device-WA";
+  const WDEV_B = "pcont-test-device-WB";
+  await db.collection("users").doc(WSTUDENT).set({
+    role: "student", student_type: "center_student",
+    approval_status: "approved", account_status: "active",
+  });
+  await db.collection("subject_access_assignments").doc(`${WSTUDENT}_${SUB_V}`).set({
+    student_id: WSTUDENT, subject_id: SUB_V, enabled: true, is_deleted: false,
+  });
+  await db.collection("subscriptions").doc("pcont_sub_W_V").set({
+    student_id: WSTUDENT, subject_id: SUB_V, plan_id: plans.free, status: "active",
+  });
+  const {createHash} = require("node:crypto");
+  const waHash = createHash("sha256").update(`${WSTUDENT}|${WDEV_A}`).digest("hex");
+  await db.collection("subject_device_authorizations").doc(`${WSTUDENT}_${SUB_V}_${waHash}`).set({
+    student_id: WSTUDENT, subject_id: SUB_V, device_hash: waHash,
+    status: "active", is_deleted: false,
+  });
+  await db.collection("lectures").doc("pcont_lecW0").set({
+    subject_id: SUB_V, section_id: `pcont_sec_${SUB_V}`, status: "published",
+    is_deleted: false, guest_enabled: true,
+  });
+  await db.collection("lectures").doc("pcont_lecW2").set({
+    subject_id: SUB_V, section_id: `pcont_sec_${SUB_V}`, status: "published",
+    is_deleted: false, guest_enabled: true,
+  });
+  await db.collection("lecture_resources").doc("pcont_vidW0").set({
+    lecture_id: "pcont_lecW0", resource_type: "video", bunny_video_id: "pcont-vid-W0",
+    is_visible: true, display_order: 1,
+  });
+  await db.collection("lecture_resources").doc("pcont_vidW2").set({
+    lecture_id: "pcont_lecW2", resource_type: "video", bunny_video_id: "pcont-vid-W2",
+    is_visible: true, display_order: 1,
+  });
+  const wVideoUrl = (payload) => signedUrlRaw({data: payload, auth: {uid: WSTUDENT}});
+  // A: first issuance on the minuteless lecture => URL + zero preview,
+  // and the rolling window opens on this lecture.
+  const rA = await wVideoUrl({videoId: "pcont-vid-W0", deviceId: WDEV_B});
+  assert.equal(rA.previewLimitSeconds, 0, "Zero playable minutes");
+  assert.equal(rA.previewAudience, "center", "Center unauthorized-device audience");
+  const winA = (await db.collection("video_watch_windows").doc(WSTUDENT).get()).data();
+  assert.equal(winA.active_lecture_id, "pcont_lecW0", "Window opens on first issuance");
+  assert.ok(winA.window_expires_at.toMillis() > Date.now(), "Window expiry in the future");
+  console.log("ok 7b/7c - Zero-preview issuance opens the window");
+  // B: a different lecture before expiry is rejected with window details.
+  await wVideoUrl({videoId: "pcont-vid-W2", deviceId: WDEV_B}).then(
+    () => {
+      throw new Error("different lecture: expected resource-exhausted");
+    },
+    (e) => {
+      assert.equal(e.code, "resource-exhausted");
+      assert.equal(e.details.activeLectureId, "pcont_lecW0");
+      assert.equal(e.details.windowHours, 24);
+      assert.ok(e.details.windowExpiresAtMs > Date.now());
+    },
+  );
+  console.log("ok 7d - Different lecture blocked with window details");
+  // C: reopening the same lecture stays allowed (resume consumes nothing).
+  const rC = await wVideoUrl({videoId: "pcont-vid-W0", deviceId: WDEV_B});
+  assert.equal(rC.previewLimitSeconds, 0, "Same-lecture resume allowed");
+  const winC = (await db.collection("video_watch_windows").doc(WSTUDENT).get()).data();
+  assert.equal(winC.active_lecture_id, "pcont_lecW0", "Resume does not move the window");
+  console.log("ok 7e - Same-lecture resume allowed");
+
+  // 7f. External Guest audience: guest plan, slot held by another device.
+  const GSTUDENT = "pcont_guest_G";
+  const GDEV_X = "pcont-test-device-GX";
+  const GDEV_Y = "pcont-test-device-GY";
+  const SUB_G = "pcont_subG";
+  await db.collection("plans").doc("guest").set({
+    plan_key: "free", student_type: "guest", is_active: true,
+  });
+  for (const [key, value, enabled] of [
+    ["device.max_count", 1, true], ["video.access", true, true],
+    ["video.quality.720p", true, true], ["video.preview_duration", 0, false],
+  ]) {
+    await db.collection("plan_features").doc(`pcont_feat_guest_${key}`).set({
+      plan_id: "guest", feature_key: key, feature_value: value, enabled,
+    });
+  }
+  await db.collection("users").doc(GSTUDENT).set({
+    role: "student", student_type: "guest",
+    approval_status: "approved", account_status: "active",
+  });
+  await db.collection("subjects").doc(SUB_G).set({title: SUB_G});
+  await db.collection("subject_sections").doc(`pcont_sec_${SUB_G}`).set({subject_id: SUB_G});
+  await db.collection("subject_access_assignments").doc(`${GSTUDENT}_${SUB_G}`).set({
+    student_id: GSTUDENT, subject_id: SUB_G, enabled: true, is_deleted: false,
+  });
+  await db.collection("subscriptions").doc("pcont_sub_G").set({
+    student_id: GSTUDENT, subject_id: SUB_G, plan_id: "guest", status: "active",
+  });
+  const gxHash = createHash("sha256").update(`${GSTUDENT}|${GDEV_X}`).digest("hex");
+  await db.collection("subject_device_authorizations").doc(`${GSTUDENT}_${SUB_G}_${gxHash}`).set({
+    student_id: GSTUDENT, subject_id: SUB_G, device_hash: gxHash,
+    status: "active", is_deleted: false,
+  });
+  await db.collection("lectures").doc("pcont_lecG").set({
+    subject_id: SUB_G, section_id: `pcont_sec_${SUB_G}`, status: "published",
+    is_deleted: false, guest_enabled: true,
+  });
+  await db.collection("lecture_resources").doc("pcont_vidG").set({
+    lecture_id: "pcont_lecG", resource_type: "video", bunny_video_id: "pcont-vid-G",
+    is_visible: true, display_order: 1,
+  });
+  const gVideoUrl = (payload) => signedUrlRaw({data: payload, auth: {uid: GSTUDENT}});
+  const rG = await gVideoUrl({videoId: "pcont-vid-G", deviceId: GDEV_Y});
+  assert.equal(rG.previewLimitSeconds, 0, "Disabled zero-minute default yields zero");
+  assert.equal(rG.previewAudience, "guest", "External Guest audience");
+  console.log("ok 7f - External Guest zero-preview audience");
+  // Cleanup: remove the shared guest-plan doc so later suites observe
+  // no cross-suite footprint (all other fixtures use prefixed IDs).
+  await db.collection("plans").doc("guest").delete();
+  for (const [key] of [["device.max_count"], ["video.access"], ["video.quality.720p"], ["video.preview_duration"]]) {
+    await db.collection("plan_features").doc(`pcont_feat_guest_${key}`).delete();
+  }
 
   // 8/9. Guest cannot receive protected PDF view, PDF download, or resource.
   // (devC holds nothing on SUB_P, so it resolves Guest there.)
@@ -249,7 +373,7 @@ async function run() {
   // Guest even though it is Full on Max.
   const resetRaw = test.wrap(functions.resetStudentDevices);
   await resetRaw({data: {studentId: STUDENT, reason: "pcont-test15-setup"},
-    auth: {uid: "pcont-teacher", token: {role: "teacher"}}});
+    auth: {uid: "pcont-doctor", token: {role: "doctor"}}});
   await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-M"});
   await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-A"});
   const r15 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-M"});

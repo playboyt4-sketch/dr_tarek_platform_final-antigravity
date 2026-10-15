@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:drtarek_dashboard/features/applications/presentation/providers/application_decision_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_students_provider.dart';
+import 'package:drtarek_dashboard/features/students/presentation/providers/subject_details_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/screens/grade_students_screen.dart';
 import 'package:drtarek_dashboard/features/students/presentation/widgets/scoped_search_bar.dart';
 
@@ -14,7 +15,7 @@ const GradeStudentsData _gradeOneData = GradeStudentsData(
       id: 'a1',
       name: 'Ahmed gamal mousa',
       isCenter: true,
-      plan: 'PRO',
+      planSummary: StudentPlanSummary(subjects: 2, free: 1, pro: 1),
       isActive: true,
       lastSignIn: '12/8/2026',
     ),
@@ -22,7 +23,7 @@ const GradeStudentsData _gradeOneData = GradeStudentsData(
       id: 'a2',
       name: 'Mariam adel samy',
       isCenter: true,
-      plan: 'FREE',
+      planSummary: StudentPlanSummary(subjects: 1, free: 1),
       isActive: true,
       lastSignIn: '11/8/2026',
     ),
@@ -30,17 +31,17 @@ const GradeStudentsData _gradeOneData = GradeStudentsData(
       id: 'a3',
       name: 'Omar khaled hassan',
       isCenter: false,
-      plan: 'FREE',
+      planSummary: StudentPlanSummary.empty,
       isActive: false,
       lastSignIn: '9/8/2026',
     ),
   ],
   pendingCount: 11,
   breakdown: <PlanBreakdownRow>[
-    PlanBreakdownRow(label: 'Free', count: 198, share: 44),
-    PlanBreakdownRow(label: 'PRO', count: 153, share: 34),
-    PlanBreakdownRow(label: 'MAX', count: 45, share: 10),
-    PlanBreakdownRow(label: 'Guest', count: 54, share: 12),
+    PlanBreakdownRow(label: 'Students with FREE', count: 2, share: 67),
+    PlanBreakdownRow(label: 'Students with PRO', count: 1, share: 33),
+    PlanBreakdownRow(label: 'Students with MAX', count: 0, share: 0),
+    PlanBreakdownRow(label: 'No active plan', count: 1, share: 33),
   ],
   isFallback: false,
 );
@@ -52,7 +53,7 @@ const GradeStudentsData _gradeThreeData = GradeStudentsData(
       id: 'b1',
       name: 'Salma mohamed ali',
       isCenter: true,
-      plan: 'MAX',
+      planSummary: StudentPlanSummary(subjects: 1, max: 1),
       isActive: true,
       lastSignIn: '10/8/2026',
     ),
@@ -60,17 +61,18 @@ const GradeStudentsData _gradeThreeData = GradeStudentsData(
       id: 'b2',
       name: 'Nour eldin sami',
       isCenter: false,
-      plan: 'FREE',
+      planSummary: StudentPlanSummary(subjects: 2, pro: 1, max: 1),
       isActive: true,
       lastSignIn: '9/8/2026',
     ),
   ],
   pendingCount: 5,
   breakdown: <PlanBreakdownRow>[
-    PlanBreakdownRow(label: 'Free', count: 0, share: 0),
-    PlanBreakdownRow(label: 'PRO', count: 0, share: 0),
-    PlanBreakdownRow(label: 'MAX', count: 1, share: 50),
-    PlanBreakdownRow(label: 'Guest', count: 1, share: 50),
+    PlanBreakdownRow(label: 'Students with FREE', count: 0, share: 0),
+    PlanBreakdownRow(label: 'Students with PRO', count: 1, share: 50),
+    // b1 AND b2 both hold MAX: buckets overlap by design (150% total).
+    PlanBreakdownRow(label: 'Students with MAX', count: 2, share: 100),
+    PlanBreakdownRow(label: 'No active plan', count: 0, share: 0),
   ],
   isFallback: false,
 );
@@ -181,8 +183,16 @@ void main() {
       expect(find.text('Subjects'), findsOneWidget);
       expect(find.text('Total Students'), findsOneWidget);
       expect(find.text('450'), findsNothing);
-      expect(find.text('Free: 198 (44%)'), findsOneWidget);
-      expect(find.text('PRO: 153 (34%)'), findsOneWidget);
+      expect(find.text('Students with FREE: 2 (67%)'), findsOneWidget);
+      expect(find.text('Students with PRO: 1 (33%)'), findsOneWidget);
+      expect(find.text('Students with MAX: 0 (0%)'), findsOneWidget);
+      expect(find.text('No active plan: 1 (33%)'), findsOneWidget);
+      expect(
+        find.text(
+          'Share of 3 students; a student with several tiers counts in each.',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Review Pending Requests'), findsOneWidget);
       expect(find.text('11'), findsOneWidget);
       expect(find.text('Search by Name...'), findsOneWidget);
@@ -198,6 +208,13 @@ void main() {
         expect(find.text(header), findsOneWidget);
       }
       expect(find.text('Ahmed gamal mousa'), findsOneWidget);
+      // Honest per-student summary cell (Option B): true distribution,
+      // never a collapsed single value; empty state is explicit.
+      expect(find.text('2 subjects'), findsOneWidget);
+      expect(find.text('1 FREE · 1 PRO'), findsOneWidget);
+      expect(find.text('1 subject'), findsOneWidget);
+      expect(find.text('1 FREE'), findsOneWidget);
+      expect(find.text('No active plan'), findsWidgets);
       expect(find.text('01.'), findsOneWidget);
       expect(find.text('Active'), findsWidgets);
       expect(find.text('Inactive'), findsOneWidget);
@@ -252,6 +269,64 @@ void main() {
       expect(find.text('Ahmed gamal mousa'), findsNothing);
     });
 
+    testWidgets('subject card shows live per-tab lecture counts',
+        (WidgetTester tester) async {
+      // Regression: published lectures must be reflected on the subject
+      // card (same flattened tab lists the details table shows).
+      const SubjectLecture published = SubjectLecture(
+        id: 'l1',
+        title: 'مقطع من اول محاضرة',
+        displayOrder: 1,
+        status: 'published',
+      );
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            gradeStudentsProvider('grade_one')
+                .overrideWith((ref) => Future.value(_gradeOneData)),
+            gradeSubjectsProvider('grade_one').overrideWith(
+              (ref) => Stream.value(
+                const <SubjectOption>[
+                  SubjectOption(
+                      id: 's1',
+                      title: 'Physics',
+                      gradeKey: 'grade_one'),
+                ],
+              ),
+            ),
+            tabLecturesProvider((subjectId: 's1', tab: SubjectContentTab.lectures))
+                .overrideWith(
+                    (ref) => Stream.value(const <SubjectLecture>[published])),
+            tabLecturesProvider((subjectId: 's1', tab: SubjectContentTab.revisions))
+                .overrideWith((ref) => Stream.value(const <SubjectLecture>[])),
+            tabLecturesProvider((subjectId: 's1', tab: SubjectContentTab.finalTab))
+                .overrideWith((ref) => Stream.value(const <SubjectLecture>[])),
+            tabLecturesProvider((subjectId: 's1', tab: SubjectContentTab.online))
+                .overrideWith((ref) => Stream.value(const <SubjectLecture>[])),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: GradeStudentsScreen(initialGradeKey: 'grade_one'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Subjects'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Physics'), findsOneWidget);
+      expect(find.text('Lectures (1)'), findsOneWidget);
+      expect(find.text('Revisions (0)'), findsOneWidget);
+      expect(find.text('Final (0)'), findsOneWidget);
+      expect(find.text('Online (0)'), findsOneWidget);
+    });
+
     testWidgets('grade pills switch grades', (WidgetTester tester) async {
       await _pumpScreen(tester);
 
@@ -271,7 +346,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Type: Center'), findsOneWidget);
-      expect(find.text('Plan: PRO'), findsOneWidget);
+      expect(
+        find.text('Plan: 2 subjects · 1 FREE, 1 PRO'),
+        findsOneWidget,
+      );
       expect(find.text('Status: Active'), findsOneWidget);
     });
 
@@ -296,7 +374,7 @@ void main() {
         id: '1',
         name: 'Ahmed gamal',
         isCenter: true,
-        plan: 'PRO',
+        planSummary: StudentPlanSummary(subjects: 2, free: 1, pro: 1),
         isActive: true,
         lastSignIn: '1/1/2026',
       ),
@@ -304,7 +382,7 @@ void main() {
         id: '2',
         name: 'Sara ali',
         isCenter: false,
-        plan: 'FREE',
+        planSummary: StudentPlanSummary.empty,
         isActive: false,
         lastSignIn: '2/1/2026',
       ),
@@ -336,6 +414,92 @@ void main() {
             .id,
         '2',
       );
+    });
+
+    test('plan scope matches true tier holdings, not a scalar', () {
+      // Multi-tier student matches every tier they hold.
+      expect(
+        filterStudents(rows, StudentSearchScope.plan, 'free').single.id,
+        '1',
+      );
+      expect(
+        filterStudents(rows, StudentSearchScope.plan, 'max'),
+        isEmpty,
+      );
+      // Explicit empty state is searchable; stale FREE default is gone.
+      expect(
+        filterStudents(rows, StudentSearchScope.plan, 'no active')
+            .single
+            .id,
+        '2',
+      );
+    });
+  });
+
+  group('StudentPlanSummary', () {
+    test('displayText renders the true distribution', () {
+      expect(StudentPlanSummary.empty.displayText, 'No active plan');
+      expect(
+        const StudentPlanSummary(subjects: 1, pro: 1).displayText,
+        '1 subject · 1 PRO',
+      );
+      // Mirrors the live asmaa mohamed case: MAX + PRO + FREE.
+      expect(
+        const StudentPlanSummary(subjects: 3, free: 1, pro: 1, max: 1)
+            .displayText,
+        '3 subjects · 1 FREE, 1 PRO, 1 MAX',
+      );
+    });
+
+    test('buildStudentPlanSummaries folds rows per student', () {
+      final Map<String, StudentPlanSummary> out =
+          buildStudentPlanSummaries(
+        subscriptions: <({String studentId, String subjectId, String planId})>[
+          (studentId: 's1', subjectId: 'sub1', planId: 'p-free'),
+          (studentId: 's1', subjectId: 'sub2', planId: 'p-pro'),
+          (studentId: 's1', subjectId: 'sub3', planId: 'p-max'),
+          (studentId: 's2', subjectId: 'sub1', planId: 'p-gone'),
+        ],
+        planLabels: <String, String>{
+          'p-free': 'FREE',
+          'p-pro': 'PRO',
+          'p-max': 'MAX',
+        },
+      );
+      expect(out['s1']!.displayText, '3 subjects · 1 FREE, 1 PRO, 1 MAX');
+      // Unresolvable plan: subject counted, tier bucket honest.
+      expect(out['s2']!.displayText, '1 subject · 1 other');
+      expect(out.containsKey('s3'), isFalse);
+    });
+
+    test('buildPlanBreakdown shares one subscription axis', () {
+      const List<GradeStudent> breakdownRows = <GradeStudent>[
+        GradeStudent(
+          id: '1',
+          name: 'A',
+          isCenter: true,
+          planSummary: StudentPlanSummary(subjects: 3, free: 1, pro: 1, max: 1),
+          isActive: true,
+          lastSignIn: '',
+        ),
+        GradeStudent(
+          id: '2',
+          name: 'B',
+          isCenter: true,
+          planSummary: StudentPlanSummary.empty,
+          isActive: true,
+          lastSignIn: '',
+        ),
+      ];
+      final List<PlanBreakdownRow> breakdown =
+          buildPlanBreakdown(breakdownRows);
+      // Multi-tier student counted in each tier: shares sum past 100%.
+      expect(breakdown[0].label, 'Students with FREE');
+      expect(breakdown[0].count, 1);
+      expect(breakdown[1].count, 1);
+      expect(breakdown[2].count, 1);
+      expect(breakdown[3].label, 'No active plan');
+      expect(breakdown[3].count, 1);
     });
   });
 }

@@ -6,6 +6,8 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/dashboard_filter_dropdown.dart';
 import '../../domain/entities/join_application.dart';
 import '../../domain/grade.dart';
+import '../../../students/presentation/providers/grade_pending_requests_provider.dart';
+import '../../../students/presentation/providers/grade_students_provider.dart';
 import '../providers/join_applications_provider.dart';
 import '../widgets/application_decision_dialog.dart';
 
@@ -113,15 +115,25 @@ class _ReviewingApplicationsScreenState
   }
 }
 
-class _ApplicationCard extends StatelessWidget {
+class _ApplicationCard extends ConsumerWidget {
   final JoinApplication application;
 
   const _ApplicationCard({required this.application});
 
-  Future<void> _openDecision(BuildContext context) async {
+  Future<void> _openDecision(BuildContext context, WidgetRef ref) async {
     final String? message =
         await showApplicationDecisionDialog(context, application);
     if (context.mounted && message != null) {
+      // Decision changes both queues: drop the cached pending/student
+      // lists (and refresh the live applications stream) so the
+      // approved student appears in Students without a manual reload.
+      ref.invalidate(joinApplicationsProvider);
+      ref.invalidate(gradeStudentsProvider);
+      if (application.gradeKey != null) {
+        ref.invalidate(
+          gradePendingRequestsProvider(application.gradeKey!),
+        );
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -129,13 +141,13 @@ class _ApplicationCard extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final rs = context.rs;
     final String? studentType = studentTypeDisplayName(application.studentType);
     final DateTime? createdAt = application.createdAt;
 
     return InkWell(
-      onTap: () => _openDecision(context),
+      onTap: () => _openDecision(context, ref),
       borderRadius: BorderRadius.circular(28),
       child: Container(
         width: double.infinity,
@@ -195,7 +207,7 @@ class _ApplicationCard extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: _ReviewButton(
-                onTap: () => _openDecision(context),
+                onTap: () => _openDecision(context, ref),
               ),
             ),
           ],

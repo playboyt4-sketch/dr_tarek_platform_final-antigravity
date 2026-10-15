@@ -98,12 +98,16 @@ class _ApplicationDecisionDialogState
       _busy = true;
       _error = null;
     });
+    // Only explicit ON enters the payload: OFF / untouched rows produce
+    // NO write, so no clutter disabled assignment rows are created in
+    // the Subjects tab (same discipline as the review-screen flow).
     final List<Map<String, Object>> subjectAccess = <Map<String, Object>>[
       for (final SubjectOption subject in subjects)
-        <String, Object>{
-          'subjectId': subject.id,
-          'enabled': _subjectToggles[subject.id] ?? true,
-        },
+        if (_subjectToggles[subject.id] ?? true)
+          <String, Object>{
+            'subjectId': subject.id,
+            'enabled': true,
+          },
     ];
     try {
       final ApprovalResult result = await ref

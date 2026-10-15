@@ -8,7 +8,7 @@ import '../providers/student_profile_payments_provider.dart';
 /// centered): settlement [status badge] + numbers capsule
 /// (Net Total / Paid / Balance) + `Add Payment` + `Print Invoice`.
 ///
-/// Tapping the numbers capsule opens the Teacher-only financial-account
+/// Tapping the numbers capsule opens the Doctor-only financial-account
 /// editor via [onEditAccount]; visuals are unchanged.
 class StudentFinancialSummaryBar extends StatelessWidget {
   final StudentLedger ledger;

@@ -65,19 +65,24 @@ void main() {
     expect(find.byIcon(Icons.chat_bubble_outline_rounded), findsNothing);
   });
 
-  test('role mapping sends admin only to the existing admin destination', () {
+  test('role mapping sends admin and doctor to the existing admin destination', () {
     expect(authGateDestinationForRole('admin'), AuthGateDestination.admin);
+    expect(authGateDestinationForRole('doctor'), AuthGateDestination.admin);
     expect(authGateDestinationForRole('student'), AuthGateDestination.student);
   });
 
-  testWidgets(
-    'teacher role is explicitly blocked when no teacher destination exists',
-    (tester) async {
-      final user = testUser(role: 'teacher', approvalStatus: 'approved');
-      await pumpGate(tester, SessionRoleBlocked(user: user, role: 'teacher'));
-
-      expect(find.text('الدور غير متاح'), findsOneWidget);
-      expect(find.text('لوحة الإدارة'), findsNothing);
+  // NOTE: a full widget pump of the admin destination is not possible in
+  // this suite — AdminHomeScreen (like StudentHomeScreen) touches
+  // FirebaseFirestore/FirebaseAuth during build and there is no Firebase
+  // app in widget tests (the pre-existing student-home pump fails for the
+  // same reason). Routing itself is covered by the mapping test above.
+  test(
+    'doctor role maps to the admin destination (Platform Owner entry)',
+    () {
+      expect(
+        authGateDestinationForRole('doctor'),
+        AuthGateDestination.admin,
+      );
     },
   );
 

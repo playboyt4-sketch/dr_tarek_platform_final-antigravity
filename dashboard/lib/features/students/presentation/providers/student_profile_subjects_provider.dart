@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart'
     show DecisionFailure, SubjectOption;
+import '../../data/datasources/subject_access_remote_data_source.dart';
+import '../../data/repositories/subject_access_repository_impl.dart';
+import '../../domain/repositories/subject_access_repository.dart'
+    show SubjectAccessRepository, SubjectGrantOutcome;
 
 /// Data layer for the Student Profile → Subjects tab.
 ///
@@ -24,11 +27,13 @@ import '../../../applications/presentation/providers/application_decision_provid
 ///   `center_pro` / `center_max`) resolves the display label. There is no
 ///   global student plan on this screen.
 ///
-/// Writes go exclusively through the audited Cloud Function callables
-/// (`setSubjectAccess`, `activateFreePlan`, `upgrade`/`downgrade`), which
-/// enforce `requireStudentAccessManager` (teacher or delegated
-/// `admin_students`) server-side and write `admin_audit_log` / analytics
-/// events. The client never invents permission or audit identifiers.
+/// Writes go exclusively through [SubjectAccessRepository] (audited Cloud
+/// Function callables: `setSubjectAccess` for toggles, the atomic
+/// `grantSubjectAccessWithPlan` for grants — assignment + subscription in
+/// one server transaction), which enforce `requireStudentAccessManager`
+/// (doctor or delegated `admin_students`) server-side and write
+/// `admin_audit_log` / analytics events. The client never invents
+/// permission or audit identifiers.
 
 /// One non-deleted access assignment of a student.
 class StudentSubjectAssignment {
@@ -313,20 +318,17 @@ class NewStudentSubject {
   });
 }
 
-/// Pure pick step (unit-testable): builds the commit list from the FULL
-/// in-scope subject list — the same list the overlay displayed — applying
-/// persisted/explicit toggle states and the FREE plan default for rows
-/// the user never touched.
+/// Pure pick step (unit-testable): builds the commit list from ONLY the
+/// subjects the Admin explicitly toggled ON in this dialog interaction.
 ///
-/// Rationale: the subject overlays only record entries for rows the user
-/// physically toggles/selects; untouched rows leave no entry in the
-/// returned maps and therefore resolve to OFF (never default-ON), exactly
-/// as displayed. Iterating only the returned maps would silently drop
-/// those rows; iterating the scope commits every displayed row with the
-/// state the reviewer saw. Already-registered subjects are excluded
-/// (duplicate protection; the deterministic `{studentId}_{subjectId}`
-/// assignment id plus `enforceOneSubscriptionPerSubject` stay
-/// authoritative).
+/// Untouched or OFF rows produce NO write at all — never a disabled
+/// (`enabled: false`) assignment row. Rationale: an unregistered subject
+/// has no assignment document, and creating one just to record OFF clutters
+/// the Subjects table (which lists every non-deleted assignment) with
+/// plan-less rows while granting no entitlement. Already-registered
+/// subjects are excluded (duplicate protection; the deterministic
+/// `{studentId}_{subjectId}` assignment id plus
+/// `enforceOneSubscriptionPerSubject` stay authoritative).
 List<NewStudentSubject> buildNewStudentSubjects({
   required List<SubjectOption> scope,
   required Map<String, bool> toggles,
@@ -338,9 +340,14 @@ List<NewStudentSubject> buildNewStudentSubjects({
   void add(String subjectId) {
     if (!seen.add(subjectId)) return;
     if (alreadyRegistered.contains(subjectId)) return;
+    // Only an explicit ON enters the write request. Untouched rows have
+    // no entry in [toggles] and resolve to OFF → skipped (no write).
+    // Explicit-OFF rows are likewise skipped: there is no assignment to
+    // disable for an unregistered subject.
+    if (toggles[subjectId] != true) return;
     picked.add(NewStudentSubject(
       subjectId: subjectId,
-      enabled: toggles[subjectId] ?? false,
+      enabled: true,
       plan: plans[subjectId] ?? 'free',
     ));
   }
@@ -349,41 +356,35 @@ List<NewStudentSubject> buildNewStudentSubjects({
     add(subject.id);
   }
   // Defensive: entries for ids that left the scope while the overlay was
-  // open are still honored instead of silently dropped.
+  // open are still honored instead of silently dropped — when toggled ON.
   for (final String subjectId in toggles.keys) {
     add(subjectId);
   }
-  for (final String subjectId in plans.keys) {
-    add(subjectId);
-  }
+  // NOTE: [plans]-only entries (a plan chosen without ever toggling ON)
+  // intentionally produce no write: the plan capsule is untappable while
+  // the switch is off, so a plans-only entry can never reflect an Admin
+  // grant intent.
   return picked;
 }
 
 /// Subject mutations for the Student Profile → Subjects tab.
 ///
-/// Every write goes through the existing audited callables — never direct
-/// Firestore writes — so `requireStudentAccessManager` (teacher or
-/// delegated `admin_students`), `admin_audit_log`, and analytics events
-/// keep applying exactly as they do for the approval flow. Permission
-/// failures surface as [DecisionFailure] with the backend message.
+/// Every write goes through [SubjectAccessRepository] (audited Cloud
+/// Function callables — never direct Firestore writes) so
+/// `requireStudentAccessManager` (doctor or delegated `admin_students`),
+/// `admin_audit_log`, and analytics events keep applying exactly as they
+/// do for the approval flow. Permission failures surface as
+/// [DecisionFailure] with the backend message.
 class StudentProfileSubjectsController {
-  final FirebaseFunctions _functions;
-  final FirebaseFirestore _db;
+  final SubjectAccessRepository _repository;
 
-  const StudentProfileSubjectsController(this._functions, this._db);
+  const StudentProfileSubjectsController(this._repository);
 
-  String _message(Object error) {
-    if (error is FirebaseFunctionsException) {
-      final String? message = error.message;
-      if (message != null && message.trim().isNotEmpty) return message;
-      return switch (error.code) {
-        'permission-denied' => 'لا تملك صلاحية تنفيذ هذا الإجراء.',
-        'failed-precondition' => 'تعذّر تنفيذ الإجراء: حالة البيانات تغيّرت.',
-        'not-found' => 'تعذّر العثور على الطالب أو المادة.',
-        'invalid-argument' => 'بيانات غير مكتملة.',
-        _ => 'تعذّر تنفيذ الإجراء. حاول مرة أخرى.',
-      };
-    }
+  String _failureText(Object error) {
+    if (error is DecisionFailure) return error.message;
+    final String text = error.toString();
+    const String prefix = 'DecisionFailure: ';
+    if (text.startsWith(prefix)) return text.substring(prefix.length);
     return 'تعذّر تنفيذ الإجراء. حاول مرة أخرى.';
   }
 
@@ -394,17 +395,11 @@ class StudentProfileSubjectsController {
     required String subjectId,
     required bool enabled,
   }) async {
-    try {
-      await _functions.httpsCallable('setSubjectAccess').call(
-        <String, Object>{
-          'studentId': studentId,
-          'subjectId': subjectId,
-          'enabled': enabled,
-        },
-      );
-    } catch (e) {
-      throw DecisionFailure(_message(e));
-    }
+    await _repository.setAccess(
+      studentId: studentId,
+      subjectId: subjectId,
+      enabled: enabled,
+    );
   }
 
   /// Delete = soft-delete (archive) the student-subject assignment after
@@ -421,18 +416,11 @@ class StudentProfileSubjectsController {
     required String subjectId,
     required bool enabled,
   }) async {
-    try {
-      await _functions.httpsCallable('setSubjectAccess').call(
-        <String, Object>{
-          'studentId': studentId,
-          'subjectId': subjectId,
-          'enabled': enabled,
-          'isDeleted': true,
-        },
-      );
-    } catch (e) {
-      throw DecisionFailure(_message(e));
-    }
+    await _repository.removeSubject(
+      studentId: studentId,
+      subjectId: subjectId,
+      enabled: enabled,
+    );
   }
 
   /// Adds subjects picked in the add overlays. Already-registered
@@ -441,49 +429,68 @@ class StudentProfileSubjectsController {
   /// `enforceOneSubscriptionPerSubject` remain authoritative against
   /// duplicates.
   ///
-  /// Per subject: create/restore the assignment via `setSubjectAccess`
-  /// (explicit `isDeleted: false` so a previously removed subject is
-  /// restored, not left archived), then for enabled rows ensure the
-  /// subject-scoped subscription — `activateFreePlan` for FREE, followed
-  /// by `upgrade` to the matching active plan document for PRO/MAX.
-  Future<void> addSubjects({
+  /// Per-subject isolation (mirrors `ApplicationDecisionController.approve`
+  /// at `application_decision_provider.dart`): each subject's call is
+  /// wrapped in its own try/catch INSIDE the loop, so a failure on one
+  /// subject never prevents the remaining subjects from being attempted.
+  /// Every outcome — success or failure — is collected and returned; this
+  /// method never throws for per-subject failures.
+  ///
+  /// Per enabled subject a single atomic `grantSubjectAccessWithPlan`
+  /// call grants the assignment AND the subscription at the chosen plan
+  /// tier together (no "activate free first, then upgrade" chain). OFF
+  /// rows keep the `setSubjectAccess`-only short-circuit (no plan needed).
+  Future<List<SubjectGrantOutcome>> addSubjects({
     required String studentId,
     required bool isCenter,
     required List<NewStudentSubject> subjects,
     required Set<String> alreadyRegistered,
+    required Map<String, String> subjectTitles,
   }) async {
     final String studentType =
         isCenter ? 'center_student' : 'guest';
+    final List<SubjectGrantOutcome> outcomes = <SubjectGrantOutcome>[];
     for (final NewStudentSubject item in subjects) {
       if (alreadyRegistered.contains(item.subjectId)) continue;
+      final String name =
+          subjectTitles[item.subjectId] ?? item.subjectId;
       try {
-        await _functions.httpsCallable('setSubjectAccess').call(
-          <String, Object>{
-            'studentId': studentId,
-            'subjectId': item.subjectId,
-            'enabled': item.enabled,
-            'isDeleted': false,
-          },
-        );
-        if (!item.enabled) continue;
-        await _applyPlan(
-          studentId: studentId,
-          studentType: studentType,
+        if (!item.enabled) {
+          await _repository.setAccess(
+            studentId: studentId,
+            subjectId: item.subjectId,
+            enabled: false,
+            restore: true,
+          );
+        } else {
+          await _repository.grantAccessWithPlan(
+            studentId: studentId,
+            subjectId: item.subjectId,
+            studentType: studentType,
+            plan: item.plan,
+          );
+        }
+        outcomes.add(SubjectGrantOutcome(
           subjectId: item.subjectId,
-          plan: item.plan,
-        );
+          subjectName: name,
+          success: true,
+        ));
       } catch (e) {
-        throw DecisionFailure(
-          '${item.subjectId}: ${_message(e)}',
-        );
+        outcomes.add(SubjectGrantOutcome(
+          subjectId: item.subjectId,
+          subjectName: name,
+          success: false,
+          errorMessage: _failureText(e),
+        ));
       }
     }
+    return outcomes;
   }
 
   /// Changes the subject-scoped plan entitlement for an already-
-  /// registered subject: `activateFreePlan` first, then `upgrade` to the
-  /// matching active plan document for PRO/MAX (same audited callable
-  /// sequence as [addSubjects] — never direct Firestore writes).
+  /// registered subject via the atomic `grantSubjectAccessWithPlan`
+  /// callable (assignment + subscription retargeted together — never
+  /// direct Firestore writes).
   Future<void> changePlan({
     required String studentId,
     required bool isCenter,
@@ -493,85 +500,50 @@ class StudentProfileSubjectsController {
     final String studentType =
         isCenter ? 'center_student' : 'guest';
     try {
-      await _applyPlan(
+      await _repository.grantAccessWithPlan(
         studentId: studentId,
-        studentType: studentType,
         subjectId: subjectId,
+        studentType: studentType,
         plan: plan,
       );
     } catch (e) {
       throw DecisionFailure(
-        '$subjectId: ${_message(e)}',
+        '$subjectId: ${_failureText(e)}',
       );
     }
-  }
-
-  /// Shared plan-entitlement sequence: FREE activates the free plan;
-  /// PRO/MAX activate free first, then upgrade to the resolved plan doc.
-  Future<void> _applyPlan({
-    required String studentId,
-    required String studentType,
-    required String subjectId,
-    required String plan,
-  }) async {
-    final String normalized = plan.toLowerCase();
-    if (normalized == 'pro' || normalized == 'max') {
-      await _functions.httpsCallable('activateFreePlan').call(
-        <String, Object>{
-          'studentId': studentId,
-          'subjectId': subjectId,
-          'studentType': studentType,
-        },
-      );
-      final String planDocId = await _resolvePlanDocId(
-        studentType: studentType,
-        plan: normalized,
-      );
-      await _functions.httpsCallable('upgrade').call(
-        <String, Object>{
-          'studentId': studentId,
-          'subjectId': subjectId,
-          'newPlanId': planDocId,
-        },
-      );
-    } else {
-      await _functions.httpsCallable('activateFreePlan').call(
-        <String, Object>{
-          'studentId': studentId,
-          'subjectId': subjectId,
-          'studentType': studentType,
-        },
-      );
-    }
-  }
-  /// Resolves the active plan document for ([studentType], [plan]) from
-  /// the data-driven `plans` collection (`plan_key` suffix + matching
-  /// `student_type`, `is_active`). No plan ids or eligibility rules are
-  /// hardcoded; a missing paid plan surfaces the backend state honestly.
-  Future<String> _resolvePlanDocId({
-    required String studentType,
-    required String plan,
-  }) async {
-    final QuerySnapshot<Map<String, dynamic>> snap = await _db
-        .collection('plans')
-        .where('student_type', isEqualTo: studentType)
-        .where('is_active', isEqualTo: true)
-        .get();
-    for (final doc in snap.docs) {
-      final String key =
-          ((doc.data()['plan_key'] as String?) ?? '').toLowerCase();
-      if (key.endsWith('_$plan') || key == plan) return doc.id;
-    }
-    throw DecisionFailure(
-      'لا توجد باقة $plan مفعّلة لهذا النوع من الطلاب.',
-    );
   }
 }
+
+/// Firebase-backed [SubjectAccessRepository] for the students feature.
+///
+/// Riverpod's graph is the DI mechanism (07 §7): providers depend on the
+/// interface, never on Firebase types directly.
+final subjectAccessRepositoryProvider =
+    Provider<SubjectAccessRepository>((ref) {
+  return SubjectAccessRepositoryImpl(
+    SubjectAccessRemoteDataSource(ref.watch(firebaseFunctionsProvider)),
+  );
+});
+
+/// Whether the FREE tier may currently be granted
+/// (`system_settings.free_plan_enabled`), read through the audited
+/// `getSubjectAccessConfig` callable. The UI uses this to hide/disable
+/// the FREE segment instead of letting the Admin hit the server rejection
+/// at save time; the server check remains the true gate.
+///
+/// One-shot fetch (not a live stream): a callable has no Firestore
+/// snapshot stream, so an out-of-app settings change does NOT push here.
+/// `autoDispose` re-fetches on next navigation to a watching screen, and
+/// each plan dialog additionally does a `ref.refresh(...future)` before
+/// opening so the opened dialog reflects the current server value
+/// without requiring a full page reload.
+final freePlanAvailabilityProvider = FutureProvider.autoDispose<bool>((ref) {
+  return ref.watch(subjectAccessRepositoryProvider).isFreePlanEnabled();
+});
 
 final studentProfileSubjectsControllerProvider =
     Provider<StudentProfileSubjectsController>((ref) {
   return StudentProfileSubjectsController(
-    ref.watch(firebaseFunctionsProvider),
-    ref.watch(firebaseFirestoreProvider),
+    ref.watch(subjectAccessRepositoryProvider),
   );
 });

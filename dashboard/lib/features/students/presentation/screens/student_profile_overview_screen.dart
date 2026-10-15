@@ -1,12 +1,18 @@
+import 'dart:convert';
+
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/theme/app_typography.dart';
 import '../providers/grade_students_provider.dart';
+import '../providers/student_profile_grade_provider.dart';
 import 'grade_students_screen.dart' show gradeAccent;
 import 'student_profile_memberships_tab.dart';
 import 'student_profile_payments_tab.dart';
 import 'student_profile_device_tab.dart';
+import 'student_profile_security_tab.dart';
 import 'student_profile_subjects_tab.dart';
 import '../widgets/dashboard_brand_lockup.dart';
 import '../widgets/grade_theme.dart';
@@ -34,13 +40,13 @@ import '../widgets/grade_theme.dart';
 ///
 /// Name/Phone edit inline (Edit ↔ Done); Grade/Student-type edit via the
 /// 677 x 220 / 380 x 220 overlays (white, radius 24, fade 150 ms,
-/// barrier black 25%). `Overview`, `Subjects`, `Memberships`, `Payments`
-/// and `Device` have destinations; the remaining sub-nav pills stay static
-/// until their screens land.
+/// barrier black 25%). `Overview`, `Subjects`, `Memberships`, `Payments`,
+/// `Device` and `Security` have destinations; the remaining sub-nav pills
+/// stay static until their screens land.
 ///
 /// The passed [student] pre-fills the hero (name/phone/grade/date) and the
 /// Name, Phone, Grade and Student Type rows.
-class StudentProfileOverviewScreen extends StatefulWidget {
+class StudentProfileOverviewScreen extends ConsumerStatefulWidget {
   final GradeStudent student;
   final String gradeKey;
 
@@ -68,8 +74,8 @@ class StudentProfileOverviewScreen extends StatefulWidget {
   final VoidCallback? onSubjectsTab;
 
   /// Profile section shown first. `Overview`, `Subjects`,
-  /// `Memberships`, `Payments` and `Device` have destinations; any other
-  /// value falls back to `Overview`.
+  /// `Memberships`, `Payments`, `Device` and `Security` have destinations;
+  /// any other value falls back to `Overview`.
   final String initialNav;
 
   const StudentProfileOverviewScreen({
@@ -86,12 +92,12 @@ class StudentProfileOverviewScreen extends StatefulWidget {
   });
 
   @override
-  State<StudentProfileOverviewScreen> createState() =>
+  ConsumerState<StudentProfileOverviewScreen> createState() =>
       _StudentProfileOverviewScreenState();
 }
 
 class _StudentProfileOverviewScreenState
-    extends State<StudentProfileOverviewScreen> {
+    extends ConsumerState<StudentProfileOverviewScreen> {
   static const List<String> navItems = <String>[
     'Overview',
     'Subjects',
@@ -107,6 +113,9 @@ class _StudentProfileOverviewScreenState
   late bool _studentsActive;
   bool _isEditingName = false;
   bool _isEditingPhone = false;
+
+  /// Guards the Name/Phone persist round-trip (Done) against double taps.
+  bool _savingProfile = false;
 
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
@@ -129,7 +138,8 @@ class _StudentProfileOverviewScreenState
     _nav = widget.initialNav == 'Subjects' ||
             widget.initialNav == 'Memberships' ||
             widget.initialNav == 'Payments' ||
-            widget.initialNav == 'Device'
+            widget.initialNav == 'Device' ||
+            widget.initialNav == 'Security'
         ? widget.initialNav
         : 'Overview';
     _studentsActive = true;
@@ -164,14 +174,16 @@ class _StudentProfileOverviewScreenState
   }
 
   /// Switches the active Student Profile section. `Overview`,
-  /// `Subjects`, `Memberships`, `Payments` and `Device` have destinations;
-  /// the remaining pills stay static until their screens land.
+  /// `Subjects`, `Memberships`, `Payments`, `Device` and `Security` have
+  /// destinations; the remaining pills stay static until their screens
+  /// land.
   void selectNav(String nav) {
     if (nav != 'Overview' &&
         nav != 'Subjects' &&
         nav != 'Memberships' &&
         nav != 'Payments' &&
-        nav != 'Device') {
+        nav != 'Device' &&
+        nav != 'Security') {
       return;
     }
     setState(() => _nav = nav);
@@ -194,7 +206,87 @@ class _StudentProfileOverviewScreenState
     });
   }
 
-  void toggleNameEditing() {
+  /// Maps a callable failure to a dashboard-facing message. The
+  /// `convertStudentType` incompatibility arrives as `failed-precondition`
+  /// carrying a JSON body with `code: INCOMPATIBLE_SUBSCRIPTIONS`.
+  static String _functionsErrorMessage(FirebaseFunctionsException error) {
+    if (error.code == 'already-exists') {
+      return 'رقم الهاتف مسجل لحساب آخر.';
+    }
+    final String details = error.message ?? '';
+    if (details.contains('INCOMPATIBLE_SUBSCRIPTIONS')) {
+      return 'لا يمكن التحويل: توجد اشتراكات نشطة غير متوافقة مع النوع الجديد.';
+    }
+    if (error.code == 'invalid-argument' && details.isNotEmpty) {
+      String friendly = details;
+      try {
+        final Object? decoded = jsonDecode(details);
+        if (decoded is Map && decoded['message'] is String) {
+          friendly = decoded['message'] as String;
+        }
+      } catch (_) {}
+      return friendly;
+    }
+    if (details.isNotEmpty) return details;
+    return 'تعذّر تنفيذ الإجراء. حاول مرة أخرى.';
+  }
+
+  /// Persists one profile field through the audited
+  /// `updateStudentProfileByStaff` callable (staff cannot write
+  /// `users/{userId}` directly per `firestore.rules`). Returns true when
+  /// the value is stored server-side.
+  Future<bool> _persistProfileField(String field, String value) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('updateStudentProfileByStaff')
+          .call(<String, dynamic>{
+        'studentId': widget.student.id,
+        if (field == 'name') 'fullName': value,
+        if (field == 'phone') 'phoneNumber': value,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(_functionsErrorMessage(error))),
+      );
+      return false;
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('تعذّر تنفيذ الإجراء. حاول مرة أخرى.')),
+      );
+      return false;
+    }
+    ref.invalidate(gradeStudentsProvider);
+    return true;
+  }
+
+  void toggleNameEditing() async {
+    // Done → persist the edited name before leaving edit mode.
+    if (_isEditingName && !_savingProfile) {
+      final String next = _nameController.text.trim();
+      if (next == widget.student.name.trim()) {
+        setState(() => _isEditingName = false);
+        _nameFocus.unfocus();
+        return;
+      }
+      if (next.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('الاسم لا يمكن أن يكون فارغًا.')),
+        );
+        return;
+      }
+      _savingProfile = true;
+      final bool saved = await _persistProfileField('name', next);
+      _savingProfile = false;
+      if (!mounted) return;
+      if (!saved) return;
+      setState(() => _isEditingName = false);
+      _nameFocus.unfocus();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تحديث اسم الطالب بنجاح.')),
+      );
+      return;
+    }
     setState(() => _isEditingName = !_isEditingName);
     if (_isEditingName) {
       _nameFocus.requestFocus();
@@ -203,7 +295,33 @@ class _StudentProfileOverviewScreenState
     }
   }
 
-  void togglePhoneEditing() {
+  void togglePhoneEditing() async {
+    // Done → persist the edited phone before leaving edit mode.
+    if (_isEditingPhone && !_savingProfile) {
+      final String next = _phoneController.text.trim();
+      if (next == (widget.student.phone ?? '').trim()) {
+        setState(() => _isEditingPhone = false);
+        _phoneFocus.unfocus();
+        return;
+      }
+      if (next.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('رقم الهاتف لا يمكن أن يكون فارغًا.')),
+        );
+        return;
+      }
+      _savingProfile = true;
+      final bool saved = await _persistProfileField('phone', next);
+      _savingProfile = false;
+      if (!mounted) return;
+      if (!saved) return;
+      setState(() => _isEditingPhone = false);
+      _phoneFocus.unfocus();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تحديث رقم هاتف الطالب بنجاح.')),
+      );
+      return;
+    }
     setState(() => _isEditingPhone = !_isEditingPhone);
     if (_isEditingPhone) {
       _phoneFocus.requestFocus();
@@ -282,7 +400,9 @@ class _StudentProfileOverviewScreenState
                   // Overview → data rows; Subjects → subjects table;
                   // Memberships → type pill + memberships table;
                   // Payments → invoiced table + summary strip + history;
-                  // Device → subject device-authorization table + reset.
+                  // Device → subject device-authorization table + reset;
+                  // Security → status + password cards with event-log and
+                  // change-password overlays.
                   const SizedBox(height: 18),
                   if (_nav == 'Subjects')
                     Center(
@@ -332,6 +452,16 @@ class _StudentProfileOverviewScreenState
                         ),
                       ),
                     )
+                  else if (_nav == 'Security')
+                    Center(
+                      child: SizedBox(
+                        width: 830,
+                        child: StudentProfileSecurityTab(
+                          student: widget.student,
+                          gradeKey: _gradeKey,
+                        ),
+                      ),
+                    )
                   else
                     Center(child: _OverviewRows(state: this)),
                   const SizedBox(height: 24),
@@ -360,6 +490,7 @@ class _StudentProfileOverviewScreenState
 
   void _showGradesOverlay() {
     String temp = _gradeKey;
+    bool saving = false;
     showGeneralDialog<void>(
       context: context,
       barrierColor: const Color(0x40000000),
@@ -422,8 +553,10 @@ class _StudentProfileOverviewScreenState
                                 isActive: temp ==
                                     GradeTheme.allGrades[i].gradeId,
                                 accent: _accent,
-                                onTap: () => setOverlayState(() => temp =
-                                    GradeTheme.allGrades[i].gradeId),
+                                onTap: saving
+                                    ? () {}
+                                    : () => setOverlayState(() => temp =
+                                        GradeTheme.allGrades[i].gradeId),
                               ),
                             ],
                           ],
@@ -432,10 +565,60 @@ class _StudentProfileOverviewScreenState
                       const SizedBox(height: 24),
                       _SaveButton(
                         accent: _accent,
-                        onTap: () {
-                          setState(() => _gradeKey = temp);
-                          Navigator.of(context).pop();
-                        },
+                        isLoading: saving,
+                        onTap: saving
+                            ? () {}
+                            : () async {
+                                // Capture navigator + messenger before any
+                                // async gap (lint:
+                                // use_build_context_synchronously).
+                                final navigator = Navigator.of(context);
+                                final messenger = ScaffoldMessenger.of(
+                                  this.context,
+                                );
+                                if (temp == _gradeKey) {
+                                  // No-op: matches the backend (no write,
+                                  // no audit event for an unchanged grade).
+                                  navigator.pop();
+                                  return;
+                                }
+                                setOverlayState(() => saving = true);
+                                try {
+                                  await ref
+                                      .read(
+                                        studentProfileGradeControllerProvider,
+                                      )
+                                      .updateGrade(
+                                        studentId: widget.student.id,
+                                        grade: temp,
+                                      );
+                                } catch (e) {
+                                  // Never pretend success: surface the
+                                  // backend/permission failure and keep the
+                                  // displayed grade unchanged.
+                                  setOverlayState(() => saving = false);
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(_failureMessage(e)),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                if (!mounted) return;
+                                // The write succeeded server-side: reflect
+                                // the persisted grade locally, close, then
+                                // refresh every grade tab's student list so
+                                // the student moves tabs without a reload.
+                                setState(() => _gradeKey = temp);
+                                navigator.pop();
+                                ref.invalidate(gradeStudentsProvider);
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content:
+                                        Text('تم تحديث فرقة الطالب بنجاح.'),
+                                  ),
+                                );
+                              },
                       ),
                     ],
                   ),
@@ -448,8 +631,16 @@ class _StudentProfileOverviewScreenState
     );
   }
 
+  static String _failureMessage(Object error) {
+    final String text = error.toString();
+    const String prefix = 'DecisionFailure: ';
+    if (text.startsWith(prefix)) return text.substring(prefix.length);
+    return 'تعذّر تنفيذ الإجراء. حاول مرة أخرى.';
+  }
+
   void _showStudentTypeOverlay() {
     bool temp = _isCenter;
+    bool saving = false;
     showGeneralDialog<void>(
       context: context,
       barrierColor: const Color(0x40000000),
@@ -518,16 +709,18 @@ class _StudentProfileOverviewScreenState
                               label: 'Center',
                               isActive: temp,
                               accent: _accent,
-                              onTap: () =>
-                                  setOverlayState(() => temp = true),
+                              onTap: saving
+                                  ? () {}
+                                  : () => setOverlayState(() => temp = true),
                             ),
                             const SizedBox(width: 4),
                             _OverlayOption(
                               label: 'Guest',
                               isActive: !temp,
                               accent: _accent,
-                              onTap: () =>
-                                  setOverlayState(() => temp = false),
+                              onTap: saving
+                                  ? () {}
+                                  : () => setOverlayState(() => temp = false),
                             ),
                           ],
                         ),
@@ -535,10 +728,73 @@ class _StudentProfileOverviewScreenState
                       const SizedBox(height: 24),
                       _SaveButton(
                         accent: _accent,
-                        onTap: () {
-                          setState(() => _isCenter = temp);
-                          Navigator.of(context).pop();
-                        },
+                        isLoading: saving,
+                        onTap: saving
+                            ? () {}
+                            : () async {
+                                // Capture navigator + messenger before any
+                                // async gap (lint:
+                                // use_build_context_synchronously).
+                                final navigator = Navigator.of(context);
+                                final messenger = ScaffoldMessenger.of(
+                                  this.context,
+                                );
+                                if (temp == _isCenter) {
+                                  // No-op: matches the backend (no write,
+                                  // no audit event for an unchanged type).
+                                  navigator.pop();
+                                  return;
+                                }
+                                setOverlayState(() => saving = true);
+                                try {
+                                  await FirebaseFunctions.instance
+                                      .httpsCallable('convertStudentType')
+                                      .call(<String, dynamic>{
+                                    'studentId': widget.student.id,
+                                    'targetStudentType': temp
+                                        ? 'center_student'
+                                        : 'guest',
+                                  });
+                                } on FirebaseFunctionsException catch (e) {
+                                  // Never pretend success: surface the
+                                  // backend failure (including
+                                  // INCOMPATIBLE_SUBSCRIPTIONS conflicts)
+                                  // and keep the displayed type unchanged.
+                                  setOverlayState(() => saving = false);
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        _functionsErrorMessage(e),
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                } catch (_) {
+                                  setOverlayState(() => saving = false);
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'تعذّر تنفيذ الإجراء. حاول مرة أخرى.',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                if (!mounted) return;
+                                // The write succeeded server-side: reflect
+                                // the persisted type locally, close, then
+                                // refresh every grade tab's student list.
+                                setState(() => _isCenter = temp);
+                                navigator.pop();
+                                ref.invalidate(gradeStudentsProvider);
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'تم تحديث نوع الطالب بنجاح.',
+                                    ),
+                                  ),
+                                );
+                              },
                       ),
                     ],
                   ),
@@ -1466,8 +1722,13 @@ class _OverlayOption extends StatelessWidget {
 class _SaveButton extends StatelessWidget {
   final Color accent;
   final VoidCallback onTap;
+  final bool isLoading;
 
-  const _SaveButton({required this.accent, required this.onTap});
+  const _SaveButton({
+    required this.accent,
+    required this.onTap,
+    this.isLoading = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1482,16 +1743,25 @@ class _SaveButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(28),
         ),
         alignment: Alignment.center,
-        child: const Text(
-          'Save',
-          style: TextStyle(
-            fontFamily: AppTypography.fontFamily,
-            fontSize: 24,
-            fontWeight: FontWeight.w400,
-            fontVariations: <FontVariation>[FontVariation('wght', 400)],
-            color: Colors.white,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : const Text(
+                'Save',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w400,
+                  fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                  color: Colors.white,
+                ),
+              ),
       ),
     );
   }

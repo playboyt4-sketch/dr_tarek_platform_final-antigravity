@@ -7,6 +7,14 @@ import '../repositories/admin_content_repository.dart';
 
 /// One class per distinct resource operation (08 Development Standards §4).
 
+/// VIDEO-ID-ONLY: bare Bunny GUID only. URLs/embed links are invalid
+/// even when they contain a GUID segment.
+bool isValidBunnyVideoId(String raw) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(raw.trim());
+}
+
 class WatchResources {
   final AdminContentRepository repository;
   const WatchResources(this.repository);
@@ -21,7 +29,8 @@ class AddVideoResource {
 
   /// Bunny video id ONLY — raw URLs are never accepted (06 §6.4 /
   /// 11 Assets §4.3). [sequenceNumber] is the explicit multi-part order
-  /// (Feature 04 "Multiple Videos").
+  /// (Feature 04 "Multiple Videos"). Only a bare GUID validates;
+  /// player/share URLs throw even if they embed a GUID.
   Future<String> execute({
     required String lectureId,
     required String title,
@@ -32,6 +41,11 @@ class AddVideoResource {
     final id = bunnyVideoId.trim();
     if (id.isEmpty) {
       throw ArgumentError('Bunny video id is required for video resources.');
+    }
+    if (!isValidBunnyVideoId(id)) {
+      throw ArgumentError(
+        'Bunny video id must be a bare Video ID (GUID) — URLs are not accepted.',
+      );
     }
     return repository.createResource(AdminLectureResource(
       id: '',

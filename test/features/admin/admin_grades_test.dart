@@ -13,6 +13,66 @@ void main() {
     });
   });
 
+  group('gradeLabel - canonical Arabic display labels', () {
+    test('all four canonical keys resolve', () {
+      expect(gradeLabel('grade_one'), 'الفرقة الأولى');
+      expect(gradeLabel('grade_two'), 'الفرقة الثانية');
+      expect(gradeLabel('grade_three'), 'الفرقة الثالثة');
+      expect(gradeLabel('grade_four'), 'الفرقة الرابعة');
+    });
+  });
+
+  group('filter normalization - canonical vs legacy comparison', () {
+    // Mirrors the watchStudents comparison:
+    // normalizeAdminGradeKey(grade) == normalizeAdminGradeKey(gradeKey).
+    test('grade_three matches grade_3 (reported production case)', () {
+      expect(
+        normalizeAdminGradeKey('grade_three'),
+        normalizeAdminGradeKey('grade_3'),
+      );
+    });
+
+    test('all four canonical keys match their legacy digit spellings', () {
+      const pairs = {
+        'grade_one': 'grade_1',
+        'grade_two': 'grade_2',
+        'grade_three': 'grade_3',
+        'grade_four': 'grade_4',
+      };
+      for (final entry in pairs.entries) {
+        expect(
+          normalizeAdminGradeKey(entry.key),
+          normalizeAdminGradeKey(entry.value),
+          reason: '${entry.key} must match ${entry.value}',
+        );
+      }
+    });
+
+    test('different grades never match after normalization', () {
+      expect(
+        normalizeAdminGradeKey('grade_three'),
+        isNot(normalizeAdminGradeKey('grade_one')),
+      );
+      expect(
+        normalizeAdminGradeKey('grade_3'),
+        isNot(normalizeAdminGradeKey('grade_1')),
+      );
+    });
+
+    test('unparseable filter matches nothing persisted', () {
+      // normalizeAdminGradeKey(null) is null, but every persisted grade
+      // normalizes to a canonical key, so an unknown filter excludes all
+      // real students instead of leaking them into the wrong list.
+      for (final canonical in kCanonicalGradeKeys) {
+        expect(normalizeAdminGradeKey(canonical), isNotNull);
+        expect(
+          normalizeAdminGradeKey(canonical) == normalizeAdminGradeKey('nonsense'),
+          isFalse,
+        );
+      }
+    });
+  });
+
   group('priorGradeKeysFor (FINAL_DECISIONS §13)', () {
     test('grade_two student gets exactly grade_one subjects', () {
       expect(priorGradeKeysFor('grade_two'), ['grade_one']);
