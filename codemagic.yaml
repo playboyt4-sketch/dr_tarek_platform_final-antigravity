@@ -1,0 +1,138 @@
+# codemagic.yaml - Dr. Tarek Platform (iOS Staging)
+#
+# Purpose: build the Flutter iOS app in Codemagic's macOS cloud so it can be
+# validated (and, when the owner supplies Apple signing identities, signed for
+# TestFlight / device install).
+#
+# Safety / scope rules (see docs/IOS_TESTFLIGHT_RUNBOOK.md,
+# docs/IOS_STAGING_ENVIRONMENT_PLAN.md, docs/IOS_RELEASE_DECISION_REGISTER.md):
+#   * Staging only. Every iOS build passes `--dart-define=ENV=staging` so the
+#     app boots against the isolated Firebase project `dr-tarek-staging`.
+#     Production (`dr-tarek-platform`) is never selected here.
+#   * Manual trigger only. No `triggering:` block is defined, so a git push can
+#     never publish, sign, or distribute a build automatically.
+#   * No secrets are stored in this repository. Signing credentials, when used,
+#     come from Codemagic secure environment variables / code-signing identities.
+#   * `flutter build ipa --no-codesign` produces an UNSIGNED archive. That is a
+#     build-validation artifact - it is NOT installable on an iPhone. Only the
+#     signed workflow below produces an installable/TestFlight IPA.
+#
+# Flutter 3.44 uses Swift Package Manager by default for iOS dependencies, so
+# the project's Xcode SPM integration (FlutterGeneratedPluginSwiftPackage) is
+# used; CocoaPods remains available as a fallback for plugins that need it.
+# The iOS deployment target is 15.0 because the Firebase Apple SDK 12.17 pinned
+# by firebase_core 4.13.0 (and all Firebase plugins here) requires iOS 15.0.
+
+workflows:
+  # ---------------------------------------------------------------------------
+  # 1) Unsigned build-validation workflow.
+  #    Runs with no Apple credentials and always produces an artifact.
+  # ---------------------------------------------------------------------------
+  ios-staging-validation:
+    name: iOS Staging - build validation (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      flutter: 3.44.4
+      xcode: 26.6
+      cocoapods: default
+      vars:
+        ENV: staging
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.swiftpm
+        - $HOME/Library/Caches/org.swift.swiftpm
+    scripts:
+      - name: Record toolchain versions
+        script: |
+          set -e
+          flutter --version
+          dart --version
+          xcodebuild -version || true
+          which pod && pod --version || true
+      - name: Resolve Flutter dependencies (SwiftPM enabled)
+        script: |
+          set -e
+          flutter config --enable-swift-package-manager
+          flutter pub get
+      - name: Static analysis (errors fatal; infos/warnings reported)
+        script: |
+          set -e
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Unit tests core (env selector, error mapping)
+        script: |
+          set -e
+          flutter test test/core
+      - name: Build iOS archive for staging (unsigned)
+        script: |
+          set -e
+          flutter build ipa --release --no-codesign --dart-define=ENV=staging
+    artifacts:
+      - build/ios/archive/*.xcarchive
+      - build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
+
+  # ---------------------------------------------------------------------------
+  # 2) Signed iOS workflow for TestFlight / device install.
+  #    Requires the owner to upload Apple signing material in Codemagic:
+  #      Team settings -> Code signing identities -> iOS certificates + profiles
+  #      (App Store distribution, bundle id com.drtarek.platform), OR an App
+  #      Store Connect API key integration.
+  #    Until those credentials exist this workflow will fail at the signing
+  #    step - that is expected and is why it is a separate, manually-selected
+  #    workflow. It does NOT upload to TestFlight automatically.
+  # ---------------------------------------------------------------------------
+  ios-staging-testflight:
+    name: iOS Staging - signed IPA (needs Apple signing identities)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      flutter: 3.44.4
+      xcode: 26.6
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.drtarek.platform
+      vars:
+        ENV: staging
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.swiftpm
+        - $HOME/Library/Caches/org.swift.swiftpm
+    scripts:
+      - name: Record toolchain versions
+        script: |
+          set -e
+          flutter --version
+          xcodebuild -version || true
+      - name: Resolve Flutter dependencies (SwiftPM enabled)
+        script: |
+          set -e
+          flutter config --enable-swift-package-manager
+          flutter pub get
+      - name: Static analysis
+        script: |
+          set -e
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Unit tests core (env selector, error mapping)
+        script: |
+          set -e
+          flutter test test/core
+      - name: Set up code signing settings on Xcode project
+        script: |
+          set -e
+          xcode-project use-profiles
+      - name: Build signed IPA for staging
+        script: |
+          set -e
+          flutter build ipa --release \
+            --dart-define=ENV=staging \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
