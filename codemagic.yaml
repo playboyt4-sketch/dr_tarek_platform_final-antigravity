@@ -1,8 +1,8 @@
 # codemagic.yaml - Dr. Tarek Platform (iOS Staging)
 #
 # Purpose: build the Flutter iOS app in Codemagic's macOS cloud so it can be
-# validated (and, when the owner supplies Apple signing identities, signed for
-# TestFlight / device install).
+# validated (and, once Apple signing credentials exist, signed for personal
+# device install and TestFlight beta distribution).
 #
 # Safety / scope rules (see docs/IOS_TESTFLIGHT_RUNBOOK.md,
 # docs/IOS_STAGING_ENVIRONMENT_PLAN.md, docs/IOS_RELEASE_DECISION_REGISTER.md):
@@ -11,11 +11,11 @@
 #     Production (`dr-tarek-platform`) is never selected here.
 #   * Manual trigger only. No `triggering:` block is defined, so a git push can
 #     never publish, sign, or distribute a build automatically.
-#   * No secrets are stored in this repository. Signing credentials, when used,
-#     come from Codemagic secure environment variables / code-signing identities.
-#   * `flutter build ipa --no-codesign` produces an UNSIGNED archive. That is a
-#     build-validation artifact - it is NOT installable on an iPhone. Only the
-#     signed workflow below produces an installable/TestFlight IPA.
+#   * The signed IPA is an App Store distribution build. Uploading to App Store
+#     Connect only publishes to TestFlight; the app is never submitted to App
+#     Store review.
+#   * No secrets are stored in this repository. Signing credentials come from
+#     Codemagic secure environment variables / Code signing identities only.
 #
 # Flutter 3.44 uses Swift Package Manager by default for iOS dependencies, so
 # the project's Xcode SPM integration (FlutterGeneratedPluginSwiftPackage) is
@@ -75,27 +75,41 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
 
   # ---------------------------------------------------------------------------
-  # 2) Signed iOS workflow for TestFlight / device install.
-  #    Requires the owner to upload Apple signing material in Codemagic:
-  #      Team settings -> Code signing identities -> iOS certificates + profiles
-  #      (App Store distribution, bundle id com.drtarek.platform), OR an App
-  #      Store Connect API key integration.
-  #    Until those credentials exist this workflow will fail at the signing
-  #    step - that is expected and is why it is a separate, manually-selected
-  #    workflow. It does NOT upload to TestFlight automatically.
+  # 2) Signed iOS workflow for TestFlight / personal-device install.
+  #
+  #    Uses Codemagic AUTOMATIC code signing: with the App Store Connect API key
+  #    exposed by the `appstore_credentials` environment variable group, the App
+  #    Store Connect CLI fetches (or creates) the Apple Distribution certificate
+  #    and the App Store provisioning profile for `com.drtarek.platform` at build
+  #    time. No signing material is stored in this repository.
+  #
+  #    Required Codemagic environment variable group `appstore_credentials`
+  #    (Team settings > Environment variables, each marked Secret):
+  #      APP_STORE_CONNECT_ISSUER_ID     - Issuer ID from App Store Connect >
+  #                                        Users and Access > Integrations >
+  #                                        App Store Connect API
+  #      APP_STORE_CONNECT_KEY_IDENTIFIER- the API key's Key ID
+  #      APP_STORE_CONNECT_PRIVATE_KEY   - contents of the downloaded
+  #                                        AuthKey_XXXXXXXXXX.p8 file
+  #      CERTIFICATE_PRIVATE_KEY         - an RSA private key Codemagic uses to
+  #                                        create the distribution certificate
+  #
+  #    Until that group exists this workflow fails at the signing step; that is
+  #    expected and is why it is a separate, manually-selected workflow. It does
+  #    NOT submit the app to App Store review.
   # ---------------------------------------------------------------------------
   ios-staging-testflight:
-    name: iOS Staging - signed IPA (needs Apple signing identities)
+    name: iOS Staging - signed IPA + TestFlight
     instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
       flutter: 3.44.4
       xcode: 26.6
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.drtarek.platform
+      groups:
+        - appstore_credentials
       vars:
+        BUNDLE_ID: com.drtarek.platform
         ENV: staging
     cache:
       cache_paths:
@@ -113,7 +127,7 @@ workflows:
           set -e
           flutter config --enable-swift-package-manager
           flutter pub get
-      - name: Static analysis
+      - name: Static analysis (errors fatal; infos/warnings reported)
         script: |
           set -e
           flutter analyze lib test --no-fatal-infos --no-fatal-warnings
@@ -121,18 +135,31 @@ workflows:
         script: |
           set -e
           flutter test test/core
-      - name: Set up code signing settings on Xcode project
+      - name: Set up keychain for code signing
+        script: keychain initialize
+      - name: Fetch or create signing files (App Store distribution)
         script: |
           set -e
-          xcode-project use-profiles
-      - name: Build signed IPA for staging
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+      - name: Add signing certificate to keychain
+        script: keychain add-certificates
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles
+      - name: Build signed IPA for staging (App Store distribution)
         script: |
           set -e
           flutter build ipa --release \
             --dart-define=ENV=staging \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist=$HOME/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+      - $HOME/export_options.plist
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
       - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
