@@ -12,7 +12,7 @@ Recommended free route: **Codemagic Personal (500 M2-macOS min/mo, no card, Xcod
    - `cd ios && pod install --repo-update`.
    - Xcode step (Mac, once): add `GoogleService-Info-Staging.plist` file reference (already in `ios/Runner/`) and select it for the Staging/TestFlight configuration so the native FCM/Crashlytics layer reads `dr-tarek-staging` (Dart Auth/Firestore/Functions/Storage already isolate via `--dart-define=ENV=staging`).
    - `flutter build ipa --release --dart-define=ENV=staging --export-options-plist=$EXPORT_PLIST` (manual signing per uploaded profile) — or Xcode automatic signing with API key.
-   - Publish step: App Store Connect (TestFlight internal group), artifact retention on.
+   - Publish step: App Store Connect (TestFlight external group "Dr Tarek External Testers"), beta review submission on, artifact retention on.
 4. First run = cold pods (20–45 min); cached 12–25 min. On success: IPA artifact + TestFlight build processing → install on registered devices.
 5. Failure diagnosis: check `Podfile.lock` Firebase iOS SDK pins (deployment-target errors → bump `IPHONEOS_DEPLOYMENT_TARGET` to 15/16+), `xcode_backend.sh` thin-binary errors (Flutter/Xcode mismatch → pin stack), signing errors (profile/Bundle ID mismatch → re-export profile).
 
