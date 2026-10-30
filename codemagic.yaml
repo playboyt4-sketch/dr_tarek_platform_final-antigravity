@@ -12,8 +12,9 @@
 #   * Manual trigger only. No `triggering:` block is defined, so a git push can
 #     never publish, sign, or distribute a build automatically.
 #   * The signed IPA is an App Store distribution build. Uploading to App Store
-#     Connect only publishes to TestFlight; the app is never submitted to App
-#     Store review.
+#     Connect publishes to TestFlight, submits the build to TestFlight beta
+#     review, and assigns the external group "Dr Tarek External Testers"; the
+#     app is never submitted to App Store release review.
 #   * No secrets are stored in this repository. Signing credentials come from
 #     Codemagic secure environment variables / Code signing identities only.
 #
@@ -96,7 +97,13 @@ workflows:
   #
   #    Until that group exists this workflow fails at the signing step; that is
   #    expected and is why it is a separate, manually-selected workflow. It does
-  #    NOT submit the app to App Store review.
+  #    NOT submit the app to App Store release review.
+  #
+  #    Publishing behaviour: `submit_to_testflight: true` uploads the IPA and
+  #    submits the processed build to TestFlight *beta* review (required before
+  #    external testers can install it). `beta_groups` then grants the named
+  #    external group access once Apple finishes review. Both actions run in
+  #    Codemagic's post-processing step, after the macOS build has finished.
   # ---------------------------------------------------------------------------
   ios-staging-testflight:
     name: iOS Staging - signed IPA + TestFlight
@@ -162,4 +169,10 @@ workflows:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        # Upload the IPA, then submit the processed build to TestFlight beta
+        # review. This is what makes a build installable by external testers.
         submit_to_testflight: true
+        # External TestFlight group that receives the build after beta review.
+        # Name must match App Store Connect exactly.
+        beta_groups:
+          - Dr Tarek External Testers
