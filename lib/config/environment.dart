@@ -6,12 +6,15 @@ import '../firebase_options_staging.dart' show StagingFirebaseOptions;
 
 /// Release backend environment selector.
 ///
-/// TestFlight builds MUST pass `--dart-define=ENV=staging` so they can never
-/// touch production (`dr-tarek-platform`). Selection is explicit and fails
-/// closed: an unknown value always throws, and a missing value throws in
-/// release/profile builds (fail-closed boot error). Debug builds without an
-/// explicit value keep the historical developer workflow (production
-/// emulators/local run) — release builds never silently default.
+/// Selection is always explicit and fails closed. QA/TestFlight builds pass
+/// `--dart-define=ENV=staging` so they can never touch production
+/// (`dr-tarek-platform`); the owner-approved `ios-production-testflight`
+/// workflow passes `--dart-define=ENV=prod` because real students beta-test
+/// the pre-release build against their production accounts. An unknown value
+/// always throws, and a missing value throws in release/profile builds
+/// (fail-closed boot error). Debug builds without an explicit value keep the
+/// historical developer workflow (production emulators/local run) — release
+/// builds never silently default.
 enum ReleaseEnvironment { production, staging }
 
 /// Pure parser — unit-tested, no platform dependencies.

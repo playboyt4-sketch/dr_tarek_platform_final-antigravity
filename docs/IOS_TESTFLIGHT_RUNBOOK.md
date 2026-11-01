@@ -22,7 +22,7 @@ Recommended free route: **Codemagic Personal (500 M2-macOS min/mo, no card, Xcod
 2. Workflow `ios-testflight.yml` on `macos-26`: setup Flutter (`subosito/flutter-action`), `pod install`, `flutter build ipa --dart-define=ENV=staging`, `xcodebuild -exportArchive`, upload via `fastlane pilot` (or `apple-actions/upload-testflight-build`) with the ASC API key. Pin actions by SHA; `retention-days: 14`.
 3. Verify: IPA artifact + upload log + TestFlight processing status.
 
-## C. Pre-upload gate (every build)
+## C. Pre-upload gate (every staging build)
 
 - `ENV=staging` proven (boot log project id), staging backend reachable, prod untouched.
 - Bundle `com.drtarek.platform`, marketing `1.0.0`, build number = previous + 1 (monotonic).
@@ -33,3 +33,14 @@ Recommended free route: **Codemagic Personal (500 M2-macOS min/mo, no card, Xcod
 ## D. Device smoke (TestFlight build, staging)
 
 Fresh install → launch → custom-token login → role gates → Firestore reads/writes (staging) → foreground/background/terminated push → camera/gallery pick → Bunny HLS/MP4 playback + expiry denial → offline DRM encrypt/purge → screen-record shield (detection-only) → App Check → logout/session errors. Each PASS/FAIL recorded with device/iOS/build IDs. No PASS claimed without execution.
+
+## E. Production TestFlight for real students (owner-approved 2026-10-31)
+
+The Platform Owner runs pre-release testing with real students, so those beta builds must authenticate against **production** (`dr-tarek-platform`). This is an explicit exception to the staging-only rule in section C; the staging project is intentionally empty, so no real student can ever log in there.
+
+- Workflow: `ios-production-testflight` in `codemagic.yaml` — manual trigger only, `--dart-define=ENV=prod`, same bundle `com.drtarek.platform`, same App Store Connect record and external group.
+- Staging workflows (`ios-staging-validation`, `ios-staging-testflight`) are unchanged and remain the default for routine QA.
+- Pre-upload gate for this workflow: boot log shows `PROJECT_ID=dr-tarek-platform`; production Auth/Firestore/Functions reachable; a `force_password_change` account can still sign in; the build number is higher than the last uploaded build (the workflow uses the UTC epoch as the build number).
+- Testers moving from a staging build to a production build must **delete and reinstall** the app: the stored Firebase Auth session belongs to the previous project.
+- Do not use this workflow for synthetic QA data; use `ios-staging-testflight` for that.
+

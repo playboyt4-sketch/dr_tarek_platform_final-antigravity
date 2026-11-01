@@ -6,9 +6,15 @@
 #
 # Safety / scope rules (see docs/IOS_TESTFLIGHT_RUNBOOK.md,
 # docs/IOS_STAGING_ENVIRONMENT_PLAN.md, docs/IOS_RELEASE_DECISION_REGISTER.md):
-#   * Staging only. Every iOS build passes `--dart-define=ENV=staging` so the
-#     app boots against the isolated Firebase project `dr-tarek-staging`.
-#     Production (`dr-tarek-platform`) is never selected here.
+#   * Staging by default. Staging iOS builds pass `--dart-define=ENV=staging`
+#     so the app boots against the isolated Firebase project
+#     `dr-tarek-staging`.
+#   * Production is selected ONLY by the explicit `ios-production-testflight`
+#     workflow. It was added on 2026-10-31 on the Platform Owner's instruction
+#     so real students can beta-test the pre-release build with their real
+#     production accounts (the staging project is intentionally empty and
+#     cannot authenticate them). It is manual-trigger only and never runs
+#     automatically. Staging workflows are unchanged.
 #   * Manual trigger only. No `triggering:` block is defined, so a git push can
 #     never publish, sign, or distribute a build automatically.
 #   * The signed IPA is an App Store distribution build. Uploading to App Store
@@ -174,5 +180,98 @@ workflows:
         submit_to_testflight: true
         # External TestFlight group that receives the build after beta review.
         # Name must match App Store Connect exactly.
+        beta_groups:
+          - Dr Tarek External Testers
+
+  # ---------------------------------------------------------------------------
+  # 3) Production TestFlight for REAL students (owner-approved 2026-10-31).
+  #
+  #    Purpose: the Platform Owner runs pre-release testing with real students,
+  #    so the beta build must authenticate them against PRODUCTION
+  #    (`dr-tarek-platform`). The staging project is intentionally empty, which
+  #    is why a staging TestFlight build can never log a real student in.
+  #
+  #    Scope / safety:
+  #      * Manual trigger only (no `triggering:` block) — a push can never
+  #        publish a production build.
+  #      * `ENV=prod` is passed explicitly; `Environment.resolve()` fails closed
+  #        on a missing/invalid value, so a misconfigured build cannot silently
+  #        boot against the wrong project.
+  #      * Staging workflows above are untouched and remain the default for
+  #        routine QA.
+  #      * Same bundle id, same App Store Connect record, same external
+  #        TestFlight group as the staging workflow.
+  #
+  #    Build number: uses the UTC epoch (monotonic, 10 digits) so a new upload
+  #    is never rejected as a duplicate of a previously uploaded build.
+  # ---------------------------------------------------------------------------
+  ios-production-testflight:
+    name: iOS Production - signed IPA + TestFlight (real students)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      flutter: 3.44.4
+      xcode: 26.6
+      cocoapods: default
+      groups:
+        - appstore_credentials
+      vars:
+        BUNDLE_ID: com.drtarek.platform
+        ENV: prod
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.swiftpm
+        - $HOME/Library/Caches/org.swift.swiftpm
+    scripts:
+      - name: Record toolchain versions
+        script: |
+          set -e
+          flutter --version
+          xcodebuild -version || true
+      - name: Resolve Flutter dependencies (SwiftPM enabled)
+        script: |
+          set -e
+          flutter config --enable-swift-package-manager
+          flutter pub get
+      - name: Static analysis (errors fatal; infos/warnings reported)
+        script: |
+          set -e
+          flutter analyze lib test --no-fatal-infos --no-fatal-warnings
+      - name: Unit tests core (env selector, error mapping)
+        script: |
+          set -e
+          flutter test test/core
+      - name: Set up keychain for code signing
+        script: keychain initialize
+      - name: Fetch or create signing files (App Store distribution)
+        script: |
+          set -e
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+      - name: Add signing certificate to keychain
+        script: keychain add-certificates
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles
+      - name: Build signed IPA for production (App Store distribution)
+        script: |
+          set -e
+          BUILD_NUMBER_ARG="$(date -u +%s)"
+          echo "Production TestFlight build number: $BUILD_NUMBER_ARG"
+          flutter build ipa --release \
+            --dart-define=ENV=prod \
+            --build-number="$BUILD_NUMBER_ARG" \
+            --export-options-plist=$HOME/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - $HOME/export_options.plist
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
         beta_groups:
           - Dr Tarek External Testers
