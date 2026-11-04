@@ -893,6 +893,52 @@ async function syncStaffStoredClaims(userId: string, role: string, forcePassword
   await auth.setCustomUserClaims(userId, next);
 }
 
+/**
+ * Repairs the identity claims owned by the student approval flow.
+ *
+ * `onStudentApproved` is the primary writer, but it is a Firestore trigger:
+ * if it fails (or the account was approved before it was deployed) the user
+ * stays approved in Firestore while Firebase Auth keeps no (or partial)
+ * stored claims. `onLoginAttempt` authorizes on `request.auth.token.role`,
+ * and `getIdTokenResult(true)` drops the one-time custom-token claims, so a
+ * missing stored `role` locks the student out of device binding even though
+ * the password was correct.
+ *
+ * This synchronizer runs at the trusted login boundary and only restores
+ * what the Firestore record already authorizes: role, student_type, approved,
+ * and force_password_change. Existing claims are merged so plan/subscription
+ * claims are preserved untouched (ADR-004 resolves entitlements server-side
+ * at access time, never from a client-refreshed token). The write is skipped
+ * when the stored claims already match.
+ * @param {string} userId Student Firebase Auth UID.
+ * @param {string} studentType Authoritative student type from Firestore.
+ * @param {boolean} forcePasswordChange Force-password-change flag from Firestore.
+ */
+async function syncStudentStoredClaims(
+  userId: string,
+  studentType: string,
+  forcePasswordChange: boolean,
+): Promise<void> {
+  const current = await auth.getUser(userId);
+  const existing = current.customClaims ?? {};
+  const next = {
+    ...existing,
+    role: "student",
+    student_type: studentType,
+    approved: true,
+    force_password_change: forcePasswordChange,
+  };
+  if (
+    existing.role === next.role &&
+    existing.student_type === next.student_type &&
+    existing.approved === true &&
+    existing.force_password_change === next.force_password_change
+  ) {
+    return;
+  }
+  await auth.setCustomUserClaims(userId, next);
+}
+
 async function requireStudentAccessManager(request: CallableRequest<unknown>): Promise<{
   actorId: string;
   actorRole: "doctor" | "admin";
@@ -2119,12 +2165,15 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     throw new HttpsError("failed-precondition", "Student type is not configured.");
   }
 
-  // Staff claim sync (doctor/admin only): persist the authoritative
-  // Firestore role to the stored custom claims so auth:export stays
-  // consistent with the session token. Students are untouched here;
-  // student claims remain managed by the approval flow.
+  // Stored-claim repair at the trusted login boundary. Staff: persist the
+  // authoritative Firestore role. Students: restore identity claims the
+  // approval trigger owns (role/student_type/approved/force_password_change)
+  // so a drifted or pre-trigger account still passes the `onLoginAttempt`
+  // role gate after the ID token refresh. Plan claims are left untouched.
   if (role === "doctor" || role === "admin") {
     await syncStaffStoredClaims(userDoc.id, role, user.force_password_change === true);
+  } else if (role === "student" && studentType) {
+    await syncStudentStoredClaims(userDoc.id, studentType, user.force_password_change === true);
   }
 
   // ADR-004: login succeeds regardless of subscription or device state.

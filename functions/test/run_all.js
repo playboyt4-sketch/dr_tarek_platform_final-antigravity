@@ -49,6 +49,7 @@ const FILES = [
   "test/offline_drm.test.js",
   "test/free_plan_activation.test.js",
   "test/admin_claims_merge.test.js",
+  "test/student_claims_sync.test.js",
   "test/change_password_throttle.test.js",
   "test/content_audit.test.js",
   "test/delete_owner_auth.test.js",
