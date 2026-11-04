@@ -19,8 +19,10 @@ jobs:
           cache: true
       - run: flutter pub get
       # Generates the CocoaPods infrastructure if missing, then compiles
-      # without signing (no distribution certificate in CI).
-      - name: flutter build ios --no-codesign
+      # without signing (no distribution certificate in CI). ENV=prod matches
+      # the owner-approved production TestFlight workflow so the validation
+      # exercises the same compile-time Firebase selection.
+      - name: flutter build ios --no-codesign (production config)
         run: |
           flutter precache --ios
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign --dart-define=ENV=prod
