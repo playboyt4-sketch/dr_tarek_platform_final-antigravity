@@ -51,5 +51,22 @@ void main() {
       expect(DefaultFirebaseOptions.ios.iosBundleId, 'com.drtarek.platform');
       expect(StagingFirebaseOptions.ios.iosBundleId, 'com.drtarek.platform');
     });
+
+    test('iOS release target resolves to the production Firebase app', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final prod = Environment.optionsFor(ReleaseEnvironment.production);
+        expect(prod.projectId, 'dr-tarek-platform');
+        expect(prod.appId, '1:606744934510:ios:9718f3e90867d668c54e7f');
+        expect(prod.iosBundleId, 'com.drtarek.platform');
+        expect(prod.storageBucket, 'dr-tarek-platform.firebasestorage.app');
+
+        final staging = Environment.optionsFor(ReleaseEnvironment.staging);
+        expect(staging.projectId, 'dr-tarek-staging');
+        expect(staging.appId, isNot(prod.appId));
+      } finally {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      }
+    });
   });
 }
