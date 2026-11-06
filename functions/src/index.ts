@@ -189,6 +189,18 @@ async function bunnyStorageRequest(
   storagePath: string,
   body?: Buffer,
 ): Promise<void> {
+  // Bunny credentials can modify the whole storage zone. Keep every write
+  // inside the lecture-resource namespace, even if a future caller forgets
+  // to validate its own path. The strict segments also reject URL path
+  // traversal, encoded separators, and alternate namespaces.
+  const resourcePathPattern =
+    /^lecture_resources\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.\- ]+$/;
+  const pathSegments = storagePath.split("/");
+  const fileName = pathSegments[pathSegments.length - 1];
+  if (!resourcePathPattern.test(storagePath) || fileName === "." || fileName === "..") {
+    throw new HttpsError("invalid-argument", "A valid lecture resource path is required.");
+  }
+
   const password = getEnv("BUNNY_STORAGE_PASSWORD");
   const zoneName = getEnv("BUNNY_STORAGE_ZONE_NAME");
   const url = `${bunnyResourceUrl(storagePath).toString().replace(/^https:\/\//, "")}`;
@@ -721,6 +733,46 @@ function normalizeEgyptianPhone(value: unknown): string | null {
   if (!phone || !EGYPT_PHONE_REGEX.test(phone)) return null;
   return phone;
 }
+
+/**
+ * Resolves the live account that owns a normalized phone number.
+ *
+ * Soft-deleted (deactivated) accounts KEEP their historical `phone_number`
+ * for audit, so a phone query can return more than one document. Only
+ * non-deleted documents are eligible: this both releases the number for
+ * reuse by a real student and prevents a stale deleted row from shadowing
+ * the new owner at login / password reset. When several live rows exist
+ * (only possible from pre-fix data), an enabled account wins.
+ * @param {string} phone Normalized Egyptian phone number.
+ * @param {string} excludeUid Optional user id to ignore (staff self-edit).
+ * @return {Promise<FirebaseFirestore.QueryDocumentSnapshot|null>} Live owner.
+ */
+async function findLiveUserByPhone(
+  phone: string,
+  excludeUid?: string,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null> {
+  const snapshot = await db.collection("users").where("phone_number", "==", phone).get();
+  const live = snapshot.docs.filter(
+    (doc) => doc.id !== excludeUid && doc.data()?.is_deleted !== true,
+  );
+  return (
+    live.find((doc) => (doc.data()?.account_status ?? "active") === "active") ??
+    live[0] ??
+    null
+  );
+}
+
+/**
+ * Cross-instance serialization document for phone ownership writes.
+ *
+ * Firestore has no unique constraint, and a transaction that only queries an
+ * empty result set cannot detect a concurrent insert (no phantom locking).
+ * Every registration / staff phone change therefore updates this single
+ * document inside its transaction: two concurrent writers conflict, the
+ * losing transaction retries, and its duplicate query then sees the winner.
+ */
+const PHONE_OWNERSHIP_LOCK_REF = () =>
+  db.collection("system_settings").doc("phone_ownership_lock");
 
 const CANONICAL_STUDENT_GRADES = new Set([
   "grade_one",
@@ -1801,8 +1853,10 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
     }
   }
 
-  const existing = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
-  if (!existing.empty) {
+  // Soft-deleted (deactivated) accounts release their phone number: only a
+  // live account blocks reuse. See findLiveUserByPhone.
+  const existing = await findLiveUserByPhone(phone);
+  if (existing) {
     throw new HttpsError("already-exists", "An account with this phone number already exists.");
   }
 
@@ -1813,6 +1867,7 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
     authUser = await auth.createUser({displayName: fullName});
     const userRef = db.collection("users").doc(authUser.uid);
     const secretRef = db.collection("user_secrets").doc(authUser.uid);
+    const phoneLockRef = PHONE_OWNERSHIP_LOCK_REF();
     const now = FieldValue.serverTimestamp();
 
     const userData = {
@@ -1840,15 +1895,31 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
       updated_by: "system",
     };
 
-    const batch = db.batch();
-    batch.set(userRef, userData);
-    batch.set(secretRef, {
-      user_id: authUser.uid,
-      password_hash: passwordHash,
-      created_at: now,
-      updated_at: now,
+    // Atomic ownership claim: re-check live owners and write the account in
+    // the same transaction, serialized through phoneLockRef. A concurrent
+    // registration for the same number can never both commit.
+    await db.runTransaction(async (transaction) => {
+      const [duplicateSnap, lockSnap] = [
+        await transaction.get(db.collection("users").where("phone_number", "==", phone)),
+        await transaction.get(phoneLockRef),
+      ];
+      if (duplicateSnap.docs.some((doc) => doc.data()?.is_deleted !== true)) {
+        throw new HttpsError("already-exists", "An account with this phone number already exists.");
+      }
+      transaction.set(userRef, userData);
+      transaction.set(secretRef, {
+        user_id: authUser!.uid,
+        password_hash: passwordHash,
+        created_at: now,
+        updated_at: now,
+      });
+      transaction.set(phoneLockRef, {
+        key: "phone_ownership_lock",
+        updated_at: now,
+        updated_by: authUser!.uid,
+        ...(lockSnap.exists ? {} : {created_at: now}),
+      }, {merge: true});
     });
-    await batch.commit();
 
     await writeAnalyticsEvent(authUser.uid, "Registration Submitted", authUser.uid, {
       phone_number: phone,
@@ -2072,8 +2143,10 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     await assertLoginNotLocked(STUDENT_LOGIN_IP_SCOPE, loginIp);
   }
 
-  const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
-  if (userSnap.empty) {
+  // Live-owner lookup: a soft-deleted historical row must never shadow the
+  // reused number, and deleted accounts must not authenticate.
+  const userDoc = await findLiveUserByPhone(phone);
+  if (!userDoc) {
     await db.collection("auth_security_events").add({
       event_type: "failed_login",
       phone_number: phone,
@@ -2089,7 +2162,6 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
     throw new HttpsError("unauthenticated", "Invalid phone number or password.");
   }
 
-  const userDoc = userSnap.docs[0];
   const user = dataOf(userDoc.data());
 
   // Enumeration hardening: account-state branches (disabled / pending /
@@ -3244,8 +3316,8 @@ export const updateStudentProfileByStaff = onCall(SECURE_CALL_OPTS, async (reque
     throw new HttpsError("failed-precondition", "Target user is not a student.");
   }
   if (phone !== null) {
-    const existing = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
-    if (!existing.empty && existing.docs[0].id !== studentId) {
+    const existing = await findLiveUserByPhone(phone, studentId);
+    if (existing) {
       throw new HttpsError("already-exists", "An account with this phone number already exists.");
     }
   }
@@ -3266,7 +3338,25 @@ export const updateStudentProfileByStaff = onCall(SECURE_CALL_OPTS, async (reque
   }
 
   const auditRef = db.collection("admin_audit_log").doc();
+  const phoneLockRef = PHONE_OWNERSHIP_LOCK_REF();
   await db.runTransaction(async (transaction) => {
+    if (phone !== null) {
+      const duplicateSnap = await transaction.get(
+        db.collection("users").where("phone_number", "==", phone),
+      );
+      if (duplicateSnap.docs.some(
+        (doc) => doc.id !== studentId && doc.data()?.is_deleted !== true,
+      )) {
+        throw new HttpsError("already-exists", "An account with this phone number already exists.");
+      }
+      const lockSnap = await transaction.get(phoneLockRef);
+      transaction.set(phoneLockRef, {
+        key: "phone_ownership_lock",
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: authorization.actorId,
+        ...(lockSnap.exists ? {} : {created_at: FieldValue.serverTimestamp()}),
+      }, {merge: true});
+    }
     transaction.update(db.collection("users").doc(studentId), update);
     transaction.set(auditRef, {
       action: "update_student_profile",
@@ -5266,13 +5356,57 @@ export const onPasswordResetApproved = onCall(SECURE_CALL_OPTS, async (request) 
   return {resolved: true};
 });
 
+// Client-reported security events are limited to the documented device/content
+// integrity categories. `device_mismatch` is intentionally absent: ADR-004
+// defines an unauthorized Subject device as a Guest-tier analytics outcome,
+// never a punishable security event.
+const SECURITY_EVENT_TYPES = new Set([
+  "screenshot",
+  "screen_record",
+  "jailbreak",
+  "rooted",
+  "emulator",
+]);
+const SECURITY_EVENT_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+const SECURITY_EVENT_TYPE_MAX_LENGTH = 64;
+
+// action_taken is a server-owned field: clients report what happened, not the
+// response that was taken. `warning` is the non-punitive default required by
+// 04 Features ("no automatic punishment is applied by default"); only
+// high/critical events fan out to staff as `notify_admin`.
+function securityActionForSeverity(severity: string): string {
+  return severity === "high" || severity === "critical" ? "notify_admin" : "warning";
+}
+
+// Maps are the documented shape for context/device_info; arrays, primitives,
+// and malformed values degrade to an empty map instead of being persisted.
+function securityEventMap(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 export const onSecurityEvent = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
   const eventType = getString(request.data?.eventType);
-  const severity = getString(request.data?.severity) ?? "medium";
-  const context = request.data?.context && typeof request.data.context === "object" ? request.data.context : {};
-  const deviceInfo = request.data?.deviceInfo && typeof request.data.deviceInfo === "object" ? request.data.deviceInfo : {};
-  if (!eventType) throw new HttpsError("invalid-argument", "eventType is required.");
+  if (
+    !eventType ||
+    eventType.length > SECURITY_EVENT_TYPE_MAX_LENGTH ||
+    !SECURITY_EVENT_TYPES.has(eventType)
+  ) {
+    throw new HttpsError("invalid-argument", "eventType is required and must be a supported security event type.");
+  }
+
+  const rawSeverity = request.data?.severity;
+  const severity = rawSeverity === undefined || rawSeverity === null ?
+    "medium" :
+    (getString(rawSeverity) ?? "").toLowerCase();
+  if (!SECURITY_EVENT_SEVERITIES.has(severity)) {
+    throw new HttpsError("invalid-argument", "severity must be one of: low, medium, high, critical.");
+  }
+
+  const context = securityEventMap(request.data?.context);
+  const deviceInfo = securityEventMap(request.data?.deviceInfo);
+  const actionTaken = securityActionForSeverity(severity);
 
   const securityRef = await db.collection("security_events").add({
     user_id: userId,
@@ -5282,13 +5416,13 @@ export const onSecurityEvent = onCall(SECURE_CALL_OPTS, async (request) => {
     device_info: deviceInfo,
     screenshot_detected: request.data?.screenshotDetected === true,
     screen_record_detected: request.data?.screenRecordDetected === true,
-    action_taken: getString(request.data?.actionTaken) ?? "notify_admin",
+    action_taken: actionTaken,
     created_at: FieldValue.serverTimestamp(),
   });
 
   await writeAnalyticsEvent(userId, "Security Event", securityRef.id, {event_type: eventType, severity, context});
 
-  if (["high", "critical"].includes(severity)) {
+  if (actionTaken === "notify_admin") {
     await notifyUsersByRole("doctor", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
     await notifyUsersByRole("admin", "system", "Security Alert", `A security event was detected: ${eventType}`, {priority: "critical", deep_link: `/admin/security-events/${securityRef.id}`});
   }
@@ -7618,7 +7752,7 @@ export const deleteBunnyResource = onCall(
     const uid = authorization.actorId;
     const role = authorization.actorRole;
     const storagePath = getString(request.data?.storagePath);
-    if (!storagePath || storagePath.includes("..")) {
+    if (!storagePath) {
       throw new HttpsError("invalid-argument", "A valid storagePath is required.");
     }
     await bunnyStorageRequest("DELETE", storagePath);
@@ -7701,8 +7835,7 @@ export const submitPasswordResetRequest = onCall(SECURE_CALL_OPTS, async (reques
 
   // Anti-enumeration: unknown or ineligible phones receive the SAME uniform
   // success response — no document is created and nothing is disclosed.
-  const userSnap = await db.collection("users").where("phone_number", "==", phone).limit(1).get();
-  const userDoc = userSnap.empty ? null : userSnap.docs[0];
+  const userDoc = await findLiveUserByPhone(phone);
   const userData = userDoc ? dataOf(userDoc.data()) : null;
   const role = getString(userData?.role);
   const isActive = !userData?.account_status || userData?.account_status === "active";
@@ -8061,8 +8194,66 @@ export const onLectureResourceWritten = contentAuditTrigger("lecture_resources")
 
 export const onLectureAccessGrantWritten = contentAuditTrigger("lecture_access_grants");
 
-export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => {
-  const nowMs = Date.now();
+interface FirstVideoResourceRow {
+  id: string;
+  data: DocumentData;
+}
+
+/**
+ * Canonical first-video projection for the scheduled auto-publish path.
+ * MUST match the Dashboard selector (`selectFirstVideoCandidate`), the
+ * student listing order, and `scripts/backfill_first_video.cjs`:
+ *   resource_type == "video" && is_visible == true && is_deleted != true
+ *   && non-empty bunny_video_id; lowest display_order, document ID ascending.
+ * Returns the denormalized `first_video` map (identity + display metadata
+ * only) or null when nothing is eligible. Pure — unit-testable.
+ * @param {Array} resources `lecture_resources` rows for one lecture.
+ * @return {object|null} The `first_video` projection, or null.
+ */
+export function firstVideoFieldsFromResources(
+  resources: FirstVideoResourceRow[],
+): Record<string, unknown> | null {
+  let winner: FirstVideoResourceRow | null = null;
+  let winnerOrder = 0;
+  for (const row of resources) {
+    const data = row.data;
+    if (data?.resource_type !== "video") continue;
+    if (data?.is_visible !== true) continue;
+    if (data?.is_deleted === true) continue;
+    const bunnyVideoId = getString(data?.bunny_video_id)?.trim();
+    if (!bunnyVideoId) continue;
+    const rawOrder = data?.display_order;
+    const order = typeof rawOrder === "number" && Number.isFinite(rawOrder) ?
+      Math.trunc(rawOrder) :
+      0;
+    if (
+      winner === null ||
+      order < winnerOrder ||
+      (order === winnerOrder && row.id < winner.id)
+    ) {
+      winner = row;
+      winnerOrder = order;
+    }
+  }
+  if (winner === null) return null;
+  const winnerData = winner.data;
+  return {
+    resource_id: winner.id,
+    bunny_video_id: getString(winnerData.bunny_video_id)!.trim(),
+    title: getString(winnerData.title)?.trim() ?? "",
+    display_order: winnerOrder,
+    // Raw poster path only (never a signed/storage URL), mirroring
+    // `scripts/backfill_first_video.cjs`. Both key spellings are accepted
+    // because mobile authoring writes snake_case while older rows may not.
+    thumbnail_path: getString(winnerData.thumbnail)?.trim() ?? null,
+    thumbnail_storage_provider:
+      getString(winnerData.thumbnail_storage_provider)?.trim() ??
+      getString(winnerData.thumbnailStorageProvider)?.trim() ??
+      null,
+  };
+}
+
+export async function publishDueLectures(nowMs = Date.now()): Promise<number> {
   let publishedCount = 0;
 
   // Paged scan so a large backlog cannot exceed function memory/time.
@@ -8094,11 +8285,42 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
     );
 
     for (const lectureId of due) {
-      await db.collection("lectures").doc(lectureId).update({
+      // Publication and resource visibility move together: resources authored
+      // for a scheduled (still-draft) lecture are stored hidden, and the
+      // student gate only serves visible rows. Flip every non-deleted row in
+      // the same batch as the status change, then recompute the denormalized
+      // `first_video` so the client fast lane matches the listing.
+      const lectureRef = db.collection("lectures").doc(lectureId);
+      const resourcesSnap = await db.collection("lecture_resources")
+        .where("lecture_id", "==", lectureId)
+        .get();
+      const publishedRows: FirstVideoResourceRow[] = resourcesSnap.docs.map((doc) => {
+        const data = dataOf(doc.data());
+        return {
+          id: doc.id,
+          // Non-deleted rows become visible in this batch; deleted rows are
+          // never served regardless of their stored toggle.
+          data: {...data, is_visible: data.is_deleted !== true},
+        };
+      });
+      const publishBatch = db.batch();
+      publishBatch.update(lectureRef, {
         status: "published",
+        first_video: firstVideoFieldsFromResources(publishedRows),
         updated_at: FieldValue.serverTimestamp(),
         updated_by: "system_scheduler",
       });
+      for (const doc of resourcesSnap.docs) {
+        const data = dataOf(doc.data());
+        if (data.is_deleted === true || data.is_visible === true) continue;
+        publishBatch.update(doc.ref, {
+          is_visible: true,
+          visibility: true,
+          updated_at: FieldValue.serverTimestamp(),
+          updated_by: "system_scheduler",
+        });
+      }
+      await publishBatch.commit();
       await db.collection("analytics_events").add({
         user_id: "system_scheduler",
         event_type: "Lecture Auto Published",
@@ -8129,6 +8351,11 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
   if (publishedCount > 0) {
     console.log(`autoPublishDueLectures: published ${publishedCount} lecture(s).`);
   }
+  return publishedCount;
+}
+
+export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => {
+  await publishDueLectures();
 });
 
 export const setDefaultStorageProvider = onCall(SECURE_CALL_OPTS, async (request) => {

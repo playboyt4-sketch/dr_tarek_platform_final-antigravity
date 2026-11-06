@@ -35,23 +35,26 @@ This task:
 - Tests PASS: `functions/test/migrate_teacher_to_doctor.test.js` (11 checks: preconditions, idempotency, rollback) and `password_reset_target_role.test.js` (9 checks incl. legacy-teacher denied). `security-tests/rules.test.js:577-579,1385-1405` asserts stale-teacher denial (code read; emulator run blocked — §6).
 - **Not done:** production data migration (needs explicit ops approval) + owner re-login to mint doctor claims.
 
-## 5. Validation results (M5) — updated 2026-10-14 (O6-B)
+## 5. Validation results (M5) — updated 2026-10-15 (STAGING DEPLOYED)
 
-- Server: `npm run build` (tsc) clean; `node functions/test/assessment_o6b.test.js` **PASS** (sanitizer stripping, fallbacks, contract surface, no-evaluate-endpoint); `migrate_teacher_to_doctor` 11/11 + `password_reset_target_role` 9/9 revalidated PASS. `npx eslint src/index.ts`: zero findings in new ranges; file-level `linebreak-style` (whole-file CRLF) + old JSDoc/`any` issues are pre-existing (Windows checkout), not regressions.
-- Client: `flutter test test/assessment_taking/assessment_o6b_test.dart test/exams test/timeline_quizzes` **8/8 PASS** (4 new O6-B + existing suites with updated fakes); `dart analyze` on all touched Dart dirs **clean**.
-- Staging: `functions:list --project dr-tarek-staging` → empty (expected, nothing deployed); prod listing read-only verified untouched. Functions deploy to staging **BLOCKED — requires Blaze billing approval** (no paid activation without owner).
-- Role suites rerun rationale: untouched by this task (no role files changed) — prior PASS stands; migration + reset tests above re-ran green.
+- Server: `npm run build` (tsc) clean; `node functions/test/assessment_o6b.test.js` **PASS**; `migrate_teacher_to_doctor` 11/11 + `password_reset_target_role` 9/9 revalidated PASS. `npx eslint src/index.ts`: zero findings in new ranges; file-level `linebreak-style` (whole-file CRLF) + old JSDoc/`any` issues are pre-existing (Windows checkout), not regressions.
+- Client: `flutter test test/assessment_taking/assessment_o6b_test.dart test/exams test/timeline_quizzes` **8/8 PASS**; `dart analyze` on all touched Dart dirs **clean**.
+- Staging deploy 2026-10-15: **69/69 non-Bunny functions VERIFIED live** (0 missing, 0 extras, 6 Bunny absent; `us-central1`, nodejs24). Schedules live (1min/24h/5min), no ERROR/CRITICAL in logs. Cleanup policy applied as inspected. Live smoke: unauthenticated assessment call → 401 clean; unknown-phone reset → uniform success without writes.
+- Deploy mechanics learned: firebase-tools 15.24.0 honors only the FIRST name of a comma `--only` list (proven 4×) → deployed via single-name batches; discovery needed `FUNCTIONS_DISCOVERY_TIMEOUT=180` on this host; one transient Eventarc failure retried green.
+- Prod untouched (incl. `getAssessmentQuestions` absent from prod).
+- Role suites rerun rationale: untouched by this task — prior PASS stands.
+- Remaining: Auth providers (email/anonymous) NOT enabled on staging → no test-user flows possible until console enablement (CLI creds insufficient, 403).
 
 ## 6. Known defects / risks blocking TestFlight (updated 2026-10-14: O6-B implemented)
 
-1. **Assessment APIs (was P0-broken — now IMPLEMENTED, deploy pending):** `getAssessmentQuestions` callable added (sanitized `{id,type,text,options,marks,order}`, ownership + started-only + published + subject-entitlement + time gate; never keys/explanations/scores); `submitAssessmentAttempt` hardened with transactional subject-entitlement check (staff bypass); idempotent via started-status gate; client evaluate-flow removed (provider records locally; UI neutral selection, no correctness colors/explanations); `result.correct` Map defect eliminated (typed per-branch results); `evaluateQuestionAnswer` confirmed absent by test. Residual: embedded-keys latent risk IF keys ever embedded in quiz/exam docs (no writers exist — bank-only invariant); explanations omitted entirely (no Approved policy authorizes release).
+1. **Assessment APIs (IMPLEMENTED + DEPLOYED 2026-10-15, live proof partial):** contract as before, now live on staging (`getAssessmentQuestions` + `submitAssessmentAttempt` verified present); live smoke proves auth gate (401) + anonymous-safe reset; full owner/intruder/resubmit flow awaits test users (Auth providers).
 2. **Legacy XOR vault is DEAD code** (`offline_drm_service.dart` — zero references in `lib/`/`test/`); live path is sound AES-256-GCM (`drm_repository_impl.dart`). Fix = delete or deprecate (deferred to authorized security pass; no beta exclusion warranted).
 3. **Plaintext PDF exposure (Medium, local-only):** decrypted temp files (`temp_{resourceId}.pdf`, predictable name, `dispose`-only wipe) + `flutter_cached_pdfview` disk cache outside DRM wipe. Fixes identified (random names, startup sweep, logout cache clear) — deferred, no exclusion warranted.
-4. **Staging service separation pending:** project + apps + client selector done; still open: rules/indexes/functions deploy to staging, staging APNs, staging App Check provider, staging Bunny secrets, Xcode plist wiring, device proof.
+4. **Staging separation:** project + apps + DB + rules/indexes + 69 functions + schedules + cleanup + client selector done; still open: Auth providers, APNs, App Check provider, Bunny secrets + video, synthetic fixtures, Xcode wiring, device proof.
 5. **App Check screenshot reconciled (VERIFIED via `firebase apps:list`):** row 1 = ANDROID (Play Integrity + Fraud Defense — correct, preserve); row 2 = **iOS app `…:ios:9718…` with provider UNREGISTERED** (app exists — do NOT re-register; provider registration is a future staging/prod decision, enforcement stays OFF); rows 3–4 = web apps. Client providers correct in `main.dart` (App Attest + DeviceCheck fallback / Debug). Web reCAPTCHA: prod web requires `--dart-define=RECAPTCHA_SITE_KEY` (CI injects); no change made.
 6. **Compliance opens** (unchanged): privacy/terms/support URLs absent; manifest empty data-types; export answer pending; UGC report/block/moderation absent.
 7. Full-project analyze + emulator suites + Apple pipeline await capable environments.
 
 ## 7. Milestones
 
-M0 ✅ · M1 ✅ · M2 ✅ code-level (prod migration pending O1) · M3 🟡 project+apps+selector done; deploy/APNs/AppCheck/Bunny/Xcode-wiring pending (deploy BLOCKED: staging Firestore DB + Bunny test secrets + staging .env — see staging plan §4) · M4 🟡 · M5 🟡 (O6-B suites green; full analyze + emulator blocked) · M6 ❌ BLOCKED (no Mac) · M7 ❌ BLOCKED · M8 🟡 this handoff. O6-B: contract implemented + tested locally; staging deploy + device proof pending.
+M0 ✅ · M1 ✅ · M2 ✅ code-level (prod migration pending O1) · M3 ✅ backend deployed (69/69 + schedules + cleanup; Auth providers pending console) · M4 🟡 (Xcode wiring needs Mac) · M5 ✅ (unit + live smoke green; full O6-B live flow needs test users) · M6 ❌ BLOCKED (no Mac) · M7 ❌ BLOCKED · M8 🟡 this handoff.

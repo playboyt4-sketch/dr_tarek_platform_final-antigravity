@@ -9,6 +9,7 @@ import 'package:dr_tarek_platform/features/authentication/domain/entities/sessio
 import 'package:dr_tarek_platform/features/authentication/presentation/providers/session_provider.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/screens/auth_gate.dart';
 import 'package:dr_tarek_platform/l10n/generated/app_localizations.dart';
+import 'package:dr_tarek_platform/features/student_dashboard/presentation/providers/dashboard_providers.dart';
 
 void main() {
   AuthUser testUser({
@@ -28,6 +29,9 @@ void main() {
   Future<void> pumpGate(WidgetTester tester, SessionState state) async {
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          dashboardSubjectsProvider.overrideWith((ref) async => const []),
+        ],
         child: MaterialApp(
           locale: const Locale('ar'),
           supportedLocales: AppLocalizations.supportedLocales,
@@ -142,6 +146,7 @@ void main() {
           overrides: [
             initialLocaleProvider.overrideWithValue(const Locale('ar')),
             sessionProvider.overrideWith(() => controller),
+            dashboardSubjectsProvider.overrideWith((ref) async => const []),
           ],
           child: MaterialApp(
             locale: const Locale('ar'),

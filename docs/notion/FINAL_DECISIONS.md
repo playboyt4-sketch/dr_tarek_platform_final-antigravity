@@ -6,13 +6,14 @@
 
 # تم الاتفاق عليها في شات مراجعة المعمارية
 
-Version: 2.1
+Version: 2.2
 Status: Approved
-Date: 2026-09-17
-Authority: 00_MASTER_ARCHITECTURE.md Version 2.1 / ADR-004 + ADR-005 (highest authoritative source)
+Date: 2026-11-01
+Authority: 00_MASTER_ARCHITECTURE.md Version 2.2 / ADR-004 + ADR-005 + ADR-009 (highest authoritative source)
 
 ## Version History
 
+- **2.2** (2026-11-01): §9 amended per ADR-009 — Light Mode remains the canonical design and Dark Mode is a fully supported appearance mode (System default). No enforcement, schema or permission change.
 - **2.1** (2026-09-17): Added Section 26 recording approved ADR-005 — Platform Owner role migration (`teacher` → `doctor`). No enforcement change in this document update.
 - **2.0** (2026-09-14): Major update to Subject-Level Device Binding per ADR-004. Rewrote Section 1 to Student + Subject + Device authorization; updated Sections 2, 3, 5, 10, 14 for consistency; added Sections 16–25 (membership per Subject, Guest tier, Max two-devices-plus-single-playback, device identity, claims authority, reset/lost-device, term/freeze, migration, highest-plan rule, separation, supersession). No exact Guest minute values, no DRM durations, no fingerprint algorithm, no database/function/class details added. Sections 4, 6, 7, 8, 9, 11, 12, 13, 15 unchanged.
 - **1.x** (2026-08-04 and addenda §§11–15): prior approved baseline, including the account-level device-binding model now superseded by 2.0.
@@ -94,7 +95,8 @@ Authority: 00_MASTER_ARCHITECTURE.md Version 2.1 / ADR-004 + ADR-005 (highest au
 - مؤجل — شات منفصل مع AI مصمم
 - Mobile First
 - Material 3
-- White-based UI
+- Light-first UI (white/cream default) with fully supported Light, Dark and
+  System appearance modes; System is the default appearance (ADR-009)
 - Arabic support (RTL)
 
 ## 10. ملاحظات تقنية (محدّثة per ADR-004؛ التفاصيل التنفيذية للوثائق المالكة)

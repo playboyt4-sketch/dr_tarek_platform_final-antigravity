@@ -1,20 +1,156 @@
 /**
- * QUARANTINE NOTICE (post ADR-005 Doctor migration) — documentation only,
- * no behavior change.
- *
- * The optional teacher-promotion block in this file writes the LEGACY role
- * "teacher" to BOTH Auth custom claims and the users document. Post-migration
- * that role is inert (denied by Rules, Functions, and clients), so passing a
- * teacherPhone regresses the owner instead of promoting them. DO NOT pass a
- * teacher phone without explicit Project Owner approval. Changing the
- * promoted role string or removing the block requires an owner decision.
+ * REMOVAL NOTICE (owner-authorized): the legacy teacher-promotion block that
+ * used to live in this file was removed entirely. It wrote the LEGACY role
+ * "teacher" to Auth custom claims and the users document, which post-ADR-005
+ * is inert (denied by Rules, Functions, and clients). No doctor-promotion
+ * mechanism replaces it here: first-Doctor creation requires a separate,
+ * explicitly authorized out-of-band procedure and must never be smuggled
+ * into a reference-data seed. This script seeds reference data only and
+ * accepts no phone number or identity argument of any kind.
  */
-import { initializeApp, getApps } from "firebase-admin/app";
+import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
 if (getApps().length === 0) {
   initializeApp();
+}
+
+// Staging-only safety guard (no behavior change to seeded data).
+//
+// The Admin SDK resolves its project from several ambient sources, and NO
+// single source proves the destination on its own: `app.options.projectId`
+// is empty under ambient initializeApp(), while an environment variable
+// alone can disagree with the credential file actually used at request
+// time. The rule is therefore unanimity over every resolvable candidate:
+// pass only when at least one candidate resolves AND every resolved
+// candidate equals dr-tarek-staging. Unknown (no candidate) or any
+// disagreement aborts before any write.
+const STAGING_PROJECT_ID = "dr-tarek-staging";
+
+export interface ProjectCandidate {
+  source: string;
+  projectId: string;
+}
+
+export interface ProjectResolutionDeps {
+  /** app.options.projectId from the initialized Admin app (explicit init). */
+  optionsProjectId: string | undefined;
+  /** Environment record (production code passes process.env). */
+  env: Record<string, string | undefined>;
+  /**
+   * Reads a credential file and returns its raw text, or null when the
+   * file is absent/unreadable. Only the `project_id` field is ever parsed
+   * out of it; secrets are never read.
+   */
+  readCredentialFile: (path: string) => string | null;
+}
+
+/**
+ * Pure project-identity resolver (unit-testable, no Firebase I/O).
+ * Collects every resolvable project candidate without assuming defaults.
+ */
+export function resolveProjectCandidates(
+  deps: ProjectResolutionDeps,
+): ProjectCandidate[] {
+  const candidates: ProjectCandidate[] = [];
+  if (deps.optionsProjectId) {
+    candidates.push({
+      source: "app.options.projectId",
+      projectId: deps.optionsProjectId,
+    });
+  }
+  const firebaseConfigRaw = deps.env.FIREBASE_CONFIG;
+  if (firebaseConfigRaw) {
+    try {
+      const parsed = JSON.parse(firebaseConfigRaw) as {projectId?: unknown};
+      if (typeof parsed.projectId === "string" && parsed.projectId) {
+        candidates.push({
+          source: "FIREBASE_CONFIG.projectId",
+          projectId: parsed.projectId,
+        });
+      }
+    } catch {
+      // Malformed FIREBASE_CONFIG contributes no candidate (never a pass).
+    }
+  }
+  for (const name of ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"]) {
+    const value = deps.env[name];
+    if (value) {
+      candidates.push({source: `env:${name}`, projectId: value});
+    }
+  }
+  const credentialPath = deps.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (credentialPath) {
+    const raw = deps.readCredentialFile(credentialPath);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as {project_id?: unknown};
+        if (typeof parsed.project_id === "string" && parsed.project_id) {
+          candidates.push({
+            source: "credential-file:project_id",
+            projectId: parsed.project_id,
+          });
+        }
+      } catch {
+        // Malformed credential file contributes no candidate (never a pass).
+      }
+    }
+  }
+  return candidates;
+}
+
+export interface ProjectVerdict {
+  pass: boolean;
+  reason: string;
+}
+
+/**
+ * Unanimity decision over resolved candidates (pure, unit-testable):
+ * pass only when at least one candidate resolved and all equal staging.
+ */
+export function evaluateProjectCandidates(
+  candidates: ProjectCandidate[],
+): ProjectVerdict {
+  if (candidates.length === 0) {
+    return {
+      pass: false,
+      reason: "no project candidate resolved (unknown destination)",
+    };
+  }
+  const bad = candidates.filter((c) => c.projectId !== STAGING_PROJECT_ID);
+  if (bad.length > 0) {
+    return {
+      pass: false,
+      reason: `conflicting candidates: ${bad.map((c) => `${c.source}="${c.projectId}"`).join(", ")}`,
+    };
+  }
+  return {pass: true, reason: "all candidates agree on staging"};
+}
+
+function defaultCredentialReader(path: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("node:fs") as typeof import("node:fs");
+    return fs.readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function assertStagingProject(): void {
+  const candidates = resolveProjectCandidates({
+    optionsProjectId: getApp().options.projectId,
+    env: process.env,
+    readCredentialFile: defaultCredentialReader,
+  });
+  const verdict = evaluateProjectCandidates(candidates);
+  if (!verdict.pass) {
+    throw new Error(
+      `Refusing to seed: ${verdict.reason}; expected every candidate to ` +
+        `equal "${STAGING_PROJECT_ID}". No writes were made.`,
+    );
+  }
 }
 
 const db = getFirestore();
@@ -33,15 +169,18 @@ const auth = getAuth();
  * 2. Plan Features (Entitlements for video, quality, pdf, downloads, device limits)
  * 3. Core Academic Periods (Term 1, Term 2, Summer Course)
  * 4. Platform Features toggles
- * 5. Teacher claims assigner
  *
+ * Deliberately NOT included: any staff identity or role promotion. The
+ * removed legacy teacher-promotion block is not replaced here.
  * PHASE 1 migration: legacy plans/public_free (if present from a pre-migration
  * seed) is explicitly deactivated below so the seed never leaves two active
  * Guest plans behind. Legacy plan_features docs with plan_id "public_free"
  * are NOT deleted here (non-destructive); run
  * scripts/migrate_public_to_guest.cjs --apply to move them to plan_id "guest".
  */
-export async function seedDatabase(teacherPhoneNumber?: string) {
+export async function seedDatabase(): Promise<void> {
+  // Pre-write abort guard: must run before any Firestore/Auth write below.
+  assertStagingProject();
   console.log("=== Starting Dr. Tarek Platform Database Seeding ===");
 
   // 1. Seed Plans
@@ -167,7 +306,7 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
       "pdf.access": { enabled: false, value_type: "boolean" },
       "pdf.download": { enabled: false, value_type: "boolean" },
       "offline.mode": { enabled: false, value_type: "boolean" },
-      "device.limit": { enabled: true, value_type: "number", value: 1 },
+      "device.max_count": { enabled: true, value_type: "number", value: 1 },
     },
     free: {
       "video.access": { enabled: true, value_type: "boolean" },
@@ -184,7 +323,7 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
       "pdf.access": { enabled: true, value_type: "boolean" },
       "pdf.download": { enabled: false, value_type: "boolean" },
       "offline.mode": { enabled: false, value_type: "boolean" },
-      "device.limit": { enabled: true, value_type: "number", value: 1 },
+      "device.max_count": { enabled: true, value_type: "number", value: 1 },
     },
     pro: {
       "video.access": { enabled: true, value_type: "boolean" },
@@ -202,7 +341,7 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
       "pdf.access": { enabled: true, value_type: "boolean" },
       "pdf.download": { enabled: false, value_type: "boolean" },
       "offline.mode": { enabled: false, value_type: "boolean" },
-      "device.limit": { enabled: true, value_type: "number", value: 1 },
+      "device.max_count": { enabled: true, value_type: "number", value: 1 },
     },
     max: {
       "video.access": { enabled: true, value_type: "boolean" },
@@ -221,7 +360,7 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
       "pdf.access": { enabled: true, value_type: "boolean" },
       "pdf.download": { enabled: true, value_type: "boolean" },
       "offline.mode": { enabled: true, value_type: "boolean" },
-      "device.limit": { enabled: true, value_type: "number", value: 2 },
+      "device.max_count": { enabled: true, value_type: "number", value: 2 },
     },
   };
 
@@ -235,6 +374,11 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
           enabled: featureData.enabled,
           value_type: featureData.value_type,
           value: featureData.value ?? null,
+          // Dual write (mirrors setPlanFeature in src/index.ts): entitlement
+          // readers consume `feature_value` (Approved 05_DATABASE_v1.7
+          // plan_features "Feature Value"); `value` is kept for the legacy
+          // seed-script shape. Both are always written together.
+          feature_value: featureData.value ?? null,
           updated_at: FieldValue.serverTimestamp(),
           created_at: FieldValue.serverTimestamp(),
         },
@@ -317,35 +461,25 @@ export async function seedDatabase(teacherPhoneNumber?: string) {
     console.log(`[PlatformFeature] Seeded: ${data.label}`);
   }
 
-  // 5. Optional Teacher Claim Setup
-  if (teacherPhoneNumber) {
-    const userQuery = await db.collection("users").where("phone_number", "==", teacherPhoneNumber).limit(1).get();
-    if (!userQuery.empty) {
-      const teacherDoc = userQuery.docs[0];
-      const uid = teacherDoc.id;
-      await auth.setCustomUserClaims(uid, {
-        role: "teacher",
-        approved: true,
-        max_devices: 5,
-      });
-      await teacherDoc.ref.update({
-        role: "teacher",
-        approval_status: "approved",
-        is_active: true,
-        updated_at: FieldValue.serverTimestamp(),
-      });
-      console.log(`[Teacher] Successfully promoted user ${uid} (${teacherPhoneNumber}) to Teacher (Platform Owner)!`);
-    } else {
-      console.log(`[Teacher] Notice: No registered user found with phone: ${teacherPhoneNumber}. Register first, then re-run.`);
-    }
-  }
+  // Staff promotion intentionally absent (see file header): this script
+  // must never assign roles or claims to any identity.
 
   console.log("=== Database Seeding Completed Successfully! ===");
 }
 
 if (require.main === module) {
-  const teacherPhone = process.argv[2] || "01000000000";
-  seedDatabase(teacherPhone)
+  // No phone number or identity argument exists. Any positional argument is
+  // rejected before anything else runs, so a stale invocation such as
+  // `seed_database.ts 01000000000` can never reach the seeding logic.
+  const extraArgs = process.argv.slice(2);
+  if (extraArgs.length > 0) {
+    console.error(
+      `Refusing to seed: unexpected argument(s) ${JSON.stringify(extraArgs)}. ` +
+        `This script accepts no phone number or identity argument. No writes were made.`,
+    );
+    process.exit(2);
+  }
+  seedDatabase()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error("Seeding failed:", err);

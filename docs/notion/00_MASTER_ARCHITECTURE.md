@@ -4,11 +4,12 @@
 
 ## Single Source of Truth
 
-Version: 2.1
+Version: 2.2
 Status: Approved
 
 ## Version History
 
+- **2.2** (2026-11-01): Added ADR-009 — genuine Light/Dark/System appearance support. §8 design principle `White-based UI` replaced by `Light-first UI with full Light, Dark and System appearance support`, resolving the conflict with 01 Project Vision's `Dark Mode Ready` / `Light Mode Ready`. Light Mode remains the canonical design and is unchanged. No other architectural change; no database, Firebase, authentication or permission change.
 - **2.1** (2026-09-17): Added ADR-005 — approved Platform Owner role migration (`teacher` → `doctor`). No other architectural change. All role tables, rules, code, and data references still read `teacher` until the implementation migration executes this ADR.
 - **2.0** (2026-09-14): Major architectural change to Subject-Level Device Binding (ADR-004). Supersedes the previous account-level device-binding/login-rejection model. Authentication is account-level and never rejected for device reasons; device authorization is evaluated per Student + Subject + Device on first actual subject access; each Subject independently consumes its own subscription's device allowance; Guest/limited access never mutates the subscription; identity claims are de-scoped from Subject-specific authorization. See Section 7.1 and Section 5.3 (ADR-004). Other documents are not rewritten in this step and must be aligned in follow-up steps per the project workflow.
 - **1.2** (2026-08-04): Clarified "One active device per student" (Section 7) to reflect the plan-based device policy — this bullet, taken literally, contradicted the Center Max plan's 2+ device allowance already documented in 05 Database and 04 Features, and confirmed in FINAL_DECISIONS Section 1. The rule is now stated as plan-configurable, not a fixed single-device rule. Also updated 01 Project Vision (v2.0) and 02 PRD (v1.3) to remove the Offline Learning V1/future-scope conflict.
@@ -177,6 +178,16 @@ Architectural decisions become permanent references unless officially superseded
 - **Date:** 2026-09-17.
 - **Version:** Master Architecture 2.1.
 
+## ADR-009 — Genuine Light and Dark Appearance Support
+
+- **Decision:** The mobile application supports three appearance modes — `system`, `light`, `dark` — with `system` as the default. Light Mode is the canonical, approved design and must not change visually. Dark Mode is an additive rendering of the same design system and requires its own approved specification before per-screen implementation. Appearance preference is persisted locally using the existing SharedPreferences pattern; no Firebase dependency is introduced and theme state is not duplicated. Grade identity, intentional media surfaces (video player, PDF document surface) and intentional pastel note surfaces are preserved in both modes. The approval record for the Dark token values is `20_ADR_009_Theme_Mode_Support.md`; the approved visual token table lives in 03 UI & UX §2.2–2.3.
+- **Context:** Master Architecture §8 previously stated `White-based UI` while 01 Project Vision stated `Dark Mode Ready` and `Light Mode Ready`. The ambiguity was resolved by the Project Owner on 2026-11-01: both appearance modes are genuinely supported on iPhone and the other supported platforms. The previous OS-driven Dark Mode wiring had been removed from the codebase because it built a `Brightness.light` ColorScheme with dark surface colours and no dark input contract, which produced unreadable editable fields.
+- **Alternatives Considered:** (1) Keep Light-only and reword the Vision to drop Dark Mode. Rejected — contradicts the Owner decision and the Accessibility First principle. (2) Restore the previous `AppTheme.dark` and wire `ThemeMode.system`. Rejected — it reproduces the unreadable-input regression and has no approved Dark specification. (3) Derive Dark Mode mechanically from `ColorScheme.fromSeed` without an approved specification. Rejected — §8 and §14 forbid inventing visual specifications. (4) Semantic token layer (`ThemeExtension<AppSemanticColors>`) with per-screen gating on approved Dark specifications. Selected.
+- **Consequences:** `AppTheme.light` and `AppTheme.dark` must both pass the correct `Brightness` to `ColorScheme.fromSeed`. The semantic ThemeExtension becomes the presentation contract; legacy `AppColors` constants remain until every dependency is migrated and verified. `test/core/theme/input_theme_test.dart` must be rewritten — not deleted — to assert the new contract while preserving all of its Light-mode assertions, because it currently encodes the superseded "no dark theme" decision. Screens without an approved Dark specification are not implemented and remain blocked. No database schema, collection design, Cloud Function behaviour, Security Rule, authentication behaviour or permission behaviour is introduced by this ADR.
+- **Status:** Approved.
+- **Date:** 2026-11-01.
+- **Version:** Master Architecture 2.2.
+
 # 6. User Roles
 
 - New Student
@@ -300,7 +311,7 @@ The following are separate concepts and must not be conflated:
 
 - Mobile First
 - Material 3
-- White-based UI
+- Light-first UI with full Light, Dark and System appearance support
 - Minimal Design
 - Consistent Components
 - Reusable UI
@@ -308,6 +319,11 @@ The following are separate concepts and must not be conflated:
 - Responsive Layouts
 
 Figma is the only visual source of truth.
+
+Light Mode is the canonical, approved design and remains visually unchanged.
+Dark Mode is a second, equally supported rendering of the same design system and
+requires its own approved Figma specification before per-screen implementation
+(see ADR-009 and 03 UI & UX §2.2–2.3).
 
 ---
 

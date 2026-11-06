@@ -165,6 +165,53 @@ async function run() {
     "invalid-argument",
   );
   await checkFail("Bad severity rejected", {data: {eventType: "emulator", severity: "catastrophic"}, auth: studentAuth}, "invalid-argument");
+  await checkFail("Non-string severity rejected", {data: {eventType: "emulator", severity: 3}, auth: studentAuth}, "invalid-argument");
+  await checkFail("Empty severity rejected", {data: {eventType: "emulator", severity: "  "}, auth: studentAuth}, "invalid-argument");
+
+  // Unsupported event types are rejected before any write or notification.
+  writes.length = 0;
+  await checkFail("Unsupported eventType rejected", {data: {eventType: "malware"}, auth: studentAuth}, "invalid-argument");
+  await checkFail("Whitespace-padded unsupported eventType rejected", {data: {eventType: " malware "}, auth: studentAuth}, "invalid-argument");
+  await checkFail("Device mismatch is not a security event", {data: {eventType: "device_mismatch"}, auth: studentAuth}, "invalid-argument");
+  assert.equal(writes.length, 0);
+  console.log("ok - Unsupported event types write nothing");
+
+  // Rooted-device reporting is a documented integrity event.
+  writes.length = 0;
+  await checkPass("Rooted device event accepted", {
+    data: {eventType: "rooted", severity: "low"},
+    auth: studentAuth,
+  });
+  assert.equal(calls("security_events")[0].data.event_type, "rooted");
+  assert.equal(calls("security_events")[0].data.action_taken, "warning");
+  assert.equal(calls("notifications").length, 0);
+
+  // Malformed payload containers degrade to documented empty maps.
+  writes.length = 0;
+  await checkPass("Malformed context and deviceInfo degrade safely", {
+    data: {
+      eventType: "emulator",
+      context: [1, 2, 3],
+      deviceInfo: "raw-device-string",
+    },
+    auth: studentAuth,
+  });
+  assert.deepEqual(calls("security_events")[0].data.context, {});
+  assert.deepEqual(calls("security_events")[0].data.device_info, {});
+  assert.equal(calls("security_events")[0].data.severity, "medium");
+  assert.equal(calls("security_events")[0].data.action_taken, "warning");
+  console.log("ok - Malformed payload containers normalized");
+
+  // Severity is canonicalized before the allowlist check.
+  writes.length = 0;
+  await checkPass("Mixed-case severity normalized", {
+    data: {eventType: "screen_record", severity: "HIGH"},
+    auth: studentAuth,
+  });
+  assert.equal(calls("security_events")[0].data.severity, "high");
+  assert.equal(calls("security_events")[0].data.action_taken, "notify_admin");
+  assert.ok(calls("notifications").length >= 1);
+  console.log("ok - Severity canonicalized and routed");
 
   // 4+5. Impersonation and actor forgery are ignored: identity is auth-derived.
   writes.length = 0;
@@ -199,6 +246,41 @@ async function run() {
   assert.equal(calls("security_events")[0].data.action_taken, "notify_admin");
   assert.ok(calls("notifications").length >= 1);
   console.log("ok - Critical path alerts staff");
+
+  // The client cannot trigger staff alerts for a low-severity event by forging
+  // the response field.
+  writes.length = 0;
+  await checkPass("Forged notify_admin action cannot trigger alerts", {
+    data: {eventType: "jailbreak", severity: "low", actionTaken: "notify_admin"},
+    auth: studentAuth,
+  });
+  assert.equal(calls("security_events")[0].data.action_taken, "warning");
+  assert.equal(calls("notifications").length, 0);
+  console.log("ok - Low severity cannot be escalated through actionTaken");
+
+  // The client cannot suppress staff alerts for a critical event by forging
+  // a weaker response field.
+  writes.length = 0;
+  await checkPass("Forged warning action cannot suppress alerts", {
+    data: {eventType: "screen_record", severity: "critical", actionTaken: "warning"},
+    auth: studentAuth,
+  });
+  assert.equal(calls("security_events")[0].data.action_taken, "notify_admin");
+  const alertDocs = calls("notifications");
+  assert.ok(alertDocs.length >= 1);
+  assert.ok(alertDocs.every((doc) => doc.data.user_id === "doctor-1"));
+  assert.ok(!alertDocs.some((doc) => doc.data.user_id === "victim-uid"));
+  console.log("ok - Critical alerts cannot be suppressed or misrouted");
+
+  // No forged client action is ever persisted as the server response.
+  writes.length = 0;
+  await checkPass("Forged stop action is not persisted", {
+    data: {eventType: "jailbreak", severity: "medium", actionTaken: "stop"},
+    auth: studentAuth,
+  });
+  assert.equal(calls("security_events")[0].data.action_taken, "warning");
+  assert.ok(!Object.values(calls("security_events")[0].data).includes("stop"));
+  console.log("ok - Client action values are never stored");
 
   test.cleanup();
 

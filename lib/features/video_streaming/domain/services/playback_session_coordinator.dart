@@ -29,16 +29,12 @@ typedef HeartbeatTimerFactory = Timer Function(
 
 class PlaybackSessionCoordinator {
   PlaybackSessionCoordinator({
-    required PlaybackSessionGateway gateway,
-    required String studentId,
-    required String subjectId,
-    required String deviceId,
+    required this._gateway,
+    required this._studentId,
+    required this._subjectId,
+    required this._deviceId,
     HeartbeatTimerFactory? timerFactory,
-  })  : _gateway = gateway,
-        _studentId = studentId,
-        _subjectId = subjectId,
-        _deviceId = deviceId,
-        _timerFactory = timerFactory ?? Timer.periodic;
+  })  : _timerFactory = timerFactory ?? Timer.periodic;
 
   final PlaybackSessionGateway _gateway;
   final String _studentId;

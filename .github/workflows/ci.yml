@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,6 +14,24 @@ jobs:
   flutter-analyze-test:
     name: Flutter analyze + test
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: flutter analyze (must be clean)
+        run: flutter analyze --fatal-infos
+      - name: flutter test
+        run: flutter test
+
+  dashboard-analyze-test:
+    name: Dashboard analyze + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -76,7 +95,236 @@ jobs:
       # CLI first (major-pinned for deterministic builds).
       - name: Install Firebase CLI
         run: npm install -g firebase-tools@15
-      - run: npm install
+      - name: Install dependencies (deterministic)
+        run: npm ci
+
+      # Wave 2A dependency-audit policy (2026-10-22):
+      # - Block production Critical/High and full-tree Critical.
+      # - Non-blocking/report-only: non-production High, all Moderate, Low, Info.
+      # - Baseline: full tree 0 Critical, 9 High (dev-only), 29 Moderate;
+      #   production 0 Critical/High, 8 Moderate (uuid@9.0.1, Wave 2C).
+      # - Full-tree High/Moderate debt is retained until separately approved
+      #   remediation waves; it is not silently ignored (snapshot + summary).
+      # - npm audit exits 1 when findings exist; JSON validity and exit codes
+      #   are validated separately so an infrastructure failure fails closed.
+      - name: Dependency security audit (fail closed)
+        shell: bash
+        run: |
+          set -u
+
+          run_audit() {
+            local scope="$1"
+            shift
+            local file="audit-${scope}.json"
+            local err="audit-${scope}.err"
+            local code
+
+            if npm audit --json "$@" > "$file" 2> "$err"; then
+              code=0
+            else
+              code=$?
+            fi
+
+            printf '%s\n' "$code" > "audit-${scope}.exit"
+            echo "npm audit ${scope}: exit ${code}"
+            if [ -s "$err" ]; then
+              cat "$err"
+            fi
+          }
+
+          run_audit full
+          run_audit prod --omit=dev
+
+          node <<'NODE'
+          'use strict';
+
+          const fs = require('fs');
+          const path = require('path');
+
+          const auditDir = process.env.AUDIT_DIR || '.';
+          const auditFile = (name) => path.join(auditDir, name);
+
+          function readAudit(label, fileName) {
+            const file = auditFile(fileName);
+            let raw;
+            try {
+              raw = fs.readFileSync(file, 'utf8');
+            } catch (error) {
+              throw new Error(`${label}: cannot read ${fileName}: ${error.message}`);
+            }
+
+            let data;
+            try {
+              data = JSON.parse(raw);
+            } catch (error) {
+              throw new Error(`${label}: malformed JSON in ${fileName}: ${error.message}`);
+            }
+
+            if (data && data.error) {
+              throw new Error(`${label}: npm audit returned an error: ${JSON.stringify(data.error)}`);
+            }
+
+            const vulnerabilities = data && data.metadata && data.metadata.vulnerabilities;
+            if (!vulnerabilities || typeof vulnerabilities !== 'object') {
+              throw new Error(`${label}: missing metadata.vulnerabilities in ${fileName}`);
+            }
+
+            for (const severity of ['critical', 'high']) {
+              if (typeof vulnerabilities[severity] !== 'number' || !Number.isFinite(vulnerabilities[severity])) {
+                throw new Error(`${label}: missing numeric ${severity} count in ${fileName}`);
+              }
+            }
+
+            const count = (severity) => (
+              typeof vulnerabilities[severity] === 'number' && Number.isFinite(vulnerabilities[severity])
+                ? vulnerabilities[severity]
+                : 0
+            );
+
+            const result = {
+              critical: count('critical'),
+              high: count('high'),
+              moderate: count('moderate'),
+              low: count('low'),
+              info: count('info'),
+            };
+            result.total = (
+              typeof vulnerabilities.total === 'number' && Number.isFinite(vulnerabilities.total)
+                ? vulnerabilities.total
+                : result.critical + result.high + result.moderate + result.low + result.info
+            );
+            return result;
+          }
+
+          function readExitCode(label, fileName) {
+            const file = auditFile(fileName);
+            let raw;
+            try {
+              raw = fs.readFileSync(file, 'utf8').trim();
+            } catch (error) {
+              throw new Error(`${label}: cannot read ${fileName}: ${error.message}`);
+            }
+            const code = Number(raw);
+            if (!Number.isInteger(code) || code < 0) {
+              throw new Error(`${label}: invalid exit code "${raw}" in ${fileName}`);
+            }
+            return code;
+          }
+
+          function formatRow(scope, audit) {
+            return `| ${scope} | ${audit.critical} | ${audit.high} | ${audit.moderate} | ${audit.low} | ${audit.info} | ${audit.total} |`;
+          }
+
+          const problems = [];
+          let full;
+          let production;
+          let fullExit;
+          let productionExit;
+
+          try {
+            full = readAudit('full-tree', 'audit-full.json');
+          } catch (error) {
+            problems.push(error.message);
+          }
+          try {
+            production = readAudit('production', 'audit-prod.json');
+          } catch (error) {
+            problems.push(error.message);
+          }
+          try {
+            fullExit = readExitCode('full-tree', 'audit-full.exit');
+          } catch (error) {
+            problems.push(error.message);
+          }
+          try {
+            productionExit = readExitCode('production', 'audit-prod.exit');
+          } catch (error) {
+            problems.push(error.message);
+          }
+
+          if (problems.length === 0) {
+            console.log(`Full tree : critical=${full.critical} high=${full.high} moderate=${full.moderate} low=${full.low} info=${full.info} total=${full.total}`);
+            console.log(`Production: critical=${production.critical} high=${production.high} moderate=${production.moderate} low=${production.low} info=${production.info} total=${production.total}`);
+
+            if (fullExit > 1) {
+              problems.push(`full-tree npm audit exited ${fullExit} (command/infrastructure failure)`);
+            }
+            if (productionExit > 1) {
+              problems.push(`production npm audit exited ${productionExit} (command/infrastructure failure)`);
+            }
+          }
+
+          if (problems.length > 0) {
+            for (const problem of problems) {
+              console.error(`::error::Dependency audit gate: ${problem}`);
+            }
+            console.error('Dependency audit gate failed closed: valid audit results for both scopes are required.');
+            process.exitCode = 1;
+          } else {
+            const blocking = [];
+            if (production.critical > 0) {
+              blocking.push(`production Critical=${production.critical}`);
+            }
+            if (production.high > 0) {
+              blocking.push(`production High=${production.high}`);
+            }
+            if (full.critical > 0) {
+              blocking.push(`full-tree Critical=${full.critical}`);
+            }
+
+            if (blocking.length > 0) {
+              for (const finding of blocking) {
+                console.error(`::error::Blocking dependency finding: ${finding}`);
+              }
+              console.error('Dependency audit gate failed.');
+              process.exitCode = 1;
+            } else {
+              console.log('Dependency audit gate passed: no production Critical/High and no full-tree Critical findings.');
+              if (full.high > 0) {
+                console.log(`::warning::Non-blocking full-tree High findings: ${full.high}. Existing development/test debt; tracked separately.`);
+              }
+              if (production.moderate > 0) {
+                console.log(`::warning::Non-blocking production Moderate findings: ${production.moderate}. Tracked separately; production High/Critical remain blocking.`);
+              }
+              if (full.moderate > 0) {
+                console.log(`::warning::Non-blocking full-tree Moderate findings: ${full.moderate}.`);
+              }
+            }
+
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              const result = blocking.length > 0
+                ? `FAIL - ${blocking.join(', ')}`
+                : 'PASS - no production Critical/High and no full-tree Critical findings.';
+              const lines = [
+                '## Dependency audit gate',
+                '',
+                '| Scope | Critical | High | Moderate | Low | Info | Total |',
+                '|---|---:|---:|---:|---:|---:|---:|',
+                formatRow('Full tree', full),
+                formatRow('Production', production),
+                '',
+                `**Result:** ${result}`,
+                '',
+              ];
+              try {
+                fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n'));
+              } catch (error) {
+                console.error(`::warning::Could not write the dependency audit summary: ${error.message}`);
+              }
+            }
+          }
+          NODE
+
+      - name: Upload dependency audit snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: |
+            functions/audit-full.json
+            functions/audit-prod.json
+          if-no-files-found: warn
+
       - run: npm run lint
       - run: npm run build
       - run: npm test

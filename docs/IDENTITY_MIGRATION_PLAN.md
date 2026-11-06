@@ -114,3 +114,14 @@ candidate that the owner has now ratified as final.
   (acceptable pre-production).
 - App Check registration must be repeated for the NEW identifiers when the
   owner activates enforcement.
+
+## Addendum — current identity verification (2026-10-20)
+
+The sections above preserve the historical 2026-08-22 inventory; some of their “old identity” statements were not refreshed after the later migration. Current evidence supersedes those statements for present release preparation:
+
+- Owner-ratified Android application ID and iOS bundle ID are both `com.drtarek.platform` (final decision recorded 2026-10-14).
+- `android/app/build.gradle.kts` namespace/applicationId and `android/app/google-services.json` package name both read `com.drtarek.platform`.
+- `firebase apps:list --project dr-tarek-platform --json` returned active Android and iOS app registrations with namespace `com.drtarek.platform`; the corresponding iOS Firebase plist is present in the repository.
+- A staging Android AAB was built with this package ID and the explicit staging environment define. Its signing certificate still must be checked against the Play Console upload key before upload.
+
+- Certificate check (2026-10-20): the staging AAB SHA-256 signer fingerprint was read from the artifact and matched the certificate in the configured local upload keystore: E968DD3BFFF13E7C16B557E7C6EB969754897833CCED3EA1C5A2A07756104B3F. The Play Console upload certificate was not checked; confirm it matches before upload. This measured value supersedes any malformed/legacy fingerprint text in the historical checklist above.

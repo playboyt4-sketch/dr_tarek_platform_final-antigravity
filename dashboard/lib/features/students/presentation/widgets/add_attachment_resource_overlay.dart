@@ -17,7 +17,7 @@ class AddAttachmentResourceOverlay extends StatefulWidget {
     return showDialog<Map<String, String>>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (context) => const AddAttachmentResourceOverlay(),
     );
   }

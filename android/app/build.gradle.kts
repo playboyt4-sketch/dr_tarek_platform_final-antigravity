@@ -32,9 +32,8 @@ android {
     }
 
     defaultConfig {
-        // TODO(store-release): replace with the final applicationId BEFORE any
-        // store upload — it is permanent after first publish and must match the
-        // app registered in the Firebase console / google-services.json.
+        // Final owner-ratified and Firebase-registered package ID per
+        // docs/IDENTITY_MIGRATION_PLAN.md; keep aligned across Firebase and stores.
         applicationId = "com.drtarek.platform"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion

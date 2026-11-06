@@ -181,12 +181,12 @@ class _ForgotPasswordSheetState extends ConsumerState<_ForgotPasswordSheet> {
             ),
             SizedBox(height: context.rsV(20)),
             // Figma Arabic informational message (meaning preserved).
-            const Text(
+            Text(
               'يمكنك التواصل مع الأدمن\nلإعادة تعيين الباسورد الخاص بكم\nعلي رقم',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'Google Sans Flex',
-                fontSize: 16,
+                fontSize: context.rsFont(16),
                 fontWeight: FontWeight.w400,
                 color: Color(0xFF111827),
                 height: 1.6,

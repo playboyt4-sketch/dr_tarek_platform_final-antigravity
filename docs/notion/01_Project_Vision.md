@@ -1,10 +1,11 @@
 # 01 Project Vision
 
-Version: 2.1
+Version: 2.2
 Status: Approved
 
 ## Version History
 
+- **2.2** (2026-11-01): Design Principles amended per ADR-009. "Dark Mode Ready" and "Light Mode Ready" replaced with an explicit statement that both modes are supported and System appearance is the default. No business scope change.
 - **2.1** (2026-09-14): Alignment with Subject-Level Device Binding (00_MASTER_ARCHITECTURE.md v2.0 / ADR-004, FINAL_DECISIONS.md v2.0). Clarified that offline-download protection follows per-Subject device authorization; authentication is never blocked for device reasons. No implementation details added.
 - **2.0** (2026-08-04): Removed "Full Offline Learning" from Out-of-Vision (Version 1) list. Reason: FINAL_DECISIONS (2026-08-04) established offline learning with AES-256 DRM as a confirmed V1 requirement; this document is updated to remove the conflict, per Master Architecture Section 5.1 (Change Management — architectural changes require a documented reason and version increment). Full technical scope lives in FINAL_DECISIONS Section 2, 08 Development Standards Section 8, and 09 Tasks (T-000.12).
 - **1.1** and earlier: see prior revisions.
@@ -196,8 +197,8 @@ The user experience must always prioritize usability and consistency.
 - High Performance
 - Accessibility
 - Responsive Design
-- Dark Mode Ready
-- Light Mode Ready
+- Light Mode and Dark Mode both fully supported, with System appearance as the
+  default (see ADR-009)
 
 ---
 

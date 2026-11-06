@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.1
-Status: Draft — pending Teacher (Platform Owner) review before "Approved". Covers Feature 01 (Authentication & Registration) only — remaining features are documented as they are delivered in Figma.
+Version: 1.2
+Status: Approved. Covers Feature 01 (Authentication & Registration) screen specifications, plus the platform-wide Light/Dark design-token and component-state contract (§2.1–§2.3) approved under ADR-009. Remaining feature screens are documented as they are delivered in Figma.
 
 ## Version History
 
+- **1.2** (2026-11-01): Added §2.1 Light token contract, §2.2 Dark token contract and §2.3 component state contract under ADR-009. Status changed from Draft to Approved for the content present in this document. Dark values were verified against WCAG 2.1 relative-luminance contrast before approval. No Light value changed.
 - **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Replaced the "Login-from-Another-Device error" state with the approved model (login always succeeds; per-Subject Full vs Guest tier) and recorded conceptual UX requirements for per-Subject plan badges and Guest limitations. No visual specifications invented — Figma remains the visual source of truth.
 - **1.0** (2026-08-04): Initial document. Transcribes the approved Figma onboarding flow (Student Type → Welcome → Full Name → Phone Number → Photo → Grade → Password → Application Under Review → Login → Dashboard placeholder) into a formal screen-by-screen specification, cross-referenced to 04 Features v1.4, 05 Database v1.6, and 11 Assets. Per Master Architecture Section 14 ("Never invent business rules... Never infer missing requirements"), only screens actually present in the supplied Figma are documented here; all other features remain `⛔ Blocked` pending their own Figma delivery (see 09 Tasks Section 3).
 
@@ -36,6 +37,118 @@ Full token definitions live in 11 Assets Section 5. Summary relevant to the scre
 | Corner Radius | `AppShapes.radiusLarge` (16) / `radiusXLarge` (24) | Cards, illustration containers, buttons |
 
 **Component pattern observed across all onboarding screens:** full-bleed illustration/color panel at top (rounded corners, ~55–60% of viewport height) → headline (bold, large) → optional subtext → input field(s) or selection card(s) → single full-width primary button pinned above the input area.
+
+## 2.1 Light appearance tokens (canonical — MUST NOT CHANGE)
+
+| Role | Value | Source |
+| --- | --- | --- |
+| `canvas` (scaffold) | `#FFFFFF` | AppColors.canvas |
+| `canvasWarm` (Figma screen canvas) | `#FFFCF7` | Figma main light background |
+| `surface` (item/card) | `#F3F4F6` | Figma item-surface |
+| `surfaceElevated` | `#FFFFFF` | — |
+| `textPrimary` | `#111827` | Figma text-primary |
+| `textSecondary` | `#6B7280` | Figma text-secondary |
+| `textDisabled` | `#9A9A9A` | Figma secondary input text |
+| `divider` | `#E0E4EA` | AppColors.divider |
+| `outline` / `inputBorder` | `#D0D0D0` | Figma common input border |
+| `inputFill` | `#FFFFFF` | product requirement (white fields) |
+| `primary` | `#1D4ED8` | AppColors.buttonSolid |
+| `primaryLegacy` | `#1A73E8` | AppColors.primary (AppButton) |
+| `onPrimary` | `#FFFFFF` | — |
+| `error` / `success` / `warning` / `info` | `#E53935` / `#4CAF50` / `#FF9800` / `#2196F3` | AppColors |
+| `glassFill` / `glassBorder` | `rgba(255,255,255,0.20)` / `rgba(255,255,255,0.30)` | Figma glass button |
+| `cardGlassFill` / `cardGlassBorder` | `rgba(255,255,255,0.15)` / `rgba(255,255,255,0.25)` | Figma course card |
+
+Known pre-existing Light accessibility exception (preserved, not fixed):
+`inputBorder #D0D0D0` on `inputFill #FFFFFF` = 1.54:1, below the WCAG 1.4.11 3:1
+target for control boundaries. Fixing it would change the approved Light output
+and therefore requires a separate approved Light redesign.
+
+## 2.2 Dark appearance tokens (ADR-009, approved 2026-11-01)
+
+| Role | Value |
+| --- | --- |
+| `canvas` | `#0B0D12` |
+| `surface` | `#15181F` |
+| `surfaceContainerLow` | `#12151B` |
+| `surfaceContainer` | `#191D25` |
+| `surfaceContainerHigh` | `#20242D` |
+| `surfaceContainerHighest` | `#272C36` |
+| `textPrimary` | `#F2F4F7` |
+| `textSecondary` | `#A7AEBC` |
+| `textDisabled` | `#6C7382` |
+| `iconDefault` | `#D5DAE3` |
+| `iconMuted` | `#8E97A6` |
+| `divider` | `#2A2F3A` |
+| `outline` | `#3A4150` |
+| `inputFill` | `#15181F` |
+| `inputBorder` | `#636C80` |
+| `inputBorderFocused` | `#7FA9FF` |
+| `inputHint` | `#8E97A6` |
+| `inputFillDisabled` | `#12151B` |
+| `primary` | `#7FA9FF` |
+| `onPrimary` | `#08142B` |
+| `primaryContainer` | `#2B4E8F` |
+| `onPrimaryContainer` | `#D8E3FF` |
+| `error` / `onError` | `#FFB4AB` / `#5C0A0A` |
+| `success` / `warning` / `info` | `#7DD99A` / `#FFC46B` / `#8CC8FF` |
+| `glassFill` / `glassBorder` | `rgba(255,255,255,0.08)` / `rgba(255,255,255,0.14)` |
+| `glassFillStrong` / `glassBorderStrong` | `rgba(255,255,255,0.12)` / `rgba(255,255,255,0.20)` |
+| `glassText` / `glassTextMuted` | `#F2F4F7` / `#C6CCD8` |
+| `scrim` | `rgba(0,0,0,0.60)` |
+| `snackbarBackground` / `snackbarText` | `#272C36` / `#F2F4F7` |
+| `navigationSurface` / `navigationIndicator` | `#12151B` / `#2B4E8F` |
+| `selection` | `#1F3A6B` |
+
+Grade identity in Dark Mode uses **Option B (approved)**: the canvas is always
+the neutral Dark canvas, and grade identity is carried by a grade accent on the
+header band, grade chip, active navigation indicator and grade badge.
+
+| Grade | Dark accent | Accent on `#0B0D12` | Grade text on `surfaceContainer` |
+| --- | --- | --- | --- |
+| Grade One (yellow) | `#F5B544` | 11.58:1 | `#FBEAD0` |
+| Grade Two (blue) | `#7FA9FF` | 9.02:1 | `#F2F4F7` |
+| Grade Three (green) | `#6FD99A` | 12.07:1 | `#EAF7EF` |
+| Grade Four (red) | `#FF8A80` | 9.20:1 | `#FBEDEC` |
+
+Measured Dark contrast (WCAG 2.1 relative luminance), all passing:
+
+`textPrimary` on `canvas` 17.64:1 · on `surface` 16.12:1 · on
+`surfaceContainer` 15.32:1 · `textSecondary` on `canvas` 8.72:1 ·
+`primary` on `canvas` 8.35:1 · `onPrimary` on `primary` 7.88:1 ·
+`error` on `canvas` 11.45:1 · `success` on `surface` 10.37:1 ·
+`inputBorder` on `inputFill` 3.37:1 · `snackbarText` on `snackbarBackground`
+12.71:1.
+
+## 2.3 Component state contract
+
+Dimensions, radii, typography, spacing and animations are identical in both
+appearances; only colour roles change.
+
+| Component | Light | Dark |
+| --- | --- | --- |
+| Primary solid button | fill `#1D4ED8`, text `#FFFFFF` | fill `#7FA9FF`, text `#08142B` |
+| Primary solid disabled | `#1D4ED8` @ 40%, text `#FFFFFF` @ 80% | `#7FA9FF` @ 30%, text `#08142B` @ 60% |
+| Glass button | white 20% + white 30% border, text `#FFFFFF` | white 12% + white 20% border, text `#F2F4F7` |
+| Outlined / ghost button | `#1A73E8` text + border | `#7FA9FF` text + border |
+| Input — normal | fill `#FFFFFF`, border `#D0D0D0` 1px | fill `#15181F`, border `#636C80` 1px |
+| Input — focused | `#1D4ED8` 1.5px | `#7FA9FF` 1.5px |
+| Input — error | `#E53935` border + text | `#FFB4AB` border + text |
+| Input — disabled | fill `#F3F4F6`, border `#E0E4EA`, text `#9A9A9A` | fill `#12151B`, border `#2A2F3A`, text `#6C7382` |
+| Input — read-only | same as enabled, no focus ring | same |
+| Card | fill `#F3F4F6` | fill `#191D25`, border `#2A2F3A` |
+| Tab selected / indicative | `#1D4ED8` | `#7FA9FF` |
+| App bar | canvas background, `#111827` foreground | `#0B0D12` background, `#F2F4F7` foreground |
+| Navigation bar | `#FFFFFF` surface, `#1D4ED8` selected | `#12151B` surface, `#7FA9FF` selected, `#2B4E8F` indicator |
+| Dialog | `#FFFFFF` surface | `#20242D` surface, scrim 60% black |
+| Bottom sheet | `#FFFFFF` surface | `#191D25` surface, handle `#3A4150` |
+| Snack bar | inverse surface | `#272C36` background, `#F2F4F7` text, `#7FA9FF` action |
+| Empty / error / loading | `#6B7280` / `#E53935` / `#1D4ED8` | `#8E97A6` / `#FFB4AB` / `#7FA9FF` |
+
+Intentionally fixed surfaces (never themed): video player surface stays
+`#000000`; PDF document surface stays as the renderer draws it; intentional
+pastel note-editor surfaces are preserved; onboarding raster illustrations are
+placed inside a neutral Dark art container rather than recoloured.
 
 ---
 

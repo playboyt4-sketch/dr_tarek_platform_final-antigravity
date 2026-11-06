@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dr_tarek_platform/core/di/auth_providers.dart';
 import 'package:dr_tarek_platform/core/errors/failure.dart';
@@ -145,6 +146,7 @@ Future<void> _pumpLogin(
   _FakePasswordResetRepository? passwordResetRepository,
   Size size = const Size(393, 852),
 }) async {
+  SharedPreferences.setMockInitialValues(<String, Object>{});
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -197,7 +199,7 @@ Future<void> _enterCredentials(
 }
 
 Future<void> _tapLogin(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(FilledButton, 'Login'));
+  await tester.tap(find.widgetWithText(ElevatedButton, 'Login'));
   await tester.pump();
 }
 
@@ -216,7 +218,7 @@ void main() {
       expect(find.text('Welcome back'), findsOneWidget);
       expect(find.byType(TextFormField), findsNWidgets(2));
       expect(find.text('Forget password?'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Login'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Login'), findsOneWidget);
       expect(find.byType(BackButton), findsNothing);
     });
 
@@ -394,7 +396,7 @@ void main() {
       // Loading state: repeated taps are ignored (button shows progress and
       // no longer carries the Login label while in flight).
       expect(find.byType(CircularProgressIndicator), findsWidgets);
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(find.byType(CircularProgressIndicator));
       await tester.pump();
       expect(repo.loginCalls, 1);
 
@@ -402,7 +404,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Button/input state restored after completion.
-      expect(find.widgetWithText(FilledButton, 'Login'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Login'), findsOneWidget);
       expect(repo.loginCalls, 1);
     });
   });
@@ -423,7 +425,9 @@ void main() {
       );
       expect(editableOf(passwordField).obscureText, isTrue);
 
-      await tester.tap(find.byIcon(Icons.visibility_outlined));
+      await tester.tap(
+        find.byKey(const Key('passwordVisibilityToggle')),
+      );
       await tester.pump();
 
       expect(editableOf(passwordField).obscureText, isFalse);
@@ -432,7 +436,7 @@ void main() {
 
   group('Forgot password bottom sheet (V1 flow)', () {
     Future<void> openSheet(WidgetTester tester) async {
-      await tester.tap(find.widgetWithText(TextButton, 'Forget password?'));
+      await tester.tap(find.text('Forget password?'));
       await tester.pumpAndSettle();
     }
 
@@ -582,7 +586,7 @@ void main() {
       final source = File(widgetFiles.first).readAsStringSync();
       expect(source.contains('print('), isFalse);
       expect(source.contains('debugPrint('), isFalse);
-      expect(source.contains('log('), isFalse);
+      expect(RegExp(r'\blog\s*\(').hasMatch(source), isFalse);
     });
   });
 }

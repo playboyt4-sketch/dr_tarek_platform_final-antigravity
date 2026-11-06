@@ -19,7 +19,7 @@ class CalendarDateOverlay extends StatefulWidget {
     return showDialog<DateTime>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (context) => CalendarDateOverlay(initialDate: initialDate),
     );
   }
@@ -257,7 +257,7 @@ class TimePickerWheelsOverlay extends StatefulWidget {
     return showDialog<TimeOfDay>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (context) => TimePickerWheelsOverlay(initialTime: initialTime),
     );
   }
@@ -322,9 +322,9 @@ class _TimePickerWheelsOverlayState extends State<TimePickerWheelsOverlay> {
               height: 250,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.75),
+                color: Colors.white.withValues(alpha: 0.75),
                 borderRadius: BorderRadius.circular(32),
-                border: Border.all(color: Colors.white.withOpacity(0.6), width: 1.5),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1.5),
                 boxShadow: const [
                   BoxShadow(
                     color: Color(0x1F000000),

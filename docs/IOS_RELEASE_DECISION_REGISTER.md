@@ -11,7 +11,7 @@ Conventions: only Approved documents authorize implementation. Draft stays Draft
 | D-NAME | Store-facing name | `Tarek El Araby Platform` | same + `13_Releases.md` finals table | Decided |
 | D-SKU | SKU / category | `TAREK-PLATFORM-IOS-001` / Education | same | Decided |
 | D-VER | Versioning | keep `1.0.0+1` temporarily; final policy open | same | Temporary |
-| D-STG | TestFlight backend | Isolated Firebase Staging | same + staging plan | Project + apps + selector IMPLEMENTED 2026-10-14; service separation pending |
+| D-STG | TestFlight backend | Isolated Firebase Staging | same + staging plan | ✅ 2026-10-15: 69/69 functions + schedules + cleanup live; Auth providers pending |
 | D-ROLE | Role migration | `teacher`→`doctor` atomic before iOS | ADR-005 + `FINAL_DECISIONS.md` §26 | Decided, code-done, prod migration pending ops approval |
 | D-SHOT | iOS screenshot promise | Detection-only | `14_…md` note + identity plan | Decided, UI-copy sweep pending |
 

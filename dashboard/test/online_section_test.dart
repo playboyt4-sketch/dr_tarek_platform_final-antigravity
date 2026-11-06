@@ -223,10 +223,28 @@ Future<void> _pumpScreen(
   await tester.pumpAndSettle();
 }
 
-Future<void> _scrollFormDown(WidgetTester tester) async {
-  final Finder scrollables = find.byType(SingleChildScrollView);
-  expect(scrollables, findsWidgets);
-  await tester.drag(scrollables.first, const Offset(0, -500));
+Future<void> _openAddLecture(WidgetTester tester) async {
+  final Finder button = find.text('Add Lecture').last;
+  await tester.ensureVisible(button);
+  await tester.pumpAndSettle();
+  await tester.tap(button);
+  await tester.pumpAndSettle();
+  expect(find.text('Quick Upload'), findsOneWidget);
+}
+
+Future<void> _stageVideoResource(WidgetTester tester) async {
+  final Finder addResource = find.text('+ Add Resource');
+  await tester.ensureVisible(addResource);
+  await tester.pumpAndSettle();
+  await tester.tap(addResource);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Video'));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byType(TextField).last,
+    '11111111-1111-4111-8111-111111111111',
+  );
+  await tester.tap(find.text('Save').last);
   await tester.pumpAndSettle();
 }
 
@@ -241,13 +259,13 @@ Future<void> _saveLectureFromTab(
     await tester.tap(find.text(tabLabel));
     await tester.pumpAndSettle();
   }
-  await tester.tap(find.text('Add Lecture'));
-  await tester.pumpAndSettle();
-  expect(find.text('Add New Lecture'), findsOneWidget);
+  await _openAddLecture(tester);
   await tester.enterText(find.byType(TextField).at(0), name);
   await tester.pumpAndSettle();
-  await _scrollFormDown(tester);
-  await tester.tap(find.text('Save'));
+  final Finder save = find.text('Save').last;
+  await tester.ensureVisible(save);
+  await tester.pumpAndSettle();
+  await tester.tap(save);
   await tester.pumpAndSettle();
 }
 
@@ -347,9 +365,7 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
-      expect(find.text('Add New Lecture'), findsOneWidget);
+      await _openAddLecture(tester);
       expect(find.text('Grade'), findsNothing);
       expect(find.text('Subject'), findsNothing);
       expect(find.text('Section'), findsNothing);
@@ -365,8 +381,7 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
+      await _openAddLecture(tester);
 
       await tester.tap(find.text('+ Add Resource'));
       await tester.pumpAndSettle();
@@ -376,16 +391,25 @@ void main() {
       final Finder fields = find.byType(TextField);
       await tester.enterText(
           fields.at(fieldCount - 3), 'Session Recording');
-      await tester.enterText(fields.at(fieldCount - 2), '11111111-1111-4111-8111-111111111111');
-      await tester.tap(find.byKey(const Key('resourceDialogSave')));
+      await tester.enterText(
+        fields.at(fieldCount - 1),
+        '11111111-1111-4111-8111-111111111111',
+      );
+      final Finder resourceSave =
+          find.byKey(const Key('resourceDialogSave'));
+      await tester.ensureVisible(resourceSave);
       await tester.pumpAndSettle();
-      expect(find.textContaining('Video - Session Recording'), findsOneWidget);
+      await tester.tap(resourceSave);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Session Recording'), findsOneWidget);
 
       await tester.enterText(
           find.byType(TextField).at(0), 'Online Session 01');
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      final Finder save = find.text('Save').last;
+      await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
+      await tester.tap(save);
       await tester.pumpAndSettle();
 
       final Map<String, Object?> payload = fake.created.single;
@@ -405,9 +429,8 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
-      expect(find.text('Add New Lecture'), findsOneWidget);
+      await _openAddLecture(tester);
+      expect(find.text('Quick Upload'), findsOneWidget);
       expect(
           find.textContaining(RegExp('meet', caseSensitive: false)),
           findsNothing);
@@ -449,20 +472,18 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
+      await _openAddLecture(tester);
       await tester.enterText(
           find.byType(TextField).at(0), 'Online Session 01');
       await tester.pumpAndSettle();
-      final Finder guestSwitch =
-          find.byType(Switch).hitTestable();
-      await _scrollFormDown(tester);
-      await tester.tap(guestSwitch);
+      final Finder minutes = find.byType(TextField).at(2);
+      await tester.ensureVisible(minutes);
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.enterText(find.byType(TextField).at(2), '7');
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      await tester.enterText(minutes, '7');
+      final Finder save = find.text('Save').last;
+      await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
+      await tester.tap(save);
       await tester.pumpAndSettle();
       final Map<String, Object?> payload = fake.created.single;
       expect(payload['tab'], SubjectContentTab.online);
@@ -476,13 +497,15 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
+      await _openAddLecture(tester);
       await tester.enterText(
           find.byType(TextField).at(0), 'Online Session 01');
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Publish Now'));
+      await _stageVideoResource(tester);
+      final Finder publish = find.text('Publish Now');
+      await tester.ensureVisible(publish);
+      await tester.pumpAndSettle();
+      await tester.tap(publish);
       await tester.pumpAndSettle();
       expect(fake.created.single['publishNow'], isTrue);
       expect(fake.created.single['tab'], SubjectContentTab.online);
@@ -491,13 +514,14 @@ void main() {
       await _pumpScreen(tester, fake);
       await tester.tap(find.text('Online'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Add Lecture'));
-      await tester.pumpAndSettle();
+      await _openAddLecture(tester);
       await tester.enterText(
           find.byType(TextField).at(0), 'Online Session 02');
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save Draft'));
+      final Finder saveDraft = find.text('Save Draft');
+      await tester.ensureVisible(saveDraft);
+      await tester.pumpAndSettle();
+      await tester.tap(saveDraft);
       await tester.pumpAndSettle();
       final Map<String, Object?> draft = fake.created.single;
       expect(draft['publishNow'], isFalse);

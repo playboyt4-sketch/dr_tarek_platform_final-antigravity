@@ -123,7 +123,7 @@ class AddLectureOverlay extends ConsumerStatefulWidget {
     return showDialog<void>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (BuildContext context) => AddLectureOverlay(
         subjectId: subjectId,
         gradeKey: gradeKey,
@@ -751,7 +751,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
   Future<void> _handlePickDate() async {
     final picked = await showDialog<DateTime>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (ctx) => const _CustomCalendarDialog(),
     );
     if (picked != null && mounted) {
@@ -766,7 +766,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
   Future<void> _handlePickTime() async {
     final picked = await showDialog<TimeOfDay>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (ctx) => _CustomTimePickerWheelsDialog(
         initial: _publishTime,
       ),
@@ -811,7 +811,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
   Future<void> _handleAddResource() async {
     final selectedType = await showDialog<String>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (ctx) => const _SelectResourceDialog(),
     );
 
@@ -858,7 +858,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     if (type == 'Video') {
       return showDialog<Map<String, Object?>>(
         context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
+        barrierColor: Colors.black.withValues(alpha: 0.25),
         builder: (ctx) => _AddVideoDialog(
           initialName: initial?.title ?? '',
           initialOrder: orderHint,
@@ -868,7 +868,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     } else if (type == 'PDF') {
       return showDialog<Map<String, Object?>>(
         context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
+        barrierColor: Colors.black.withValues(alpha: 0.25),
         builder: (ctx) => _AddPdfDialog(
           initialName: initial?.title ?? '',
           initialOrder: orderHint,
@@ -878,7 +878,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     } else if (type == 'Attachment') {
       return showDialog<Map<String, Object?>>(
         context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
+        barrierColor: Colors.black.withValues(alpha: 0.25),
         builder: (ctx) => _AddAttachmentDialog(
           initialName: initial?.title ?? '',
           initialOrder: orderHint,
@@ -888,7 +888,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     } else if (type == 'External Link') {
       return showDialog<Map<String, Object?>>(
         context: context,
-        barrierColor: Colors.black.withOpacity(0.25),
+        barrierColor: Colors.black.withValues(alpha: 0.25),
         builder: (ctx) => _AddExternalLinkDialog(
           initialName: initial?.title ?? '',
           initialOrder: orderHint,
@@ -1038,9 +1038,10 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
     final Map<String, bool>? overrides =
         await showDialog<Map<String, bool>>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (ctx) => _ConfigureAccessDialog(
         subjectId: _subjectId,
+        lectureId: widget.lectureId,
         initialOverrides: _accessByStudent,
       ),
     );
@@ -1493,36 +1494,39 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _buildDropdownRow(
-                        label: 'Grade',
-                        value: selectedGrade,
-                        hint: 'Select Grade',
-                        options: gradeSubjects.keys.toList(),
-                        kind: _DropdownKind.grade,
-                        enabled: !_isContextLocked,
-                      ),
-                      const SizedBox(height: 12),
-                      _buildDropdownRow(
-                        label: 'Subject',
-                        value: selectedSubject,
-                        hint: 'Select Subject',
-                        options: availableSubjects,
-                        kind: _DropdownKind.subject,
-                        enabled: !_isContextLocked,
-                      ),
-                      const SizedBox(height: 12),
-                      _buildDropdownRow(
-                        label: 'Section',
-                        value: selectedSection,
-                        hint: 'Select Section',
-                        options: sectionOptions,
-                        kind: _DropdownKind.section,
-                        // Edit mode never moves a lecture across
-                        // grade/subject/section: the stored section is
-                        // shown locked just like Grade/Subject.
-                        enabled: !_isEditMode,
-                      ),
-                      const SizedBox(height: 16),
+                      if (widget.tab != SubjectContentTab.online) ...[
+                        _buildDropdownRow(
+                          label: 'Grade',
+                          value: selectedGrade,
+                          hint: 'Select Grade',
+                          options: gradeSubjects.keys.toList(),
+                          kind: _DropdownKind.grade,
+                          enabled: !_isContextLocked,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildDropdownRow(
+                          label: 'Subject',
+                          value: selectedSubject,
+                          hint: 'Select Subject',
+                          options: availableSubjects,
+                          kind: _DropdownKind.subject,
+                          enabled: !_isContextLocked,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildDropdownRow(
+                          label: 'Section',
+                          value: selectedSection,
+                          hint: 'Select Section',
+                          options: sectionOptions,
+                          kind: _DropdownKind.section,
+                          // Edit mode never moves a lecture across
+                          // grade/subject/section: the stored section is
+                          // shown locked just like Grade/Subject.
+                          enabled: !_isEditMode,
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      const SizedBox(height: 4),
                       // Compact Name + Display order row.
                       _buildNameOrderRow(),
                       const SizedBox(height: 20),
@@ -1732,7 +1736,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                           const SizedBox(width: 12),
                           CupertinoSwitch(
                             value: _guestAccess,
-                            activeColor:
+                            activeTrackColor:
                                 const Color(0xFF34C759),
                             onChanged: _saving
                                 ? null
@@ -2214,7 +2218,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
                 children: [
                   Expanded(
                     child: Text(
-                      empty ? hint : value!,
+                      empty ? hint : value,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -3634,6 +3638,7 @@ Widget _buildResourceModal({
               top: 229,
               left: 258,
               child: InkWell(
+                key: const Key('resourceDialogSave'),
                 onTap: onSave,
                 borderRadius: BorderRadius.circular(9999),
                 child: Container(
@@ -4536,7 +4541,7 @@ class _ConfigureAccessDialogState extends ConsumerState<_ConfigureAccessDialog> 
     return ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 8),
                           itemCount: filtered.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                          separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
                           itemBuilder: (ctx, i) {
                             final student = filtered[i];
                             final bool hasAccess = resolveLectureAccess(
@@ -4623,6 +4628,9 @@ class _ConfigureAccessDialogState extends ConsumerState<_ConfigureAccessDialog> 
                                             });
                                           },
                                     child: Container(
+                                      key: Key(
+                                        'lectureAccessToggle-${student.id}',
+                                      ),
                                       width: 48,
                                       height: 24,
                                       padding: const EdgeInsets.all(2),

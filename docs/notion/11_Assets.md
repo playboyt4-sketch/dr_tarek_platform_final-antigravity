@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.1
+Version: 1.2
 Status: Draft — pending Teacher (Platform Owner) review before "Approved"
 
 ## Changelog
 
+- **1.2** (2026-11-01): §5.1 Dark Mode token placeholder removed in favour of a reference to the approved Dark token table in 03 UI & UX §2.2 (ADR-009). Master Architecture §9.1 forbids duplicating token values across documents. No asset was changed.
 - **1.1** (2026-08-25): Section 4.2 updated for the ratified dual storage-provider architecture (FINAL_DECISIONS §15): per-resource `storage_provider` ("bunny" | "firebase"), `system_settings.default_storage_provider` default, image attachment types (jpg/jpeg/png) added as an approved attachment option. Videos remain Bunny-only.
 
 ---
@@ -246,9 +247,8 @@ class AppColors {
   static const Color gradeFour = Color(0xFFEA4335);
 
   // Dark Mode
-  static const Color darkBackground = Color(0xFF121212);
-  static const Color darkSurface = Color(0xFF1E1E1E);
-  static const Color darkOnBackground = Color(0xFFFFFFFF);
+  // Token values live in 03 UI & UX §2.2 (approved under ADR-009).
+  // Do not restate them here — Master Architecture §9.1 forbids duplication.
 }
 ```
 

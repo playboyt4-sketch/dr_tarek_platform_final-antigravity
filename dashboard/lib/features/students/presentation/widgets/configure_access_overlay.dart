@@ -36,7 +36,7 @@ class ConfigureAccessOverlay extends StatefulWidget {
     return showDialog<List<String>>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (context) => ConfigureAccessOverlay(
         gradeKey: gradeKey,
         initialAllowedStudentIds: initialAllowedStudentIds,
@@ -207,7 +207,7 @@ class _ConfigureAccessOverlayState extends State<ConfigureAccessOverlay> {
                 child: ListView.separated(
                   padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 8),
                   itemCount: filtered.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                  separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
                   itemBuilder: (context, index) {
                     final student = filtered[index];
                     return Padding(

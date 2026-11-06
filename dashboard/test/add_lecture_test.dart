@@ -1,12 +1,16 @@
 import 'dart:typed_data';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:drtarek_dashboard/features/applications/presentation/providers/application_decision_provider.dart'
     show DecisionFailure;
+import 'package:drtarek_dashboard/features/students/domain/entities/lecture_access.dart';
+import 'package:drtarek_dashboard/features/students/domain/repositories/lecture_access_repository.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_students_provider.dart';
+import 'package:drtarek_dashboard/features/students/presentation/providers/lecture_access_providers.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/subject_details_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/screens/subject_details_screen.dart';
 import 'package:drtarek_dashboard/features/students/presentation/widgets/add_lecture_overlay.dart';
@@ -143,10 +147,43 @@ const GradeStudentsData _roster = GradeStudentsData(
   isFallback: false,
 );
 
+const List<LectureAccessStudent> _lectureAccessRoster =
+    <LectureAccessStudent>[
+  LectureAccessStudent(id: 's-ahmed', name: 'Ahmed', plan: 'FREE'),
+  LectureAccessStudent(id: 's-mohamed', name: 'Mohamed', plan: 'PRO'),
+];
+
+class FakeLectureAccessRepository implements LectureAccessRepository {
+  String? savedLectureId;
+  Map<String, bool>? savedAccess;
+  List<LectureAccessGrant> grants = const <LectureAccessGrant>[];
+
+  @override
+  Future<List<LectureAccessStudent>> getSubjectRoster(String subjectId) async =>
+      _lectureAccessRoster;
+
+  @override
+  Future<List<LectureAccessGrant>> getLectureGrants(String lectureId) async =>
+      grants.where((LectureAccessGrant grant) =>
+          grant.lectureId == lectureId).toList();
+
+  @override
+  Future<void> saveLectureGrants({
+    required String lectureId,
+    required Map<String, bool> allowedByStudent,
+    required String actorId,
+  }) async {
+    savedLectureId = lectureId;
+    savedAccess = Map<String, bool>.from(allowedByStudent);
+  }
+}
+
 Future<void> _pumpForm(
   WidgetTester tester,
-  FakeLectureController fake,
-) async {
+  FakeLectureController fake, {
+  String? lectureId,
+  FakeLectureAccessRepository? accessRepository,
+}) async {
   tester.view.physicalSize = const Size(1280, 800);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -156,6 +193,10 @@ Future<void> _pumpForm(
         subjectDetailsControllerProvider.overrideWithValue(fake),
         gradeStudentsProvider('grade_one')
             .overrideWith((ref) => Future.value(_roster)),
+        subjectLectureRosterProvider('sub-1')
+            .overrideWith((ref) => Future.value(_lectureAccessRoster)),
+        if (accessRepository != null)
+          lectureAccessRepositoryProvider.overrideWithValue(accessRepository),
       ],
       child: MaterialApp(
         home: Scaffold(
@@ -168,6 +209,7 @@ Future<void> _pumpForm(
                 tab: SubjectContentTab.lectures,
                 initialOrder: 4,
                 gradeColor: const Color(0xFFF59E0B),
+                lectureId: lectureId,
               ),
               child: const Text('Open'),
             ),
@@ -186,7 +228,14 @@ Future<void> _pumpForm(
 Future<void> _scrollFormDown(WidgetTester tester) async {
   final Finder scrollables = find.byType(SingleChildScrollView);
   expect(scrollables, findsWidgets);
-  await tester.drag(scrollables.first, const Offset(0, -500));
+  final Finder scrollable = find
+      .descendant(
+        of: scrollables.first,
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  final ScrollableState state = tester.state<ScrollableState>(scrollable);
+  state.position.jumpTo(state.position.maxScrollExtent);
   await tester.pumpAndSettle();
 }
 
@@ -215,6 +264,11 @@ Future<void> _stageVideoResource(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.text('Video'));
   await tester.pumpAndSettle();
+  final Finder videoIdField = find.byType(TextField).last;
+  await tester.enterText(
+    videoIdField,
+    '11111111-1111-4111-8111-111111111111',
+  );
   // Two 'Save' texts exist while the video dialog is open (form + dialog);
   // the dialog lives in the overlay route above, so its Save comes last.
   await tester.tap(find.text('Save').last);
@@ -226,8 +280,10 @@ void main() {
     testWidgets('2. empty name is rejected', (WidgetTester tester) async {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
+      await tester.pumpAndSettle();
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
       expect(find.text('Enter the lecture name.'), findsOneWidget);
       expect(fake.created, isEmpty);
@@ -398,8 +454,10 @@ void main() {
       await _fillName(tester, 'Algebra');
       await _fillOrder(tester, '1');
       await _stageVideoResource(tester);
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Publish Now'));
+      final Finder publishButton = find.text('Publish Now');
+      await tester.ensureVisible(publishButton);
+      await tester.pumpAndSettle();
+      await tester.tap(publishButton);
       await tester.pumpAndSettle();
       expect(fake.created.single['publishNow'], isTrue);
       expect(find.text('Add New Lecture'), findsNothing);
@@ -411,8 +469,10 @@ void main() {
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
       await _fillOrder(tester, '1');
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save Draft'));
+      final Finder draftButton = find.text('Save Draft');
+      await tester.ensureVisible(draftButton);
+      await tester.pumpAndSettle();
+      await tester.tap(draftButton);
       await tester.pumpAndSettle();
       final Map<String, Object?> payload = fake.created.single;
       expect(payload['publishNow'], isFalse);
@@ -436,8 +496,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Save').last);
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
+      await tester.pumpAndSettle();
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
       final Map<String, Object?> payload = fake.created.single;
       expect(payload['publishNow'], isFalse);
@@ -454,9 +516,14 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       final Finder minutesFinder = find.byType(TextField).at(2);
+      expect(tester.widget<TextField>(minutesFinder).enabled, isTrue);
+      final Finder guestToggle = find.byType(CupertinoSwitch);
+      await tester.ensureVisible(guestToggle);
+      await tester.pumpAndSettle();
+      await tester.tap(guestToggle);
+      await tester.pumpAndSettle();
       expect(tester.widget<TextField>(minutesFinder).enabled, isFalse);
-      await _scrollFormDown(tester);
-      await tester.tap(find.byType(Switch));
+      await tester.tap(guestToggle);
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(minutesFinder).enabled, isTrue);
     });
@@ -466,13 +533,14 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
-      await _scrollFormDown(tester);
-      await tester.tap(find.byType(Switch));
+      final Finder minutesField = find.byType(TextField).at(2);
+      await tester.ensureVisible(minutesField);
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.enterText(find.byType(TextField).at(2), '0');
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      await tester.enterText(minutesField, '0');
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
+      await tester.pumpAndSettle();
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
       expect(
           find.text('Available minutes must be greater than zero.'),
@@ -485,13 +553,14 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
-      await _scrollFormDown(tester);
-      await tester.tap(find.byType(Switch));
+      final Finder minutesField = find.byType(TextField).at(2);
+      await tester.ensureVisible(minutesField);
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.enterText(find.byType(TextField).at(2), '7');
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      await tester.enterText(minutesField, '7');
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
+      await tester.pumpAndSettle();
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
       final Map<String, Object?> payload = fake.created.single;
       expect(payload['guestEnabled'], isTrue);
@@ -502,7 +571,10 @@ void main() {
         (WidgetTester tester) async {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
-      await tester.tap(find.text('+ Add Resource'));
+      final Finder addResource = find.text('+ Add Resource');
+      await tester.ensureVisible(addResource);
+      await tester.pumpAndSettle();
+      await tester.tap(addResource);
       await tester.pumpAndSettle();
       expect(find.text('Add New Resource'), findsOneWidget);
       expect(find.text('Video'), findsOneWidget);
@@ -522,10 +594,17 @@ void main() {
           find.byType(TextField);
       await tester.enterText(
           fields.at(fieldCount - 3), 'Part 01');
-      await tester.enterText(fields.at(fieldCount - 2), '22222222-2222-4222-8222-222222222222');
-      await tester.tap(find.byKey(const Key('resourceDialogSave')));
+      await tester.enterText(
+        fields.at(fieldCount - 1),
+        '22222222-2222-4222-8222-222222222222',
+      );
+      final Finder resourceSave =
+          find.byKey(const Key('resourceDialogSave'));
+      await tester.ensureVisible(resourceSave);
       await tester.pumpAndSettle();
-      expect(find.textContaining('Video - Part 01'), findsOneWidget);
+      await tester.tap(resourceSave);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Part 01'), findsOneWidget);
     });
 
     testWidgets('16. Configure Access toggles persist per student',
@@ -533,23 +612,67 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Configure Access'));
+      final Finder configureAccess = find.text('Configure Access');
+      await tester.ensureVisible(configureAccess);
+      await tester.pumpAndSettle();
+      await tester.tap(configureAccess);
       await tester.pumpAndSettle();
       expect(find.text('Ahmed'), findsOneWidget);
       expect(find.text('Mohamed'), findsOneWidget);
       // Deny Mohamed, save, and inspect the staged access map.
-      final Finder switches = find.byType(Switch);
-      await _scrollFormDown(tester);
-      await tester.tap(switches.at(2));
+      await tester.tap(
+        find.byKey(const Key('lectureAccessToggle-s-mohamed')),
+      );
       await tester.pumpAndSettle();
-      await _scrollFormDown(tester);
-      await tester.tap(find.text('Save'));
+      await tester.tap(find.text('Save').last);
+      await tester.pumpAndSettle();
+      final Finder formSave = find.text('Save').last;
+      await tester.ensureVisible(formSave);
+      await tester.pumpAndSettle();
+      await tester.tap(formSave);
       await tester.pumpAndSettle();
       final Map<String, bool> access = fake
           .created.single['accessByStudent'] as Map<String, bool>;
       expect(access['s-ahmed'], isTrue);
       expect(access['s-mohamed'], isFalse);
+    });
+
+    testWidgets('Configure Access edits persist to the existing lecture',
+        (WidgetTester tester) async {
+      final FakeLectureController fake = FakeLectureController();
+      final FakeLectureAccessRepository accessRepository =
+          FakeLectureAccessRepository();
+      accessRepository.grants = const <LectureAccessGrant>[
+        LectureAccessGrant(
+          lectureId: 'lec-existing',
+          studentId: 's-mohamed',
+          allowed: false,
+        ),
+      ];
+      await _pumpForm(
+        tester,
+        fake,
+        lectureId: 'lec-existing',
+        accessRepository: accessRepository,
+      );
+      final Finder configureAccess = find.text('Configure Access');
+      await tester.ensureVisible(configureAccess);
+      await tester.pumpAndSettle();
+      await tester.tap(configureAccess);
+      await tester.pumpAndSettle();
+      expect(find.text('Ahmed'), findsOneWidget);
+      expect(find.text('Mohamed'), findsOneWidget);
+
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
+      await tester.pumpAndSettle();
+      await tester.tap(saveButton);
+      await tester.pumpAndSettle();
+
+      expect(accessRepository.savedLectureId, 'lec-existing');
+      expect(accessRepository.savedAccess?['s-ahmed'], isTrue);
+      expect(accessRepository.savedAccess?['s-mohamed'], isFalse);
+      expect(find.text('Configure Access'), findsOneWidget);
     });
 
     testWidgets('save failure keeps the form open with an error',

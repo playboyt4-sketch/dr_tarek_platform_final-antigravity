@@ -49,16 +49,15 @@ Missing prerequisites (deploy STOPPED before any mutation):
 4. **Xcode wiring**: reference `GoogleService-Info-Staging.plist` + per-configuration selection (exact UI steps for Mac — no hand-edited pbxproj from here).
 5. **Validation** (before any TestFlight upload): boot staging IPA → confirm `PROJECT_ID=dr-tarek-staging`; mutate staging; assert production unchanged (read-only prod console); staging push + Crashlytics build UUID.
 
-## 5. Owner actions — status 2026-10-14
+## 5. Owner actions — status 2026-10-15: FUNCTIONS DEPLOYED 69/69 ✅
 
-- ✅ DONE: project `dr-tarek-staging` created; staging iOS/Android/Web apps registered; staging configs retrieved; Firestore DB created; rules + 36 indexes deployed; client ENV selector + tests green.
-- Staging Functions NOT YET DEPLOYED (plan only — no deploy in this task). Preflight 2026-10-14:
-  - Build `tsc` clean; unit suites green (`assessment_o6b`, `migrate_teacher_to_doctor` 11/11, `password_reset_target_role` 9/9).
-  - Secret bindings exist ONLY on 6 Bunny functions (`generateBunnySignedUrl`, `getLectureResources`, `getSectionDisplayMedia`, `uploadBunnyResource`, `deleteBunnyResource`, `generateBunnyResourceUrl`); all other ~77 functions are secret-free and need only Firestore/Auth. All Bunny accesses are lazy inside handlers (`getEnv` throws `failed-precondition` per-invocation when unset — fail-closed); module init has no Bunny dependency.
-  - No-silent-prod-use verified: `.env.dr-tarek-staging` (staging library 780700, empty Bunny secrets, `APP_CHECK_ENFORCEMENT=false`) overrides prod `.env` for `--project dr-tarek-staging` deploys; client uses fail-closed `ENV` selector; all commands use explicit `--project`.
-  - Minimal deploy scope (prepared, NOT executed): `firebase deploy --only functions:<77 non-Bunny names> --project dr-tarek-staging`, explicitly EXCLUDING the 6 Bunny-bound functions. Prerequisite: empty Secret Manager secrets must exist for the 6 bound names OR deploy rejects binding validation — creating even empty secrets is a cloud mutation held for the deploy approval. Full-function deploy additionally requires the 3 staging Bunny credentials (token key, playback template, test API key) + a test video in library 780700.
+- ✅ DONE: project, apps, Firestore DB, rules + 36 indexes, client ENV selector, billing linked, **all 69 non-Bunny functions deployed to `dr-tarek-staging`** (`us-central1`, nodejs24; verified by listing: 69 present, 0 missing, 0 extras, 6 Bunny absent).
+- ✅ Cleanup policy applied as inspected (`gcf-artifacts`, `firebase-functions-cleanup`, DELETE >86400s).
+- ✅ Schedules live: `processNotificationQueue` 1min, `cleanupInvalidDeviceTokens` 24h, `autoPublishDueLectures` 5min; recent logs show no ERROR/CRITICAL.
+- ✅ Live smoke (synthetic, no users needed): unauthenticated `getAssessmentQuestions` → 401 clean; `submitPasswordResetRequest` unknown phone → uniform `{"submitted":true}` (no write).
+- ✅ Prod untouched (incl. `getAssessmentQuestions` absent from prod).
+- DEPLOY NOTES: firebase-tools 15.24.0 honors only the FIRST name of a comma `--only` list (proven 4×) → deployed via single-name batches; discovery needed `FUNCTIONS_DISCOVERY_TIMEOUT=180` on this host; one transient Eventarc failure retried green.
 - OPEN:
-  1. Approve staging functions deploy (non-Bunny scope above) + empty-secret creation for bound names.
-  2. Billing posture confirmation (Spark vs Blaze — project already linked to Blaze account).
-  3. Bunny test credentials (token key, playback template, library API key for 780700) + test video upload approval.
-  4. Staging APNs key + App Check provider + synthetic fixtures + device proof.
+  1. **Auth providers** (email + anonymous) must be enabled in staging console — required for ANY test-user flow (O6-B live test included). CLI credentials insufficient (403); no workaround without console.
+  2. Bunny test credentials + test video in 780700 (6 media functions excluded by design).
+  3. Staging APNs key + App Check provider + synthetic fixtures + device proof + Mac IPA/TestFlight.

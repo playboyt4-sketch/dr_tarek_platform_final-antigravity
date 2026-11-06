@@ -13,6 +13,7 @@ import 'package:drtarek_dashboard/features/authentication/presentation/providers
 import 'package:drtarek_dashboard/features/authentication/presentation/screens/dashboard_login_screen.dart';
 import 'package:drtarek_dashboard/features/home/presentation/providers/home_stats_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_students_provider.dart';
+import 'package:riverpod/src/framework.dart';
 
 /// ADR-005 `/doctor` + `/admin` routing.
 ///
@@ -70,7 +71,7 @@ const HomeAnalytics _zeroAnalytics = HomeAnalytics(
 ///
 /// [session] drives the entry decision. Shell data providers are stubbed so
 /// admitted sessions can build the real shell without Firebase.
-_routingOverrides({
+List<Override> _routingOverrides({
   required AsyncValue<DashboardSession?> session,
   AuthRepository? authRepository,
 }) {

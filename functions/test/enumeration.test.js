@@ -14,9 +14,9 @@
  *  - submitPasswordResetRequest returns uniform {submitted:true}.
  *  - verifyStaffPassword unknown vs wrong stays identical; ambiguous-name
  *    behavior is documented unchanged (failed-precondition).
- *  - registerNewStudent duplicate-phone behavior is documented unchanged
- *    (already-exists for any account state) — product decision pending on
- *    whether to silence it; see task report.
+ *  - registerNewStudent duplicate-phone behavior is already-exists for every
+ *    LIVE account state, while a soft-deleted (deactivated) account releases
+ *    its number for reuse (see phone_ownership_lock serialization).
  */
 const test = require("firebase-functions-test")({
   projectId: "dr-tarek-platform-functions-test",
@@ -175,12 +175,21 @@ async function run() {
     { id: "rejected", data: { phone_number: "01003333333", approval_status: "rejected", account_status: "active", role: "student", student_type: "center_student", full_name: "Rejected" } },
     { id: "disabled", data: { phone_number: "01004444444", approval_status: "approved", account_status: "disabled", role: "student", student_type: "center_student", full_name: "Disabled" } },
     { id: "locked", data: { phone_number: "01005555555", approval_status: "approved", account_status: "active", role: "student", student_type: "center_student", full_name: "Locked" } },
+    // Soft-deleted historical rows: must never shadow a live/reused owner and
+    // must never authenticate. "old-deleted" is listed BEFORE "reused-live"
+    // on purpose: a naive limit(1) lookup would have resolved the deleted row.
+    { id: "deleted-only", data: { phone_number: "01006666666", approval_status: "approved", account_status: "disabled", role: "student", student_type: "center_student", full_name: "Deleted", is_deleted: true } },
+    { id: "old-deleted", data: { phone_number: "01007777777", approval_status: "approved", account_status: "disabled", role: "student", student_type: "center_student", full_name: "Old Deleted", is_deleted: true } },
+    { id: "reused-live", data: { phone_number: "01007777777", approval_status: "approved", account_status: "active", role: "student", student_type: "center_student", full_name: "Reused Live" } },
     { id: "doc-1", data: { full_name: "Dr Owner", role: "doctor", account_status: "active" } },
     { id: "adm-1", data: { full_name: "Admin One", role: "admin", account_status: "active" } },
     { id: "amb-1", data: { full_name: "Same Name", role: "admin", account_status: "active" } },
     { id: "amb-2", data: { full_name: "Same Name", role: "admin", account_status: "active" } },
   ];
   for (const id of ["active", "pending", "rejected", "disabled", "locked"]) {
+    store[`user_secrets/${id}`] = { password_hash: fixtureHash("Correct1!") };
+  }
+  for (const id of ["deleted-only", "old-deleted", "reused-live"]) {
     store[`user_secrets/${id}`] = { password_hash: fixtureHash("Correct1!") };
   }
   store["user_secrets/locked"] = {
@@ -256,6 +265,44 @@ async function run() {
     ok("duplicate phone -> already-exists regardless of state (unchanged)");
   } else {
     fail("duplicate", `${dupActive && dupActive.code} / ${dupDisabled && dupDisabled.code}`);
+  }
+
+  // 8b. Soft-deleted account releases its number: registration succeeds and
+  // the cross-instance ownership lock is written in the same transaction.
+  const reuseErr = await regErr("01006666666");
+  if (
+    reuseErr === null &&
+    store["users/new-uid"] &&
+    store["users/new-uid"].phone_number === "01006666666"
+  ) {
+    ok("soft-deleted phone released for registration");
+  } else {
+    fail("phone-reuse", `${reuseErr && reuseErr.code}: ${reuseErr && reuseErr.message}`);
+  }
+  if (store["system_settings/phone_ownership_lock"]) {
+    ok("registration writes phone ownership lock (race serialization)");
+  } else {
+    fail("phone-lock", "system_settings/phone_ownership_lock was not written");
+  }
+
+  // 8c. A deleted-only phone cannot authenticate (uniform generic).
+  expectGeneric(
+    await loginErr("01006666666", "Correct1!", "10.1.0.9"),
+    "soft-deleted-only account -> generic (no access)",
+  );
+
+  // 8d. When a deleted historical row and a live row share a phone, the live
+  // account wins even though the deleted row is encountered first.
+  try {
+    const reused = await verifyPhonePassword({
+      data: { phoneNumber: "01007777777", password: "Correct1!" },
+      auth: null,
+      rawRequest: { ip: "10.1.0.10" },
+    });
+    if (reused && reused.userId === "reused-live") ok("reused phone -> login resolves live owner");
+    else fail("reused-login", JSON.stringify(reused));
+  } catch (err) {
+    fail("reused-login", `${err.code}: ${err.message}`);
   }
 
   // 9/10. Reset request uniform for unknown and known phones.

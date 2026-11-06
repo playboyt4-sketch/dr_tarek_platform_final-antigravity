@@ -367,8 +367,7 @@ await _call(
                   'onPaymentLogged',
                   {
                     'studentId': widget.studentId,
-                    if (selectedSubjectId != null)
-                      'subjectId': selectedSubjectId,
+                    'subjectId': ?selectedSubjectId,
                     'amount': amount,
                     'receiptNumber': receiptNumber,
                     'paymentMethod': selectedPaymentMethod,

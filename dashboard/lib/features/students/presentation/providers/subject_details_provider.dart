@@ -950,6 +950,13 @@ class SubjectDetailsController {
   /// [preserveStatus] is true (plain Save in edit mode) — the stored
   /// status is left untouched, and any stored `publish_date` is kept
   /// unless [clearPublishDate] is set (Save Draft clears it).
+  ///
+  /// Visibility: [publishNow] also republishes every non-deleted
+  /// `lecture_resources` row (`is_visible`/`visibility` = true) in the same
+  /// batch, because rows authored while the lecture was a draft are stored
+  /// hidden and the student gate only serves visible rows. Other saves keep
+  /// the per-resource toggle untouched; scheduled lectures are handled by
+  /// the `autoPublishDueLectures` scheduler.
   Future<void> updateLectureFull({
     required String lectureId,
     required String title,
@@ -973,6 +980,8 @@ class SubjectDetailsController {
         await _db.collection('lectures').doc(lectureId).get();
     final String? lectureSubjectId =
         (lectureSnap.data()?['subject_id'] as String?)?.trim();
+    final String storedStatus =
+        (lectureSnap.data()?['status'] as String?)?.trim().toLowerCase() ?? '';
     final WriteBatch batch = _db.batch();
     final Map<String, Object?> fields = <String, Object?>{
       'title': title,
@@ -997,6 +1006,24 @@ class SubjectDetailsController {
       fields['publish_date'] = null;
     }
     batch.update(_db.collection('lectures').doc(lectureId), fields);
+
+    // Publish-state → resource-visibility sync. Rows created while the
+    // lecture was a draft are stored hidden (`is_visible: false`), and the
+    // student listing / serving gate only returns visible rows. Explicit
+    // Publish Now must therefore republish those rows in the SAME batch;
+    // flipping only the lecture status left them hidden forever and the
+    // student saw "No published video source found for this lecture".
+    // Non-publishing saves (draft, scheduled, plain Save) leave persisted
+    // per-resource toggles untouched — deliberate per-resource hiding stays
+    // authoritative. Scheduled lectures are flipped by the
+    // `autoPublishDueLectures` scheduler when they actually become due.
+    final bool republishResources = publishNow;
+    // New rows follow the lecture's *resulting* state. A plain Save on an
+    // already-published lecture keeps `published` (preserveStatus), so its
+    // newly added resources must be served immediately; draft/scheduled
+    // saves stay hidden until publication.
+    final bool newResourcesVisible = republishResources ||
+        (preserveStatus && storedStatus == 'published');
 
     final Map<String, NewLectureResource> stagedById =
         <String, NewLectureResource>{};
@@ -1029,8 +1056,8 @@ class SubjectDetailsController {
             : '',
         'thumbnail': null,
         'duration': null,
-        'is_visible': true,
-        'visibility': true,
+        'is_visible': newResourcesVisible,
+        'visibility': newResourcesVisible,
         'is_deleted': false,
         'created_at': FieldValue.serverTimestamp(),
         'created_by': resolvedActor,
@@ -1097,6 +1124,15 @@ class SubjectDetailsController {
         in persistedSnap.docs) {
       final Map<String, dynamic> data = doc.data();
       if (data['is_deleted'] == true) continue;
+      final bool storedVisible = data['is_visible'] == true;
+      if (republishResources && !storedVisible) {
+        batch.update(doc.reference, <String, Object?>{
+          'is_visible': true,
+          'visibility': true,
+          'updated_at': FieldValue.serverTimestamp(),
+          'updated_by': resolvedActor,
+        });
+      }
       persistedForSync.add(LectureEditResource(
         id: doc.id,
         type: (data['resource_type'] as String?) ?? 'video',
@@ -1105,7 +1141,9 @@ class SubjectDetailsController {
         bunnyVideoId: data['bunny_video_id'] as String?,
         externalUrl: data['resource_url'] as String?,
         storagePath: data['storage_path'] as String?,
-        isVisible: data['is_visible'] == true,
+        // Publishing makes every non-deleted row visible in this batch;
+        // otherwise the stored per-resource toggle is authoritative.
+        isVisible: republishResources || storedVisible,
       ));
     }
     final FirstVideoCandidate? mergedWinner = selectFirstVideoCandidate(
@@ -1116,7 +1154,7 @@ class SubjectDetailsController {
             updated.id: updated,
         },
         createdById: stagedById,
-        createdVisible: true,
+        createdVisible: newResourcesVisible,
         deletedIds: deleteResourceIds.toSet(),
       ),
     );

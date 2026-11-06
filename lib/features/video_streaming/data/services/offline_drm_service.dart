@@ -23,9 +23,8 @@ class OfflineDrmService {
 
   OfflineDrmService({
     FlutterSecureStorage? secureStorage,
-    required SharedPreferences prefs,
-  })  : _secureStorage = secureStorage ?? const FlutterSecureStorage(),
-        _prefs = prefs;
+    required this._prefs,
+  })  : _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
   /// Returns the isolated directory path for offline encrypted media
   Future<Directory> _getVaultDirectory() async {
