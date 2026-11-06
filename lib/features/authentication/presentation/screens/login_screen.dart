@@ -7,6 +7,7 @@ import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/validators/egyptian_phone.dart';
 import '../../../../core/widgets/glass_back_button.dart';
@@ -80,10 +81,6 @@ abstract final class _LoginDesign {
   static const buttonX = 24.0;
   static const buttonY = 754.0;
   static const buttonWidth = 345.0;
-
-  static const borderGray = Color(0xFFD0D0D0);
-  static const hintGray = Color(0xFF9A9A9A);
-  static const canvas = Color(0xFFFFFCF7);
 }
 
 /// Current Student - Sign In (Figma node 52-143, 393x852, `#FFFCF7`).
@@ -252,11 +249,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _terminalMessage = _messageFor(session));
   }
 
-  InputDecoration _fieldDecoration({
+  InputDecoration _fieldDecoration(
+    BuildContext context, {
     required String hint,
     required Widget prefixIcon,
     Widget? suffixIcon,
   }) {
+    final semantic = AppSemanticColors.of(context);
     OutlineInputBorder border(Color color, [double width = 1]) {
       return OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -269,10 +268,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // Figma: Inter 20 #9A9A9A. Rendered via the design-system 20px
       // regular token (titleMedium) so size/weight match Figma exactly
       // while staying on the shared typography scale.
-      hintStyle: const TextStyle(
+      hintStyle: TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.w400,
-        color: _LoginDesign.hintGray,
+        color: semantic.inputHint,
       ),
       // Vertical padding resolves the bordered box to Figma's ~69px
       // field height; horizontal padding leaves room for the 20px
@@ -294,10 +293,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         minWidth: 48,
         minHeight: 24,
       ),
-      enabledBorder: border(_LoginDesign.borderGray),
-      focusedBorder: border(AppColors.buttonSolid, 1.5),
-      errorBorder: border(AppColors.error),
-      focusedErrorBorder: border(AppColors.error, 1.5),
+      enabledBorder: border(semantic.inputBorder),
+      focusedBorder: border(semantic.inputBorderFocused, 1.5),
+      errorBorder: border(semantic.error),
+      focusedErrorBorder: border(semantic.error, 1.5),
     );
   }
 
@@ -315,9 +314,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final viewportHeight = MediaQuery.of(context).size.height -
         MediaQuery.of(context).padding.vertical;
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: _LoginDesign.canvas,
+      backgroundColor: semantic.canvasWarm,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -349,12 +349,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) =>
                                 Container(
-                              color: AppColors.itemSurface,
+                              color: semantic.surface,
                               alignment: Alignment.center,
-                              child: const Icon(
+                              child: Icon(
                                 Icons.image_not_supported_outlined,
                                 size: 64,
-                                color: AppColors.mediumGray,
+                                color: semantic.textSecondary,
                               ),
                             ),
                           ),
@@ -385,7 +385,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         textAlign: TextAlign.center,
                         style: AppTypography.titleLarge(
                           context,
-                          color: AppColors.darkText,
+                          color: semantic.textPrimary,
                         ),
                       ),
                     ),
@@ -428,16 +428,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   },
                                   style: AppTypography.titleMedium(
                                     context,
-                                    color: AppColors.darkText,
+                                    color: semantic.textPrimary,
                                   ),
                                   decoration: _fieldDecoration(
+                                    context,
                                     hint: 'phone number',
                                     prefixIcon: SvgPicture.asset(
                                       'assets/images/Smartphone.svg',
                                       width: 20,
                                       height: 20,
-                                      colorFilter: const ColorFilter.mode(
-                                        _LoginDesign.hintGray,
+                                      colorFilter: ColorFilter.mode(
+                                        semantic.inputHint,
                                         BlendMode.srcIn,
                                       ),
                                     ),
@@ -465,16 +466,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                           : null,
                                   style: AppTypography.titleMedium(
                                     context,
-                                    color: AppColors.darkText,
+                                    color: semantic.textPrimary,
                                   ),
                                   decoration: _fieldDecoration(
+                                    context,
                                     hint: 'Password',
-                                    prefixIcon: const Icon(
+                                    prefixIcon: Icon(
                                       Icons.lock_outline,
                                       size: 20,
-                                      color: _LoginDesign.hintGray,
+                                      color: semantic.inputHint,
                                     ),
                                     suffixIcon: IconButton(
+                                      key: const Key(
+                                        'passwordVisibilityToggle',
+                                      ),
                                       onPressed: () => setState(
                                         () => _obscurePassword =
                                             !_obscurePassword,
@@ -485,8 +490,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                             : 'assets/images/Eye off.svg',
                                         width: 24,
                                         height: 24,
-                                        colorFilter: const ColorFilter.mode(
-                                          _LoginDesign.hintGray,
+                                        colorFilter: ColorFilter.mode(
+                                          semantic.inputHint,
                                           BlendMode.srcIn,
                                         ),
                                       ),
@@ -512,65 +517,80 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   _LoginDesign.optionsRowHeight,
                                 ),
                                 child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
                                   crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
-                                    GestureDetector(
-                                      onTap: () => _setRememberMe(
-                                        !_rememberMe,
-                                      ),
-                                      behavior: HitTestBehavior.opaque,
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: Checkbox(
-                                              value: _rememberMe,
-                                              onChanged: (value) =>
-                                                  _setRememberMe(
-                                                value ?? false,
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: GestureDetector(
+                                          onTap: () => _setRememberMe(
+                                            !_rememberMe,
+                                          ),
+                                          behavior: HitTestBehavior.opaque,
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SizedBox(
+                                                width: 24,
+                                                height: 24,
+                                                child: Checkbox(
+                                                  value: _rememberMe,
+                                                  onChanged: (value) =>
+                                                      _setRememberMe(
+                                                    value ?? false,
+                                                  ),
+                                                  activeColor: semantic.primary,
+                                                  materialTapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                ),
                                               ),
-                                              activeColor:
-                                                  AppColors.buttonSolid,
-                                              materialTapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                            ),
+                                              const SizedBox(width: 6),
+                                              Flexible(
+                                                child: Text(
+                                                  'Remember me',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style:
+                                                      AppTypography.bodyThin(
+                                                    context,
+                                                    color: semantic.isDark ? semantic.textPrimary : Colors.black,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            'Remember me',
-                                            style: AppTypography.bodyThin(
-                                              context,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ],
+                                        ),
                                       ),
                                     ),
-                                    GestureDetector(
-                                      onTap: () =>
-                                          showForgotPasswordSheet(
-                                        context: context,
-                                        phoneNumber:
-                                            _phoneController.text,
-                                      ),
-                                      behavior: HitTestBehavior.opaque,
-                                      child: Padding(
-                                        padding: EdgeInsets.symmetric(
-                                          vertical: context.rsV(4),
-                                        ),
-                                        child: Text(
-                                          'Forget password?',
-                                          textAlign: TextAlign.right,
-                                          style: AppTypography.bodyThin(
-                                            context,
-                                            color: Colors.black,
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.centerRight,
+                                        child: GestureDetector(
+                                          onTap: () =>
+                                              showForgotPasswordSheet(
+                                            context: context,
+                                            phoneNumber:
+                                                _phoneController.text,
+                                          ),
+                                          behavior: HitTestBehavior.opaque,
+                                          child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: context.rsV(4),
+                                            ),
+                                            child: Text(
+                                              'Forget password?',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.right,
+                                              style: AppTypography.bodyThin(
+                                                context,
+                                                color: semantic.isDark ? semantic.textPrimary : Colors.black,
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -593,7 +613,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   textAlign: TextAlign.center,
                                   style: AppTypography.bodyRegular(
                                     context,
-                                    color: AppColors.error,
+                                    color: semantic.error,
                                   ),
                                 ),
                               ),
@@ -617,19 +637,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 height: 56,
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
-                                    color: AppColors.buttonSolid
-                                        .withValues(alpha: 0.7),
+                                    color: semantic.primary.withValues(
+                                      alpha: 0.7,
+                                    ),
                                     borderRadius: BorderRadius.circular(
                                       AppShapes.radiusFull,
                                     ),
                                   ),
-                                  child: const Center(
+                                  child: Center(
                                     child: SizedBox(
                                       width: 24,
                                       height: 24,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2.5,
-                                        color: Colors.white,
+                                        color: semantic.onPrimary,
                                       ),
                                     ),
                                   ),

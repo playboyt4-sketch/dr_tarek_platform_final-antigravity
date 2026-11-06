@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/user_avatar.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -184,9 +186,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
   Widget build(BuildContext context) {
     final subjectsAsync = ref.watch(dashboardSubjectsProvider);
     final subjects = subjectsAsync.value;
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: _gradeBackground(widget.user.grade),
+      // Light keeps the full-bleed grade canvas; Dark follows ADR-009
+      // Option B (neutral canvas, grade identity carried by accents).
+      backgroundColor: semantic.isDark
+          ? semantic.canvas
+          : _gradeBackground(widget.user.grade),
       body: SafeArea(
         child: Column(
           children: [
@@ -228,7 +235,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
                   ? TextDirection.rtl
                   : TextDirection.ltr,
               style: TextStyle(
-                color: const Color(0xFFFFFCF7),
+                color: semantic.isDark
+                    ? semantic.textPrimary
+                    : const Color(0xFFFFFCF7),
                 fontSize: context.rsFont(16),
                 fontWeight: FontWeight.w600,
               ),
@@ -332,9 +341,12 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return widget.subjectsAsync.when(
-      loading: () => const Center(
-        child: CircularProgressIndicator(color: Colors.white),
+      loading: () => Center(
+        child: CircularProgressIndicator(
+          color: semantic.isDark ? semantic.primary : Colors.white,
+        ),
       ),
       error: (error, stackTrace) {
         // Debug-only diagnostics: release builds keep the generic card.
@@ -439,7 +451,9 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
                       overflow: TextOverflow.ellipsis,
                       style: AppTypography.titleLarge(
                         context,
-                        color: Colors.white,
+                        color: semantic.isDark
+                            ? semantic.textPrimary
+                            : Colors.white,
                       ),
                     ),
                   ),
@@ -467,8 +481,13 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
                           ),
                           decoration: BoxDecoration(
                             color: i == safeIndex
-                                ? Colors.white
-                                : Colors.white.withValues(alpha: 0.4),
+                                ? (semantic.isDark
+                                      ? semantic.textPrimary
+                                      : Colors.white)
+                                : (semantic.isDark
+                                          ? semantic.textPrimary
+                                          : Colors.white)
+                                      .withValues(alpha: 0.4),
                             borderRadius: BorderRadius.circular(
                               context.rs(4),
                             ),
@@ -500,6 +519,7 @@ class _CoverCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     final url = subject.thumbnailUrl;
     return Material(
       color: Colors.transparent,
@@ -513,12 +533,16 @@ class _CoverCard extends StatelessWidget {
         onTap: onTap,
         child: Ink(
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.10),
+            color: semantic.isDark
+                ? semantic.glassCardFill
+                : Colors.white.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(
               context.rs(_StudentHomeDesign.cardRadius),
             ),
             border: Border.all(
-              color: _StudentHomeDesign.cardBorder,
+              color: semantic.isDark
+                  ? semantic.glassCardBorder
+                  : _StudentHomeDesign.cardBorder,
               width: 1,
             ),
           ),
@@ -550,13 +574,18 @@ class _CoverPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return Container(
-      color: Colors.white.withValues(alpha: 0.10),
+      color: semantic.isDark
+          ? semantic.glassCardFill
+          : Colors.white.withValues(alpha: 0.10),
       alignment: Alignment.center,
       child: Icon(
         Icons.image_outlined,
         size: context.rs(48),
-        color: Colors.white.withValues(alpha: 0.7),
+        color: semantic.isDark
+            ? semantic.glassTextMuted
+            : Colors.white.withValues(alpha: 0.7),
       ),
     );
   }
@@ -577,11 +606,14 @@ class _BottomPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return Container(
       width: context.rs(_StudentHomeDesign.barWidth),
       height: context.rsV(_StudentHomeDesign.barHeight),
       decoration: BoxDecoration(
-        color: _StudentHomeDesign.barFill,
+        color: semantic.isDark
+            ? semantic.glassCardFill
+            : _StudentHomeDesign.barFill,
         borderRadius: BorderRadius.circular(1000),
         boxShadow: const [
           BoxShadow(
@@ -603,7 +635,7 @@ class _BottomPill extends StatelessWidget {
               icon: currentTab == 0
                   ? Icons.home_rounded
                   : Icons.home_outlined,
-              label: 'Home',
+              label: AppLocalizations.of(context).navHome,
               onTap: () => onSelect(0),
             ),
           ),
@@ -612,10 +644,14 @@ class _BottomPill extends StatelessWidget {
             child: _PillTab(
               selected: currentTab == 1,
               icon: Icons.notifications_none_rounded,
-              label: 'Notifications',
+              label: AppLocalizations.of(context).navNotifications,
               badge: _NotificationsIconBadge(
                 studentId: studentId,
-                color: currentTab == 1 ? Colors.white : Colors.black,
+                color: semantic.isDark
+                    ? (currentTab == 1
+                          ? semantic.textPrimary
+                          : semantic.textSecondary)
+                    : (currentTab == 1 ? Colors.white : Colors.black),
               ),
               onTap: () => onSelect(1),
             ),
@@ -643,10 +679,15 @@ class _PillTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = selected ? Colors.white : Colors.black;
+    final semantic = AppSemanticColors.of(context);
+    final foreground = semantic.isDark
+        ? (selected ? semantic.textPrimary : semantic.textSecondary)
+        : (selected ? Colors.white : Colors.black);
     return Material(
       color: selected
-          ? _StudentHomeDesign.tabActiveFill
+          ? (semantic.isDark
+                ? semantic.glassButtonFill
+                : _StudentHomeDesign.tabActiveFill)
           : Colors.transparent,
       borderRadius: BorderRadius.circular(28),
       child: InkWell(
@@ -693,6 +734,7 @@ class _NotificationsIconBadge extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final semantic = AppSemanticColors.of(context);
     final unread = ref.watch(userUnreadNotificationsCountProvider(studentId));
     final count = unread.value ?? 0;
     return Stack(
@@ -711,15 +753,15 @@ class _NotificationsIconBadge extends ConsumerWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
-                color: AppColors.error,
+                color: semantic.error,
                 borderRadius: BorderRadius.circular(8),
               ),
               constraints: const BoxConstraints(minWidth: 15),
               child: Text(
                 count > 99 ? '99+' : '$count',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: semantic.onError,
                   fontSize: 9,
                   fontWeight: FontWeight.w700,
                 ),
@@ -744,8 +786,9 @@ class _HomeMessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return Card(
-      color: Colors.white,
+      color: semantic.isDark ? semantic.surfaceElevated : Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppShapes.radiusXLarge),
       ),
@@ -757,7 +800,11 @@ class _HomeMessageCard extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.onSurface),
+              style: TextStyle(
+                color: semantic.isDark
+                    ? semantic.textPrimary
+                    : AppColors.onSurface,
+              ),
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: AppSpacing.sm),

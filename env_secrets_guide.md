@@ -4,14 +4,32 @@
 Run these commands in your local terminal to configure the required secrets for Bunny CDN and PDF signing:
 
 ```bash
-# Set Bunny CDN Playback Template (replace with your pull zone hostname)
+# Set Bunny CDN Playback Template (replace with your pull-zone hostname).
+# The value MUST be the direct-play URL served by the Stream pull zone:
 firebase functions:secrets:set BUNNY_PLAYBACK_URL_TEMPLATE
-# Value example: https://video.bunnycdn.com/play/{video_id}?quality={quality}
+# Value example: https://<pull-zone-hostname>.b-cdn.net/{video_id}/playlist.m3u8
+# Do NOT use https://video.bunnycdn.com/play/{video_id}?quality={quality}:
+# that is the Stream management/embed host, not a playable pull-zone URL,
+# and it returns 403 Forbidden when opened with a CDN token.
 
-# Set Bunny CDN Token Authentication Secret Key
+# Set Bunny CDN Token Authentication Secret Key.
+# Use the Stream library's Token Authentication key (Security tab of the
+# Stream pull zone), NOT the storage-zone password and NOT the Stream API key.
 firebase functions:secrets:set BUNNY_TOKEN_KEY
 # Enter your Bunny Token Key when prompted
 ```
+
+Requirements on the Bunny pull zone (otherwise signed playback still fails
+with `403 Forbidden`):
+
+- Token Authentication: **Advanced (HMAC)**. Query-string/Basic mode does not
+  match the directory-token URLs this backend issues.
+- The key in `BUNNY_TOKEN_KEY` must be the key configured for that pull zone's
+  token authentication (rotating it invalidates all live signed URLs).
+- Hotlink protection may reject an EMPTY `Referer`, but must accept the fixed
+  `Referer` the app sends (`bunnyPlaybackHttpHeaders` in
+  `lib/core/constants/bunny_playback_headers.dart`). Do not configure a
+  rule that only accepts a specific browser origin.
 
 ## 2. Deploy Firestore Indexes & Security Rules
 ```bash

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/asset_paths.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/glass_back_button.dart';
 import '../../../../core/widgets/primary_button.dart';
@@ -165,8 +166,10 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
     final viewportHeight = MediaQuery.of(context).size.height -
         MediaQuery.of(context).padding.vertical;
 
+    final semantic = AppSemanticColors.of(context);
+
     return Scaffold(
-      backgroundColor: NewStudentNameScreen.backgroundColor,
+      backgroundColor: semantic.canvasWarm,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -201,12 +204,12 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) =>
                                 Container(
-                              color: AppColors.itemSurface,
+                              color: semantic.surface,
                               alignment: Alignment.center,
-                              child: const Icon(
+                              child: Icon(
                                 Icons.image_not_supported_outlined,
                                 size: 64,
-                                color: AppColors.mediumGray,
+                                color: semantic.textSecondary,
                               ),
                             ),
                           ),
@@ -236,7 +239,7 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                         textAlign: TextAlign.center,
                         style: AppTypography.titleLarge(
                           context,
-                          color: AppColors.darkText,
+                          color: semantic.textPrimary,
                         ),
                       ),
                     ),
@@ -273,7 +276,7 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                             onFieldSubmitted: (_) => _onNextPressed(),
                             style: AppTypography.bodyRegular(
                               context,
-                              color: AppColors.darkText,
+                              color: semantic.textPrimary,
                             ),
                             decoration: InputDecoration(
                               labelText: 'Full Name',
@@ -284,15 +287,15 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                                   FloatingLabelAlignment.start,
                               labelStyle: AppTypography.bodyRegular(
                                 context,
-                                color: const Color(0xFF9A9A9A),
+                                color: semantic.inputHint,
                               ),
                               floatingLabelStyle: AppTypography.bodyRegular(
                                 context,
-                                color: const Color(0xFF9A9A9A),
+                                color: semantic.inputHint,
                               ),
                               hintStyle: AppTypography.bodyRegular(
                                 context,
-                                color: const Color(0xFF9A9A9A),
+                                color: semantic.inputHint,
                               ),
                               // FIXED ~69px field height (intentional):
                               // vertical padding resolves the box to
@@ -315,24 +318,24 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                                 borderRadius: BorderRadius.circular(
                                   AppShapes.radiusMd,
                                 ),
-                                borderSide: const BorderSide(
-                                  color: Color(0xFFE5E7EB),
+                                borderSide: BorderSide(
+                                  color: semantic.inputBorderSubtle,
                                 ),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(
                                   AppShapes.radiusMd,
                                 ),
-                                borderSide: const BorderSide(
-                                  color: Color(0xFFE5E7EB),
+                                borderSide: BorderSide(
+                                  color: semantic.inputBorderSubtle,
                                 ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(
                                   AppShapes.radiusMd,
                                 ),
-                                borderSide: const BorderSide(
-                                  color: AppColors.buttonSolid,
+                                borderSide: BorderSide(
+                                  color: semantic.inputBorderFocused,
                                   width: 1.5,
                                 ),
                               ),
@@ -340,16 +343,16 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                                 borderRadius: BorderRadius.circular(
                                   AppShapes.radiusMd,
                                 ),
-                                borderSide: const BorderSide(
-                                  color: AppColors.error,
+                                borderSide: BorderSide(
+                                  color: semantic.error,
                                 ),
                               ),
                               focusedErrorBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(
                                   AppShapes.radiusMd,
                                 ),
-                                borderSide: const BorderSide(
-                                  color: AppColors.error,
+                                borderSide: BorderSide(
+                                  color: semantic.error,
                                   width: 1.5,
                                 ),
                               ),

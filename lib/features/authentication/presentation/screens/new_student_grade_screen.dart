@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../admin/domain/admin_grades.dart';
 import 'new_student_password_screen.dart';
@@ -172,9 +173,10 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
         MediaQuery.of(context).padding.vertical;
 
     final options = _gradeOptions();
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: NewStudentGradeScreen.backgroundColor,
+      backgroundColor: semantic.canvasWarm,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -208,11 +210,11 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                             'assets/images/New Student - Grade photo.png',
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => Container(
-                              color: const Color(0xFFF3F4F6),
-                              child: const Icon(
+                              color: semantic.surface,
+                              child: Icon(
                                 Icons.school_outlined,
                                 size: 64,
-                                color: Colors.grey,
+                                color: semantic.textSecondary,
                               ),
                             ),
                           ),
@@ -244,7 +246,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                         textAlign: TextAlign.center,
                         style: AppTypography.titleLarge(
                           context,
-                          color: AppColors.darkText,
+                          color: semantic.textPrimary,
                         ),
                       ),
                     ),
@@ -301,26 +303,27 @@ class _GradeBackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return ClipOval(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Material(
-          color: Colors.white.withValues(alpha: 0.25),
+          color: semantic.glassBackFill,
           shape: CircleBorder(
             side: BorderSide(
-              color: Colors.white.withValues(alpha: 0.35),
+              color: semantic.glassBackBorder,
               width: 1.0,
             ),
           ),
           child: InkWell(
             onTap: () => Navigator.of(context).pop(),
             customBorder: const CircleBorder(),
-            child: const Center(
+            child: Center(
               child: Padding(
-                padding: EdgeInsets.only(right: 2.0),
+                padding: const EdgeInsets.only(right: 2.0),
                 child: Icon(
                   Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white,
+                  color: semantic.glassText,
                   size: 18,
                 ),
               ),
@@ -345,13 +348,52 @@ class _GradeCapsuleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
+    // Light keeps the approved saturated capsule + white text. Dark follows
+    // ADR-009 D3 Option B: neutral surfaceContainer fill with the grade
+    // accent carried by the border + number badge, and the approved grade
+    // text tint on top.
+    final accent = switch (option.key) {
+      'grade_one' => semantic.gradeAccent1,
+      'grade_two' => semantic.gradeAccent2,
+      'grade_three' => semantic.gradeAccent3,
+      'grade_four' => semantic.gradeAccent4,
+      _ => semantic.gradeAccent1,
+    };
+    final gradeText = switch (option.key) {
+      'grade_one' => semantic.gradeText1,
+      'grade_two' => semantic.gradeText2,
+      'grade_three' => semantic.gradeText3,
+      'grade_four' => semantic.gradeText4,
+      _ => semantic.gradeText1,
+    };
+    final capsuleFill = semantic.isDark
+        ? semantic.surfaceContainer
+        : option.color;
+    final textColor = semantic.isDark ? gradeText : Colors.white;
+    final Border? border = semantic.isDark
+        ? Border.all(color: accent, width: isSelected ? 3.0 : 1.0)
+        : (isSelected ? Border.all(color: Colors.white, width: 3.0) : null);
+    final badgeFill = semantic.isDark
+        ? accent
+        : Colors.white.withValues(alpha: 0.25);
+    final badgeBorder = semantic.isDark
+        ? null
+        : Border.all(
+            color: Colors.white.withValues(alpha: 0.30),
+            width: 1.0,
+          );
+    final badgeTextColor = semantic.isDark
+        ? semantic.onInverseSurface
+        : Colors.white;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       height: context.rsV(_GradeDesign.capsuleHeight),
       decoration: BoxDecoration(
-        color: option.color,
+        color: capsuleFill,
         borderRadius: BorderRadius.circular(9999),
-        border: isSelected ? Border.all(color: Colors.white, width: 3.0) : null,
+        border: border,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.08),
@@ -372,32 +414,29 @@ class _GradeCapsuleTile extends StatelessWidget {
               children: [
                 Text(
                   option.label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Google Sans Flex',
                     fontSize: 20,
                     fontWeight: FontWeight.w400,
-                    color: Colors.white,
+                    color: textColor,
                   ),
                 ),
                 Container(
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.25),
+                    color: badgeFill,
                     shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.30),
-                      width: 1.0,
-                    ),
+                    border: badgeBorder,
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     option.number,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Google Sans Flex',
                       fontSize: 18,
                       fontWeight: FontWeight.w500,
-                      color: Colors.white,
+                      color: badgeTextColor,
                     ),
                   ),
                 ),

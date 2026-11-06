@@ -6,6 +6,8 @@ abstract final class AppColors {
   static const darkText = Color(0xFF111827);
   static const mediumGray = Color(0xFF6B7280);
   static const itemSurface = Color(0xFFF3F4F6);
+  // Figma "Common input border".
+  static const inputBorder = Color(0xFFD0D0D0);
   static const buttonSolid = Color(0xFF1D4ED8);
   static const textPrimary = Color(0xFF111827);
   static const textSecondary = Color(0xFF6B7280);

@@ -16,8 +16,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app/app.dart';
 import 'config/environment.dart';
 import 'core/errors/failure.dart';
+import 'core/localization/locale_controller.dart';
+import 'core/theme/theme_controller.dart';
 import 'core/web/video_hls_backend_stub.dart'
-    if (dart.library.js_interop) 'core/web/video_hls_backend_web.dart';import 'core/localization/locale_controller.dart';
+    if (dart.library.js_interop) 'core/web/video_hls_backend_web.dart';
 import 'features/authentication/data/remember_me_prefs.dart';
 import 'features/notifications/data/services/fcm_push_service.dart';
 import 'features/video_streaming/data/datasources/protected_offline_storage.dart';
@@ -62,8 +64,9 @@ Future<void> main() async {
       ensureWebHlsPlaybackBackend();
 
       try {
-        // Explicit release environment: TestFlight builds pass
-        // --dart-define=ENV=staging; release builds without ENV fail
+        // Explicit release environment: QA/TestFlight builds pass
+        // --dart-define=ENV=staging, and the owner-approved production
+        // TestFlight build passes ENV=prod. Release builds without ENV fail
         // closed here and surface the boot-error screen below.
         final env = Environment.resolve();
         await Firebase.initializeApp(
@@ -180,10 +183,16 @@ Future<void> main() async {
         initialLocale = const Locale('ar');
       }
 
+      // First-frame appearance without flash: the persisted mode is resolved
+      // before runApp so the user never sees a frame in the wrong brightness.
+      // Never throws; defaults to System.
+      final initialThemeMode = await loadPersistedThemeMode();
+
       runApp(
         ProviderScope(
           overrides: [
             initialLocaleProvider.overrideWithValue(initialLocale),
+            initialThemeModeProvider.overrideWithValue(initialThemeMode),
           ],
           child: const DrTarekPlatformApp(),
         ),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../core/constants/bunny_playback_headers.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -1214,7 +1215,10 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
     if (!mounted) return;
     final url = widget.previewUrl;
     if (url == null || url.isEmpty) return;
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      httpHeaders: bunnyPlaybackHttpHeaders,
+    );
     try {
       await controller.initialize();
       await controller.setVolume(0);
@@ -1279,7 +1283,7 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
                 (context, child, progress) =>
                     progress == null ? child : const SizedBox.shrink(),
           ),
-        if (preview != null) preview,
+        ?preview,
         // Play affordance over the still poster only — hidden the moment
         // the silent preview starts so it never covers moving video.
         if (showPlay)

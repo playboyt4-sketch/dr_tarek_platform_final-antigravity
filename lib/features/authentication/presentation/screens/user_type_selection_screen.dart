@@ -5,7 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/routing/app_routes.dart';
-import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../widgets/brand_signature_logo.dart';
 
@@ -48,7 +48,7 @@ class UserTypeSelectionScreen extends StatelessWidget {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFCF7),
+      backgroundColor: AppSemanticColors.of(context).canvasWarm,
       body: SingleChildScrollView(
         physics: const ClampingScrollPhysics(),
         padding: EdgeInsets.only(top: topPad, bottom: bottomPad),
@@ -74,7 +74,7 @@ class UserTypeSelectionScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: AppTypography.bodyRegular(
                       context,
-                      color: AppColors.mediumGray,
+                      color: AppSemanticColors.of(context).textSecondary,
                     ),
                   ),
                   SizedBox(height: context.rsV(10)),

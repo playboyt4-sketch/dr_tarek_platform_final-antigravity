@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../core/constants/bunny_playback_headers.dart';
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
 import '../../data/repositories/playback_repository.dart';
 import '../../data/services/video_source_resolver.dart';
@@ -763,6 +764,7 @@ class VideoPlaybackController extends ChangeNotifier {
 
     final next = VideoPlayerController.networkUrl(
       source.url,
+      httpHeaders: bunnyPlaybackHttpHeaders,
       formatHint: source.url.path.toLowerCase().contains('.m3u8') ||
               source.url.toString().toLowerCase().contains('.m3u8')
           ? VideoFormat.hls

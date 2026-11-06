@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/responsive/responsive.dart';
-import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 
 // ---------------------------------------------------------------------------
@@ -69,9 +69,10 @@ class NewStudentEndScreen extends StatelessWidget {
     // any manual top/bottom padding to tune.
     final viewportHeight = MediaQuery.of(context).size.height -
         MediaQuery.of(context).padding.vertical;
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: NewStudentEndScreen.backgroundColor,
+      backgroundColor: semantic.canvasWarm,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -102,12 +103,12 @@ class NewStudentEndScreen extends StatelessWidget {
                           child: Image.asset(
                             'assets/images/New Student - End photo.png',
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              color: const Color(0xFFF3F4F6),
-                              child: const Icon(
+                            errorBuilder: (_, _, _) => Container(
+                              color: semantic.surface,
+                              child: Icon(
                                 Icons.access_time_outlined,
                                 size: 64,
-                                color: Colors.grey,
+                                color: semantic.textSecondary,
                               ),
                             ),
                           ),
@@ -130,7 +131,7 @@ class NewStudentEndScreen extends StatelessWidget {
                             textAlign: TextAlign.center,
                             style: AppTypography.titleLarge(
                               context,
-                              color: AppColors.darkText,
+                              color: semantic.textPrimary,
                             ),
                           ),
                         ),
@@ -152,7 +153,7 @@ class NewStudentEndScreen extends StatelessWidget {
                             textAlign: TextAlign.center,
                             style: AppTypography.bodyRegular(
                               context,
-                              color: const Color(0xFF9A9A9A),
+                              color: semantic.inputHint,
                             ),
                           ),
                         ),
@@ -175,9 +176,8 @@ class NewStudentEndScreen extends StatelessWidget {
                             ).popUntil((route) => route.isFirst);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                NewStudentEndScreen.primaryBlue,
-                            foregroundColor: Colors.white,
+                            backgroundColor: semantic.primary,
+                            foregroundColor: semantic.onPrimary,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(
@@ -189,7 +189,7 @@ class NewStudentEndScreen extends StatelessWidget {
                             'Done',
                             style: AppTypography.titleMedium(
                               context,
-                              color: Colors.white,
+                              color: semantic.onPrimary,
                             ),
                           ),
                         ),

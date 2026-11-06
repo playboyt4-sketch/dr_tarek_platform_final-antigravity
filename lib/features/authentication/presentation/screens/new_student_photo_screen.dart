@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import 'new_student_grade_screen.dart';
 
@@ -161,9 +162,10 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
     final viewportHeight = MediaQuery.of(context).size.height -
         MediaQuery.of(context).padding.vertical;
     final uploadSize = context.rs(_PhotoDesign.uploadSize);
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: NewStudentPhotoScreen.backgroundColor,
+      backgroundColor: semantic.canvasWarm,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -197,15 +199,15 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                             // established photo-step illustration.
                             'assets/images/New Student - add a photo.png',
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Image.asset(
+                            errorBuilder: (_, _, _) => Image.asset(
                               'assets/images/new_student photo.png',
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: const Color(0xFFF3F4F6),
-                                child: const Icon(
+                              errorBuilder: (_, _, _) => Container(
+                                color: semantic.surface,
+                                child: Icon(
                                   Icons.camera_alt_outlined,
                                   size: 64,
-                                  color: Colors.grey,
+                                  color: semantic.textSecondary,
                                 ),
                               ),
                             ),
@@ -228,32 +230,28 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                               sigmaY: 10,
                             ),
                             child: Material(
-                              color: Colors.white.withValues(
-                                alpha: 0.25,
-                              ),
+                              color: semantic.glassBackFill,
                               shape: CircleBorder(
                                 side: BorderSide(
-                                  color: Colors.white.withValues(
-                                    alpha: 0.35,
-                                  ),
+                                  color: semantic.glassBackBorder,
                                   width: 1.0,
                                 ),
                               ),
                               child: InkWell(
                                 onTap: () => Navigator.of(context).pop(),
                                 customBorder: const CircleBorder(),
-                                child: const SizedBox(
+                                child: SizedBox(
                                   width: 44,
                                   height: 44,
                                   child: Center(
                                     child: Padding(
-                                      padding: EdgeInsets.only(
+                                      padding: const EdgeInsets.only(
                                         right: 2.0,
                                       ),
                                       child: Icon(
                                         Icons
                                             .arrow_back_ios_new_rounded,
-                                        color: Colors.white,
+                                        color: semantic.glassText,
                                         size: 18,
                                       ),
                                     ),
@@ -280,7 +278,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                             textAlign: TextAlign.center,
                             style: AppTypography.titleLarge(
                               context,
-                              color: AppColors.darkText,
+                              color: semantic.textPrimary,
                             ),
                           ),
                         ),
@@ -313,18 +311,16 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                                                 errorBuilder:
                                                     (
                                                       _,
-                                                      __,
-                                                      ___,
+                                                      _,
+                                                      _,
                                                     ) => Container(
-                                                      color: const Color(
-                                                        0xFFF3F4F6,
-                                                      ),
-                                                      child: const Icon(
+                                                      color: semantic.surface,
+                                                      child: Icon(
                                                         Icons
                                                             .image_not_supported_outlined,
                                                         size: 48,
-                                                        color:
-                                                            Colors.grey,
+                                                        color: semantic
+                                                            .textSecondary,
                                                       ),
                                                     ),
                                               )
@@ -336,18 +332,16 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                                                 errorBuilder:
                                                     (
                                                       _,
-                                                      __,
-                                                      ___,
+                                                      _,
+                                                      _,
                                                     ) => Container(
-                                                      color: const Color(
-                                                        0xFFF3F4F6,
-                                                      ),
-                                                      child: const Icon(
+                                                      color: semantic.surface,
+                                                      child: Icon(
                                                         Icons
                                                             .image_not_supported_outlined,
                                                         size: 48,
-                                                        color:
-                                                            Colors.grey,
+                                                        color: semantic
+                                                            .textSecondary,
                                                       ),
                                                     ),
                                               ),
@@ -359,15 +353,14 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                                       child: Container(
                                         width: 36,
                                         height: 36,
-                                        decoration: const BoxDecoration(
-                                          color: NewStudentPhotoScreen
-                                              .primaryBlue,
+                                        decoration: BoxDecoration(
+                                          color: semantic.primary,
                                           shape: BoxShape.circle,
                                         ),
-                                        child: const Icon(
+                                        child: Icon(
                                           Icons.edit,
                                           size: 18,
-                                          color: Colors.white,
+                                          color: semantic.onPrimary,
                                         ),
                                       ),
                                     ),
@@ -375,16 +368,15 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                                 )
                               : CustomPaint(
                                   painter: _DashedCirclePainter(
-                                    color: const Color(0xFF9A9A9A),
+                                    color: semantic.inputHint,
                                     strokeWidth: 2.0,
                                     dashPattern: const [6, 4],
                                   ),
-                                  child: const Center(
+                                  child: Center(
                                     child: Icon(
                                       Icons.add_rounded,
                                       size: 36,
-                                      color: NewStudentPhotoScreen
-                                          .primaryBlue,
+                                      color: semantic.primary,
                                     ),
                                   ),
                                 ),
@@ -403,9 +395,8 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                         child: ElevatedButton(
                           onPressed: _proceedNext,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                NewStudentPhotoScreen.primaryBlue,
-                            foregroundColor: Colors.white,
+                            backgroundColor: semantic.primary,
+                            foregroundColor: semantic.onPrimary,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(9999),
@@ -415,7 +406,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                             'Next',
                             style: AppTypography.titleMedium(
                               context,
-                              color: Colors.white,
+                              color: semantic.onPrimary,
                             ),
                           ),
                         ),
@@ -489,6 +480,14 @@ class PhotoPickerActionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
+    // Glass sheet over the blurred page: Light keeps the approved cream
+    // 30% fill; Dark uses the neutral dark canvas so the glass stays dark.
+    final sheetFill = semantic.isDark
+        ? semantic.canvasWarm.withValues(alpha: 0.30)
+        : const Color(0x4CFFFCF7);
+    final glassBorderAlpha = semantic.isDark ? 0.20 : 0.35;
+
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: BackdropFilter(
@@ -498,9 +497,11 @@ class PhotoPickerActionSheet extends StatelessWidget {
           height: 350,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           decoration: BoxDecoration(
-            color: const Color(0x4CFFFCF7),
+            color: sheetFill,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: glassBorderAlpha),
+            ),
           ),
           child: Column(
             children: [
@@ -509,13 +510,16 @@ class PhotoPickerActionSheet extends StatelessWidget {
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE5E7EB),
+                  color: semantic.isDark
+                      ? semantic.outline
+                      : const Color(0xFFE5E7EB),
                   borderRadius: BorderRadius.circular(9999),
                 ),
               ),
               const SizedBox(height: 28),
               // Option 1: Take a photo
               _buildOptionTile(
+                context,
                 icon: Icons.camera_alt_outlined,
                 title: 'Take a photo',
                 onTap: () => onSourceSelected(ImageSource.camera),
@@ -523,6 +527,7 @@ class PhotoPickerActionSheet extends StatelessWidget {
               const SizedBox(height: 16),
               // Option 2: Choose from gallery
               _buildOptionTile(
+                context,
                 icon: Icons.photo_library_outlined,
                 title: 'Choose from gallery',
                 onTap: () => onSourceSelected(ImageSource.gallery),
@@ -534,11 +539,15 @@ class PhotoPickerActionSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildOptionTile({
+  Widget _buildOptionTile(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required VoidCallback onTap,
   }) {
+    final semantic = AppSemanticColors.of(context);
+    final tileFillAlpha = semantic.isDark ? 0.08 : 0.15;
+    final tileBorderAlpha = semantic.isDark ? 0.20 : 0.35;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -549,15 +558,17 @@ class PhotoPickerActionSheet extends StatelessWidget {
           height: 54,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.15),
+            color: Colors.white.withValues(alpha: tileFillAlpha),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: tileBorderAlpha),
+            ),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.max,
             children: [
-              Icon(icon, size: 24, color: const Color(0xFF111827)),
+              Icon(icon, size: 24, color: semantic.textPrimary),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
@@ -565,11 +576,11 @@ class PhotoPickerActionSheet extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Google Sans Flex',
                     fontSize: 20,
                     fontWeight: FontWeight.w400,
-                    color: Color(0xFF111827),
+                    color: semantic.textPrimary,
                   ),
                 ),
               ),

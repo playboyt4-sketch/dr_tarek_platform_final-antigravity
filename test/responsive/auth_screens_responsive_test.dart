@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dr_tarek_platform/core/localization/locale_controller.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/screens/login_screen.dart';
+import 'package:dr_tarek_platform/core/widgets/primary_button.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/screens/new_student_welcome_screen.dart';
 import 'package:dr_tarek_platform/features/authentication/presentation/screens/user_type_selection_screen.dart';
 import 'package:dr_tarek_platform/l10n/generated/app_localizations.dart';
@@ -110,7 +111,7 @@ void main() {
         );
 
         expect(tester.takeException(), isNull);
-        expect(find.text('Get Start'), findsOneWidget);
+        expect(find.text('Get started'), findsOneWidget);
       });
     }
   });
@@ -128,7 +129,7 @@ void main() {
       });
     }
 
-    testWidgets('login button height scales between phone and tablet', (
+    testWidgets('login button keeps its canonical height on all devices', (
       tester,
     ) async {
       await _pumpOnDevice(
@@ -137,7 +138,7 @@ void main() {
         const LoginScreen(),
       );
       final phoneButtonHeight =
-          tester.getSize(find.widgetWithText(FilledButton, 'Login')).height;
+          tester.getSize(find.byType(PrimaryButton)).height;
 
       await _pumpOnDevice(
         tester,
@@ -145,10 +146,10 @@ void main() {
         const LoginScreen(),
       );
       final tabletButtonHeight =
-          tester.getSize(find.widgetWithText(FilledButton, 'Login')).height;
+          tester.getSize(find.byType(PrimaryButton)).height;
 
-      expect(phoneButtonHeight, closeTo(64, 1.5));
-      expect(tabletButtonHeight, closeTo(64 * 1.15, 2.5));
+      expect(phoneButtonHeight, closeTo(56, 0.5));
+      expect(tabletButtonHeight, closeTo(56, 0.5));
     });
   });
 }

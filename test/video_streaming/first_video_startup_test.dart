@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dr_tarek_platform/core/constants/bunny_playback_headers.dart';
 import 'package:dr_tarek_platform/features/subject_navigation/domain/entities/subject_learning_entities.dart';
 import 'package:dr_tarek_platform/features/video_streaming/data/repositories/playback_repository.dart';
 import 'package:dr_tarek_platform/features/video_streaming/data/services/video_source_resolver.dart';
@@ -16,12 +17,16 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
   final Map<int, StreamController<VideoEvent>> _events = {};
   Duration lastSeek = Duration.zero;
   int playCalls = 0;
+  /// Every creation request received by the platform layer. Used to prove
+  /// playback headers survive every engine-rebuild path.
+  final List<VideoCreationOptions> creations = <VideoCreationOptions>[];
 
   @override
   Future<void> init() async {}
 
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
+    creations.add(options);
     final id = _nextId++;
     // Single-subscription: buffers the initialized event until the
     // controller subscribes, preserving real platform ordering
@@ -112,6 +117,18 @@ class _AllowEntitlement implements VideoEntitlementGateway {
       const VideoEntitlement(
         allowed: true,
         allowedQualities: {VideoQuality.auto},
+      );
+}
+
+class _QualityEntitlement implements VideoEntitlementGateway {
+  @override
+  Future<VideoEntitlement> resolve({
+    required String userId,
+    required String subjectId,
+  }) async =>
+      const VideoEntitlement(
+        allowed: true,
+        allowedQualities: {VideoQuality.auto, VideoQuality.q720},
       );
 }
 
@@ -222,6 +239,9 @@ void main() {
   });
   tearDownAll(() {
     VideoPlayerPlatform.instance = previousPlatform;
+  });
+  setUp(() {
+    (VideoPlayerPlatform.instance as _FakeVideoPlatform).creations.clear();
   });
 
   group('firstVideoForEpisode (pure pointer lookup)', () {
@@ -583,6 +603,70 @@ void main() {
       // itself — the resume state — is what the background must not touch.
       expect(controller.showResumePrompt, isFalse);
       expect(controller.playbackStatus, PlayerPlaybackStatus.playing);
+    });
+  });
+
+  group('Bunny playback headers reach every native engine creation', () {
+    void expectBunnyHeader(VideoCreationOptions options) {
+      expect(options.dataSource.sourceType, DataSourceType.network);
+      expect(options.dataSource.httpHeaders, bunnyPlaybackHttpHeaders);
+      expect(options.dataSource.httpHeaders['Referer'], isNotEmpty);
+      expect(options.dataSource.formatHint, VideoFormat.hls);
+    }
+
+    test('initial load attaches the Referer and the HLS hint', () async {
+      final platform = VideoPlayerPlatform.instance as _FakeVideoPlatform;
+      final gateway = _ScriptedGateway(
+        loadImpl: (_) async => [_listingVideo('res-listed')],
+        resolveImpl: (_) async => _source(),
+      );
+      final controller = _controller(gateway: gateway);
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+
+      expect(platform.creations, hasLength(1));
+      expectBunnyHeader(platform.creations.single);
+    });
+
+    test('retry reattaches the Referer on the rebuilt engine', () async {
+      final platform = VideoPlayerPlatform.instance as _FakeVideoPlatform;
+      final gateway = _ScriptedGateway(
+        loadImpl: (_) async => [_listingVideo('res-listed')],
+        resolveImpl: (_) async => _source(),
+      );
+      final controller = _controller(gateway: gateway);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await controller.retry();
+
+      expect(platform.creations, hasLength(2));
+      expect(platform.creations.map((c) => c.dataSource.httpHeaders),
+          everyElement(bunnyPlaybackHttpHeaders));
+      expect(platform.creations.map((c) => c.dataSource.formatHint),
+          everyElement(VideoFormat.hls));
+    });
+
+    test('quality change reattaches the Referer on the rebuilt engine',
+        () async {
+      final platform = VideoPlayerPlatform.instance as _FakeVideoPlatform;
+      final gateway = _ScriptedGateway(
+        loadImpl: (_) async => [_listingVideo('res-listed')],
+        resolveImpl: (_) async => _source(),
+      );
+      final controller = _controller(
+        gateway: gateway,
+        entitlement: _QualityEntitlement(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.changeQuality(VideoQuality.q720), isTrue);
+
+      expect(platform.creations, hasLength(2));
+      expect(platform.creations.map((c) => c.dataSource.httpHeaders),
+          everyElement(bunnyPlaybackHttpHeaders));
     });
   });
 }

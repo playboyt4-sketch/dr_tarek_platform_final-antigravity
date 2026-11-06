@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../theme/app_semantic_colors.dart';
+
 /// Canonical floating glass back button (`❖ button/back`).
 ///
 /// Figma spec ("New Student - name", Header Section): 44x44 circle,
@@ -44,14 +46,17 @@ class GlassBackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return ClipOval(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Material(
-          color: Colors.white.withValues(alpha: 0.25),
+          // Light keeps the approved Figma 25% fill / 35% stroke; Dark uses
+          // the approved glass roles (14%/20%) with the semantic glass text.
+          color: semantic.glassBackFill,
           shape: CircleBorder(
             side: BorderSide(
-              color: Colors.white.withValues(alpha: 0.35),
+              color: semantic.glassBackBorder,
               width: 1.0,
             ),
           ),
@@ -61,12 +66,12 @@ class GlassBackButton extends StatelessWidget {
             child: SizedBox(
               width: size,
               height: size,
-              child: const Center(
+              child: Center(
                 child: Padding(
-                  padding: EdgeInsets.only(right: 2.0),
+                  padding: const EdgeInsets.only(right: 2.0),
                   child: Icon(
                     Icons.chevron_left,
-                    color: Colors.white,
+                    color: semantic.glassText,
                     size: 20,
                   ),
                 ),

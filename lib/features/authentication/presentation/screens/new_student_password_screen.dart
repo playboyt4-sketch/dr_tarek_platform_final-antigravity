@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../profile/data/services/pending_profile_photo_store.dart';
 import '../providers/auth_provider.dart';
 import '../providers/registration_form_provider.dart';
@@ -229,9 +230,10 @@ class _NewStudentPasswordScreenState
     // to tune.
     final viewportHeight = MediaQuery.of(context).size.height -
         MediaQuery.of(context).padding.vertical;
+    final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
-      backgroundColor: NewStudentPasswordScreen.backgroundColor,
+      backgroundColor: semantic.canvas,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const ClampingScrollPhysics(),
@@ -266,11 +268,11 @@ class _NewStudentPasswordScreenState
                             _PasswordDesign.illustrationAsset,
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => Container(
-                              color: const Color(0xFFF3F4F6),
-                              child: const Icon(
+                              color: semantic.surface,
+                              child: Icon(
                                 Icons.shield_outlined,
                                 size: 64,
-                                color: Colors.grey,
+                                color: semantic.textSecondary,
                               ),
                             ),
                           ),
@@ -297,10 +299,10 @@ class _NewStudentPasswordScreenState
                             sigmaY: 10,
                           ),
                           child: Material(
-                            color: Colors.white.withValues(alpha: 0.25),
+                            color: semantic.glassBackFill,
                             shape: CircleBorder(
                               side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.35),
+                                color: semantic.glassBackBorder,
                                 width: 1.0,
                               ),
                             ),
@@ -308,7 +310,7 @@ class _NewStudentPasswordScreenState
                               onTap: () =>
                                   Navigator.of(context).pop(),
                               customBorder: const CircleBorder(),
-                              child: const SizedBox(
+                              child: SizedBox(
                                 width: 44,
                                 height: 44,
                                 child: Center(
@@ -319,7 +321,7 @@ class _NewStudentPasswordScreenState
                                     child: Icon(
                                       Icons
                                           .arrow_back_ios_new_rounded,
-                                      color: Colors.white,
+                                      color: semantic.glassText,
                                       size: 18,
                               ),
                             ),
@@ -340,16 +342,16 @@ class _NewStudentPasswordScreenState
                         width: context.rs(_PasswordDesign.titleWidth),
                         height:
                             context.rsV(_PasswordDesign.titleHeight),
-                        child: const Center(
+                        child: Center(
                           child: Text(
                             'Secure your account',
-                            key: Key('passwordTitle'),
+                            key: const Key('passwordTitle'),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontFamily: 'Google Sans Flex',
                               fontSize: 28,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF111827),
+                              color: semantic.textPrimary,
                               height: 1.2,
                             ),
                           ),
@@ -374,25 +376,25 @@ class _NewStudentPasswordScreenState
                               setState(() => _errorMessage = null);
                             }
                           },
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'Google Sans Flex',
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
-                            color: Color(0xFF111827),
+                            color: semantic.textPrimary,
                           ),
                           decoration: InputDecoration(
                             hintText: 'Enter password',
-                            hintStyle: const TextStyle(
+                            hintStyle: TextStyle(
                               fontFamily: 'Google Sans Flex',
                               fontSize: 14,
-                              color: Color(0xFF9CA3AF),
+                              color: semantic.textTertiary,
                             ),
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword
                                     ? Icons.visibility_off_outlined
                                     : Icons.visibility_outlined,
-                                color: const Color(0xFF6B7280),
+                                color: semantic.textSecondary,
                                 size: 22,
                               ),
                               onPressed: _toggleObscurePassword,
@@ -403,21 +405,20 @@ class _NewStudentPasswordScreenState
                             ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE5E7EB),
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderSubtle,
                               ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE5E7EB),
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderSubtle,
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color:
-                                    NewStudentPasswordScreen.primaryBlue,
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderFocused,
                                 width: 1.5,
                               ),
                             ),
@@ -434,7 +435,7 @@ class _NewStudentPasswordScreenState
                         width: context.rs(_PasswordDesign.helperWidth),
                         height:
                             context.rsV(_PasswordDesign.helperHeight),
-                        child: const Center(
+                        child: Center(
                           child: Text(
                             'كلمة المرور يجب أن تحتوي على 8 أحرف ورقم على الأقل',
                             textAlign: TextAlign.center,
@@ -442,7 +443,7 @@ class _NewStudentPasswordScreenState
                               fontFamily: 'Google Sans Flex',
                               fontSize: 13,
                               fontWeight: FontWeight.w100,
-                              color: Color(0xFF6B7280),
+                              color: semantic.textSecondary,
                               height: 1.2,
                             ),
                           ),
@@ -466,25 +467,25 @@ class _NewStudentPasswordScreenState
                               setState(() => _errorMessage = null);
                             }
                           },
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'Google Sans Flex',
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
-                            color: Color(0xFF111827),
+                            color: semantic.textPrimary,
                           ),
                           decoration: InputDecoration(
                             hintText: 'Re-Enter password',
-                            hintStyle: const TextStyle(
+                            hintStyle: TextStyle(
                               fontFamily: 'Google Sans Flex',
                               fontSize: 14,
-                              color: Color(0xFF9CA3AF),
+                              color: semantic.textTertiary,
                             ),
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscureConfirm
                                     ? Icons.visibility_off_outlined
                                     : Icons.visibility_outlined,
-                                color: const Color(0xFF6B7280),
+                                color: semantic.textSecondary,
                                 size: 22,
                               ),
                               onPressed: _toggleObscureConfirm,
@@ -495,21 +496,20 @@ class _NewStudentPasswordScreenState
                             ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE5E7EB),
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderSubtle,
                               ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFE5E7EB),
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderSubtle,
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(
-                                color:
-                                    NewStudentPasswordScreen.primaryBlue,
+                              borderSide: BorderSide(
+                                color: semantic.inputBorderFocused,
                                 width: 1.5,
                               ),
                             ),
@@ -529,10 +529,12 @@ class _NewStudentPasswordScreenState
                           child: Text(
                             _errorMessage!,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'Google Sans Flex',
                               fontSize: 12,
-                              color: Colors.redAccent,
+                              color: semantic.isDark
+                                  ? semantic.error
+                                  : Colors.redAccent,
                             ),
                           ),
                         ),
@@ -552,20 +554,19 @@ class _NewStudentPasswordScreenState
                           onPressed:
                               _submitting ? null : _validateAndSubmit,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                NewStudentPasswordScreen.primaryBlue,
-                            foregroundColor: Colors.white,
+                            backgroundColor: semantic.primary,
+                            foregroundColor: semantic.onPrimary,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(9999),
                             ),
                           ),
                           child: _submitting
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 24,
                                   height: 24,
                                   child: CircularProgressIndicator(
-                                    color: Colors.white,
+                                    color: semantic.onPrimary,
                                     strokeWidth: 2.5,
                                   ),
                                 )

@@ -428,7 +428,8 @@ class ResponsiveInput extends StatelessWidget {
                 ),
               ),
               filled: true,
-              fillColor: Colors.transparent,
+              // Product requirement: editable fields are white.
+              fillColor: AppColors.canvas,
               prefixIcon: prefixIcon,
               suffixIcon: suffixIcon,
             ),

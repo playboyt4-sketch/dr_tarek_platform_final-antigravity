@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 
 /// Single source of truth for the `Tarek el araby` brand signature.
@@ -19,16 +20,23 @@ class BrandSignatureLogo extends StatelessWidget {
   /// the Hero flight moves position only and must not rescale the logo).
   final double designPx;
 
-  final Color color;
+  /// Explicit signature colour (e.g. the Welcome screen's brand red).
+  ///
+  /// When null, Light Mode keeps the approved `Colors.black` (unchanged) and
+  /// Dark Mode uses the semantic `textPrimary` (`#F2F4F7`), per ADR-009 D9.
+  final Color? color;
 
   const BrandSignatureLogo({
     super.key,
     this.designPx = 128,
-    this.color = Colors.black,
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
+    final effectiveColor =
+        color ?? (semantic.isDark ? semantic.textPrimary : Colors.black);
     return SizedBox(
       width: double.infinity,
       child: FittedBox(
@@ -40,7 +48,7 @@ class BrandSignatureLogo extends StatelessWidget {
           style: AppTypography.signature(
             context,
             designPx: designPx,
-            color: color,
+            color: effectiveColor,
           ),
         ),
       ),

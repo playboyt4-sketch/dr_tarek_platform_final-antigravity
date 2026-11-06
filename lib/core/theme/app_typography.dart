@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../responsive/responsive.dart';
 import 'app_colors.dart';
+import 'app_semantic_colors.dart';
 
 abstract final class AppFontFamilies {
   static const googleSansFlex = 'Google Sans Flex';
@@ -35,58 +36,58 @@ abstract final class AppTypography {
 
   static TextStyle titleLarge(
     BuildContext context, {
-    Color color = AppColors.darkText,
+    Color? color,
   }) => TextStyle(
     fontFamily: AppFontFamilies.googleSansFlex,
     fontSize: context.rsFont(28),
     fontWeight: FontWeight.w400,
     height: 36 / 28,
-    color: color,
+    color: color ?? AppSemanticColors.of(context).textPrimary,
   );
 
   static TextStyle titleMedium(
     BuildContext context, {
-    Color color = AppColors.darkText,
+    Color? color,
   }) => TextStyle(
     fontFamily: AppFontFamilies.googleSansFlex,
     fontSize: context.rsFont(20),
     fontWeight: FontWeight.w400,
     height: 26 / 20,
-    color: color,
+    color: color ?? AppSemanticColors.of(context).textPrimary,
   );
 
   static TextStyle bodyRegular(
     BuildContext context, {
-    Color color = AppColors.darkText,
+    Color? color,
   }) => TextStyle(
     fontFamily: AppFontFamilies.googleSansFlex,
     fontSize: context.rsFont(14),
     fontWeight: FontWeight.w400,
     height: 20 / 14,
-    color: color,
+    color: color ?? AppSemanticColors.of(context).textPrimary,
   );
 
   static TextStyle bodyThin(
     BuildContext context, {
-    Color color = AppColors.mediumGray,
+    Color? color,
   }) => TextStyle(
     fontFamily: AppFontFamilies.googleSansFlex,
     fontSize: context.rsFont(14),
     fontWeight: FontWeight.w100,
     fontVariations: const [FontVariation('wght', 100)],
     height: 20 / 14,
-    color: color,
+    color: color ?? AppSemanticColors.of(context).textSecondary,
   );
 
   static TextStyle captionSmall(
     BuildContext context, {
-    Color color = AppColors.mediumGray,
+    Color? color,
   }) => TextStyle(
     fontFamily: AppFontFamilies.googleSansFlex,
     fontSize: context.rsFont(12),
     fontWeight: FontWeight.w400,
     height: 16 / 12,
-    color: color,
+    color: color ?? AppSemanticColors.of(context).textSecondary,
   );
 
   static TextStyle signature(
@@ -99,6 +100,12 @@ abstract final class AppTypography {
     fontWeight: FontWeight.w400,
     color: color,
     height: 1.0,
+    // The signature is never underlined. Without this, a Hero flight
+    // re-parents the logo Text into the Overlay, where it merges with
+    // MaterialApp's fallback `DefaultTextStyle` (yellow double underline,
+    // `_errorTextStyle` in app.dart) and paints a yellow bar under the
+    // logo while it flies.
+    decoration: TextDecoration.none,
   );
 
   /// EXPERIMENTAL brand-signature style (design experiment — NOT an

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/routing/app_routes.dart';
+import '../../../../core/theme/app_semantic_colors.dart';
 import '../widgets/brand_signature_logo.dart';
 
 
@@ -30,9 +31,6 @@ class SplashScreen extends StatefulWidget {
 
 
 class _SplashScreenState extends State<SplashScreen> {
-  static const Color _startBackground = Color(0xFFFFFFFF);
-  static const Color _endBackground = Color(0xFFFFFCF7);
-
   // Figma-specified timing.
   static const Duration _appearDelay = Duration(milliseconds: 300);
   static const Duration _fadeDuration = Duration(milliseconds: 800);
@@ -62,12 +60,13 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     return Scaffold(
-      backgroundColor: _startBackground,
+      backgroundColor: semantic.canvas,
       body: AnimatedContainer(
         duration: _fadeDuration,
         curve: Curves.easeOut,
-        color: _visible ? _endBackground : _startBackground,
+        color: _visible ? semantic.canvasWarm : semantic.canvas,
         child: Center(
           child: Hero(
             tag: 'brand_logo_signature',

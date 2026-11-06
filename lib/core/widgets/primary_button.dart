@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_typography.dart';
 
 /// Figma `❖ button/primary` variants.
@@ -23,13 +24,14 @@ enum ButtonVariant {
 /// before this file — sibling auth screens used inline `ElevatedButton`
 /// markup and `core/widgets/app_button.dart` (`AppButton`) uses different
 /// geometry (52px tall, 12px radius). This widget is the single canonical
-/// primary button going forward: fix the remaining inline copies to use it
-/// in follow-up tasks instead of copying this markup again.
+/// primary button going forward.
 ///
-/// - [ButtonVariant.solid]: fill `#1D4ED8`, white text (design_system.md
-///   "Style = Solid (فوق الشاشات البيضاء)").
-/// - [ButtonVariant.glass]: fill White 20% + 1px White 30% stroke with a
-///   24px backdrop blur (design_system.md "Style = Glass").
+/// Colours come from [AppSemanticColors] (ADR-009):
+/// - [ButtonVariant.solid]: Light `#1D4ED8` fill / white text;
+///   Dark `#7FA9FF` fill / `#08142B` text.
+/// - [ButtonVariant.glass]: Light White 20% fill + 30% border with white
+///   text; Dark White 12% fill + 20% border with `#F2F4F7` text.
+///   Blur radius (24px) and geometry are identical in both appearances.
 class PrimaryButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -44,6 +46,12 @@ class PrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
+    final textStyle = AppTypography.titleMedium(
+      context,
+      color: semantic.isDark ? semantic.glassText : semantic.onPrimary,
+    );
+
     if (variant == ButtonVariant.glass) {
       return SizedBox(
         width: double.infinity,
@@ -54,11 +62,18 @@ class PrimaryButton extends StatelessWidget {
             filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: AppColors.buttonGlassBg,
+                color: semantic.glassButtonFill,
                 borderRadius: BorderRadius.circular(AppShapes.radiusFull),
-                border: Border.all(color: AppColors.buttonGlassBorder),
+                border: Border.all(color: semantic.glassButtonBorder),
               ),
-              child: _Label(label: label, onPressed: onPressed),
+              child: _Label(
+                label: label,
+                onPressed: onPressed,
+                textStyle: AppTypography.titleMedium(
+                  context,
+                  color: semantic.glassText,
+                ),
+              ),
             ),
           ),
         ),
@@ -71,20 +86,20 @@ class PrimaryButton extends StatelessWidget {
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.buttonSolid,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor:
-              AppColors.buttonSolid.withValues(alpha: 0.4),
-          disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
+          backgroundColor: semantic.primary,
+          foregroundColor: semantic.onPrimary,
+          disabledBackgroundColor: semantic.primary.withValues(
+            alpha: semantic.isDark ? 0.30 : 0.40,
+          ),
+          disabledForegroundColor: semantic.onPrimary.withValues(
+            alpha: semantic.isDark ? 0.60 : 0.80,
+          ),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppShapes.radiusFull),
           ),
         ),
-        child: Text(
-          label,
-          style: AppTypography.titleMedium(context, color: Colors.white),
-        ),
+        child: Text(label, style: textStyle),
       ),
     );
   }
@@ -94,8 +109,13 @@ class PrimaryButton extends StatelessWidget {
 class _Label extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
+  final TextStyle textStyle;
 
-  const _Label({required this.label, required this.onPressed});
+  const _Label({
+    required this.label,
+    required this.onPressed,
+    required this.textStyle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -108,7 +128,7 @@ class _Label extends StatelessWidget {
           child: Text(
             label,
             textAlign: TextAlign.center,
-            style: AppTypography.titleMedium(context, color: Colors.white),
+            style: textStyle,
           ),
         ),
       ),

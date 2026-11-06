@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_colors.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_typography.dart';
 
 enum AppButtonVariant { filled, outlined, text }
@@ -25,6 +25,7 @@ class AppButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semantic = AppSemanticColors.of(context);
     final child = isLoading
         ? const SizedBox(
             width: 20,
@@ -38,13 +39,31 @@ class AppButton extends StatelessWidget {
         onPressed: isLoading ? null : onPressed,
         icon: icon == null ? const SizedBox.shrink() : Icon(icon),
         label: child,
-        style: _filledStyle,
+        style: FilledButton.styleFrom(
+          // Owner decision D8: this component keeps the second approved brand
+          // blue (`#1A73E8` in Light) so Light Mode is unchanged.
+          backgroundColor: semantic.primaryLegacy,
+          foregroundColor: semantic.onPrimary,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: AppTypography.labelLarge,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       AppButtonVariant.outlined => OutlinedButton.icon(
         onPressed: isLoading ? null : onPressed,
         icon: icon == null ? const SizedBox.shrink() : Icon(icon),
         label: child,
-        style: _outlinedStyle,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: semantic.primaryLegacy,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: AppTypography.labelLarge,
+          side: BorderSide(color: semantic.primaryLegacy),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       AppButtonVariant.text => TextButton.icon(
         onPressed: isLoading ? null : onPressed,
@@ -55,20 +74,4 @@ class AppButton extends StatelessWidget {
 
     return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
-
-  static final _filledStyle = FilledButton.styleFrom(
-    backgroundColor: AppColors.primary,
-    foregroundColor: Colors.white,
-    minimumSize: const Size.fromHeight(52),
-    textStyle: AppTypography.labelLarge,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  );
-
-  static final _outlinedStyle = OutlinedButton.styleFrom(
-    foregroundColor: AppColors.primary,
-    minimumSize: const Size.fromHeight(52),
-    textStyle: AppTypography.labelLarge,
-    side: const BorderSide(color: AppColors.primary),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  );
 }
