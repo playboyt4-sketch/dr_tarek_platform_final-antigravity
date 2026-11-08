@@ -17,6 +17,8 @@ import 'app/app.dart';
 import 'config/environment.dart';
 import 'core/errors/failure.dart';
 import 'core/localization/locale_controller.dart';
+import 'core/routing/app_router.dart';
+import 'core/routing/notification_deep_link.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/web/video_hls_backend_stub.dart'
     if (dart.library.js_interop) 'core/web/video_hls_backend_web.dart';
@@ -50,6 +52,17 @@ Future<void> _dropUnrememberedSession() async {
   } catch (_) {
     // Never block startup on the session sweep.
   }
+}
+
+/// Opens the destination carried by a tapped push notification. Deferred to
+/// the next frame because FCM can deliver the cold-start message before the
+/// router has mounted its first frame.
+void _openNotificationDestination(String? deepLink) {
+  final String? path = notificationDeepLinkRoute(deepLink);
+  if (path == null) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    appRouter.go(path);
+  });
 }
 
 Future<void> main() async {
@@ -161,6 +174,7 @@ Future<void> main() async {
           functions: FirebaseFunctions.instance,
           storage: const FlutterSecureStorage(),
           auth: FirebaseAuth.instance,
+          onNotificationTap: _openNotificationDestination,
         ).start();
       } catch (error) {
         debugPrint('FCM start skipped: $error');

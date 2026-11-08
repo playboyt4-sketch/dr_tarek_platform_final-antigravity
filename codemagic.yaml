@@ -261,6 +261,46 @@ workflows:
             --dart-define=ENV=prod \
             --build-number="$BUILD_NUMBER_ARG" \
             --export-options-plist=$HOME/export_options.plist
+      # Option A guard (owner-approved): a TestFlight/App Store archive must be
+      # signed with `aps-environment=production`. The App Store provisioning
+      # profile carries that value, but this asserts the *signed archive* rather
+      # than trusting the profile, and stops the workflow before publishing if
+      # the entitlement is missing or still `development` (sandbox APNs).
+      # It changes no signing semantics - it only verifies the result.
+      - name: Verify production APNs entitlement
+        script: |
+          set -e
+          APP="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          ENT_PLIST="$(mktemp)"
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: archived app not found at $APP"
+            exit 1
+          fi
+          codesign -d --entitlements :- "$APP" > "$ENT_PLIST" 2>/dev/null || true
+          if ! plutil -lint "$ENT_PLIST" >/dev/null 2>&1; then
+            # Older codesign builds emit the plist on stderr instead of stdout.
+            codesign -d --entitlements :- "$APP" 2>&1 | sed -n '/<?xml/,/<\/plist>/p' > "$ENT_PLIST"
+          fi
+          if [ ! -s "$ENT_PLIST" ] || ! plutil -lint "$ENT_PLIST" >/dev/null 2>&1; then
+            echo "ERROR: could not extract a valid entitlements plist from the signed app."
+            exit 1
+          fi
+          APS="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$ENT_PLIST" 2>/dev/null || true)"
+          echo "Signed archive aps-environment: '${APS:-<missing>}'"
+          if [ -z "$APS" ]; then
+            echo "ERROR: aps-environment is MISSING from the signed archive; the app cannot register with APNs."
+            echo "--- signed entitlements ---"
+            cat "$ENT_PLIST"
+            exit 1
+          fi
+          if [ "$APS" != "production" ]; then
+            echo "ERROR: aps-environment is '$APS' but a TestFlight/App Store archive MUST be 'production'."
+            echo "Sandbox (development) tokens are not delivered to TestFlight/App Store installs."
+            echo "--- signed entitlements ---"
+            cat "$ENT_PLIST"
+            exit 1
+          fi
+          echo "OK: signed archive carries aps-environment=production."
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive

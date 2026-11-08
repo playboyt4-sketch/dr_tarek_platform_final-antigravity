@@ -36,6 +36,10 @@ class FcmPushService {
   final FirebaseAuth auth;
   final FlutterLocalNotificationsPlugin? localNotifications;
 
+  /// Invoked with the `deep_link` payload when the user taps a push
+  /// notification (foreground local notification, background, or terminated).
+  final void Function(String? deepLink)? onNotificationTap;
+
   StreamSubscription<String>? _tokenRefreshSub;
   StreamSubscription<User?>? _authStateSub;
   StreamSubscription<RemoteMessage>? _foregroundSub;
@@ -48,6 +52,7 @@ class FcmPushService {
     required this.storage,
     required this.auth,
     this.localNotifications,
+    this.onNotificationTap,
   });
 
   /// Canonical binding id first (`device_id_uuidv4` — written by
@@ -112,6 +117,11 @@ class FcmPushService {
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(),
         ),
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          // Foreground pushes are rendered locally; route them exactly like a
+          // system-tray tap so the payload's destination is honored.
+          onNotificationTap?.call(response.payload);
+        },
       );
       _channelReady = true;
     } catch (error) {
@@ -156,6 +166,7 @@ class FcmPushService {
       'deep_link=${message.data['deep_link']}',
       name: 'fcm',
     );
+    onNotificationTap?.call(message.data['deep_link'] as String?);
   }
 
   Future<void> dispose() async {
