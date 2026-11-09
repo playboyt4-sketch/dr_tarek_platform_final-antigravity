@@ -35,6 +35,12 @@ final deviceBindingProvider =
     );
 
 class DeviceBindingController extends AsyncNotifier<bool> {
+  /// Coalesces concurrent validations for the same user. Two bootstraps can
+  /// fire a few milliseconds apart; without this, both calls race inside
+  /// `registerKnownDevice` and can create duplicate registry rows.
+  String? _validationUserId;
+  Future<void>? _validationInFlight;
+
   @override
   Future<bool> build() async {
     // validateDevice() is invoked imperatively from the session bootstrap;
@@ -44,7 +50,25 @@ class DeviceBindingController extends AsyncNotifier<bool> {
     return false;
   }
 
-  Future<void> validateDevice({required String userId}) async {
+  Future<void> validateDevice({required String userId}) {
+    final inFlight = _validationInFlight;
+    if (inFlight != null && _validationUserId == userId) {
+      return inFlight;
+    }
+
+    final future = _runValidation(userId);
+    _validationUserId = userId;
+    _validationInFlight = future;
+
+    return future.whenComplete(() {
+      if (identical(_validationInFlight, future)) {
+        _validationInFlight = null;
+        _validationUserId = null;
+      }
+    });
+  }
+
+  Future<void> _runValidation(String userId) async {
     state = const AsyncLoading();
 
     state = await AsyncValue.guard(() async {

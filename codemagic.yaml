@@ -67,10 +67,10 @@ workflows:
         script: |
           set -e
           flutter analyze lib test --no-fatal-infos --no-fatal-warnings
-      - name: Unit tests core (env selector, error mapping)
+      - name: Unit tests (core + push registration policy)
         script: |
           set -e
-          flutter test test/core
+          flutter test test/core test/notifications
       - name: Build iOS archive for staging (unsigned)
         script: |
           set -e
@@ -144,10 +144,10 @@ workflows:
         script: |
           set -e
           flutter analyze lib test --no-fatal-infos --no-fatal-warnings
-      - name: Unit tests core (env selector, error mapping)
+      - name: Unit tests (core + push registration policy)
         script: |
           set -e
-          flutter test test/core
+          flutter test test/core test/notifications
       - name: Set up keychain for code signing
         script: keychain initialize
       - name: Fetch or create signing files (App Store distribution)
@@ -238,10 +238,10 @@ workflows:
         script: |
           set -e
           flutter analyze lib test --no-fatal-infos --no-fatal-warnings
-      - name: Unit tests core (env selector, error mapping)
+      - name: Unit tests (core + push registration policy)
         script: |
           set -e
-          flutter test test/core
+          flutter test test/core test/notifications
       - name: Set up keychain for code signing
         script: keychain initialize
       - name: Fetch or create signing files (App Store distribution)
