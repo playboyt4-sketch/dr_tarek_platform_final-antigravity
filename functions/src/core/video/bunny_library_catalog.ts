@@ -100,12 +100,20 @@ function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-/** True only for a structurally valid numeric library id. */
+/**
+ * True only for a structurally valid numeric library id.
+ * @param {unknown} value Candidate library id.
+ * @return {boolean} True when valid.
+ */
 export function isValidBunnyLibraryId(value: unknown): boolean {
   return LIBRARY_ID.test(str(value));
 }
 
-/** True only for a Bunny system playback hostname. */
+/**
+ * True only for a Bunny system playback hostname.
+ * @param {unknown} value Candidate hostname.
+ * @return {boolean} True when valid.
+ */
 export function isValidBunnyPlaybackHost(value: unknown): boolean {
   return PLAYBACK_HOST.test(str(value).toLowerCase());
 }

@@ -37,6 +37,8 @@
  */
 
 import {
+  BunnyTokenAuthMode,
+  bunnyCatalogTokenAuthMode,
   bunnySecretNames,
   isBunnyCatalogEntryUsable,
   parseBunnyCatalogEntry,
@@ -110,6 +112,7 @@ export interface BunnyResolvedCredentials {
   streamApiKey: string | null;
   /** Present only when the caller asked for it. */
   tokenKey: string | null;
+  tokenAuthMode?: BunnyTokenAuthMode;
 }
 
 export type BunnyCredentialResolution =
@@ -123,6 +126,7 @@ interface BunnyCredentialPlan {
   secretNames: {streamApiKey: string; tokenKey: string} | null;
   apiLibraryId: string;
   playbackUrlTemplate: string;
+  tokenAuthMode?: BunnyTokenAuthMode;
 }
 
 export type BunnyCredentialPlanResult =
@@ -231,12 +235,16 @@ export function planBunnyLibraryCredentialResolution(input: {
         failure("incomplete_configuration", libraryId) :
         failure("library_not_activated", libraryId);
     }
+    const mode = bunnyCatalogTokenAuthMode(parsed.entry) ?? "signed";
+    const derivedTemplate = `https://${parsed.entry.playbackHost}/{videoId}/playlist.m3u8`;
+    const resolvedPlaybackUrlTemplate =
+      playbackUrlTemplate !== "" ? playbackUrlTemplate : derivedTemplate;
     const expected = bunnySecretNames(libraryId);
-    if (
-      parsed.entry.credentialRefs.streamApiKey !== expected.streamApiKey ||
-      parsed.entry.credentialRefs.tokenKey !== expected.tokenKey
-    ) {
+    if (parsed.entry.credentialRefs.streamApiKey !== expected.streamApiKey) {
       // A catalog row may never point at another library's secret.
+      return failure("credential_name_mismatch", libraryId);
+    }
+    if (mode === "signed" && parsed.entry.credentialRefs.tokenKey !== expected.tokenKey) {
       return failure("credential_name_mismatch", libraryId);
     }
     return {
@@ -247,7 +255,8 @@ export function planBunnyLibraryCredentialResolution(input: {
         definition,
         secretNames: expected,
         apiLibraryId,
-        playbackUrlTemplate,
+        playbackUrlTemplate: resolvedPlaybackUrlTemplate,
+        tokenAuthMode: mode,
       },
     };
   }
@@ -321,7 +330,7 @@ export async function resolveBunnyLibraryCredentials(input: {
       if (!read.ok) return read;
       streamApiKey = read.value;
     }
-    if (input.need.tokenKey) {
+    if (input.need.tokenKey && plan.tokenAuthMode !== "unsigned") {
       const read = await readSecretValue(
         input.deps.secrets,
         plan.secretNames.tokenKey,
@@ -329,6 +338,8 @@ export async function resolveBunnyLibraryCredentials(input: {
       );
       if (!read.ok) return read;
       tokenKey = read.value;
+    } else if (plan.tokenAuthMode === "unsigned") {
+      tokenKey = "";
     }
   } else {
     // Legacy default: the values are that library's own mounted env secrets.
@@ -357,6 +368,7 @@ export async function resolveBunnyLibraryCredentials(input: {
       playbackUrlTemplate: plan.playbackUrlTemplate,
       streamApiKey,
       tokenKey,
+      tokenAuthMode: plan.tokenAuthMode,
     },
   };
 }
@@ -408,6 +420,7 @@ export function buildBunnyLibraryEnvSnapshot(input: {
     streamApiKey?: string | null;
     tokenKey?: string | null;
     apiLibraryId?: string | null;
+    playbackUrlTemplate?: string | null;
   };
   definition?: BunnyLibraryDefinition | null;
 }): BunnyLibraryEnv {
@@ -428,6 +441,12 @@ export function buildBunnyLibraryEnvSnapshot(input: {
     typeof input.credentials.apiLibraryId === "string"
   ) {
     snapshot[definition.streamLibraryIdVar] = input.credentials.apiLibraryId;
+  }
+  if (
+    typeof input.credentials.playbackUrlTemplate === "string" &&
+    input.credentials.playbackUrlTemplate.trim() !== ""
+  ) {
+    snapshot[definition.playbackUrlTemplateVar] = input.credentials.playbackUrlTemplate;
   }
   return snapshot;
 }
@@ -468,6 +487,7 @@ export async function resolveBunnyStreamApiCredentials(input: {
     credentials: {
       streamApiKey: resolved.credentials.streamApiKey,
       apiLibraryId: resolved.credentials.apiLibraryId,
+      playbackUrlTemplate: resolved.credentials.playbackUrlTemplate,
     },
   });
   const runtime = resolveBunnyStreamApiRuntime(
@@ -508,12 +528,14 @@ export async function resolveBunnyPlaybackCredentials(input: {
     credentials: {
       tokenKey: resolved.credentials.tokenKey,
       apiLibraryId: resolved.credentials.apiLibraryId,
+      playbackUrlTemplate: resolved.credentials.playbackUrlTemplate,
     },
   });
   const runtime = resolveBunnyPlaybackRuntime(
     snapshot,
     resolved.credentials.libraryId,
     resolveBunnyLibraryDefinition(resolved.credentials.libraryId, input.deps.env),
+    resolved.credentials.tokenAuthMode,
   );
   if (!runtime.ok) {
     return mapRegistryFailure(

@@ -177,7 +177,8 @@ export type BunnyLibraryFailureReason =
   | "library_not_activated"
   | "incomplete_configuration"
   | "library_mismatch"
-  | "legacy_fallback_disabled";
+  | "legacy_fallback_disabled"
+  | "library_not_resolved";
 
 export type BunnyLibraryResolution =
   | {ok: true; libraryId: string; source: "resource" | "legacy_default"}
@@ -187,6 +188,7 @@ export interface BunnyPlaybackRuntime {
   libraryId: string;
   playbackUrlTemplate: string;
   tokenKey: string;
+  tokenAuthMode?: "signed" | "unsigned";
 }
 
 export type BunnyPlaybackRuntimeResult =
@@ -347,8 +349,8 @@ export function resolveBunnyLibraryForResource(
   if (fallbackDisabled) {
     return {
       ok: false,
-      reason: "legacy_fallback_disabled",
-      libraryId: defaultLibraryId,
+      reason: "library_not_resolved",
+      libraryId: null,
     };
   }
   return {
@@ -360,7 +362,8 @@ export function resolveBunnyLibraryForResource(
 
 /**
  * Playback signing configuration for one library: the pull-zone template
- * plus its token-signing key. Fails closed when either is missing.
+ * plus its token-signing key (for signed libraries). Fails closed when
+ * required configuration is missing.
  *
  * `definitionOverride` lets the Mission 17 Secret Manager resolver supply the
  * definition it derived for a catalog-only library (Mission 8 §H.3 adapter).
@@ -368,12 +371,14 @@ export function resolveBunnyLibraryForResource(
  * @param {BunnyLibraryEnv} env Env snapshot.
  * @param {string} libraryId Canonical library id.
  * @param {BunnyLibraryDefinition|null} definitionOverride Resolved definition.
+ * @param {"signed"|"unsigned"|null} tokenAuthMode Protection mode.
  * @return {BunnyPlaybackRuntimeResult} Runtime config or a typed failure.
  */
 export function resolveBunnyPlaybackRuntime(
   env: BunnyLibraryEnv,
   libraryId: string,
   definitionOverride?: BunnyLibraryDefinition | null,
+  tokenAuthMode?: "signed" | "unsigned" | null,
 ): BunnyPlaybackRuntimeResult {
   const normalized = normalizeBunnyLibraryId(libraryId);
   const definition =
@@ -393,6 +398,27 @@ export function resolveBunnyPlaybackRuntime(
     return {ok: false, reason: "library_not_activated", libraryId: definition.libraryId};
   }
   const playbackUrlTemplate = readEnv(env, definition.playbackUrlTemplateVar);
+  const effectiveMode = tokenAuthMode ?? "signed";
+
+  if (effectiveMode === "unsigned") {
+    if (playbackUrlTemplate === "") {
+      return {
+        ok: false,
+        reason: "incomplete_configuration",
+        libraryId: definition.libraryId,
+      };
+    }
+    return {
+      ok: true,
+      runtime: {
+        libraryId: definition.libraryId,
+        playbackUrlTemplate,
+        tokenKey: "",
+        tokenAuthMode: "unsigned",
+      },
+    };
+  }
+
   const tokenKey = readEnv(env, definition.tokenKeyVar);
   if (playbackUrlTemplate === "" || tokenKey === "") {
     return {
@@ -407,6 +433,7 @@ export function resolveBunnyPlaybackRuntime(
       libraryId: definition.libraryId,
       playbackUrlTemplate,
       tokenKey,
+      ...(tokenAuthMode !== undefined && tokenAuthMode !== null ? {tokenAuthMode} : {}),
     },
   };
 }

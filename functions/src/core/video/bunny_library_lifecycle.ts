@@ -277,13 +277,16 @@ export interface BunnyLibraryAuditInput {
     | "bunny_library_register"
     | "bunny_library_verify"
     | "bunny_library_deactivate"
-    | "bunny_library_reactivate";
+    | "bunny_library_reactivate"
+    | "bunny_video_discover"
+    | "bunny_library_associate"
+    | "bunny_library_migrate";
   actorId: string;
   actorRole: string;
   permissionBasis: string;
   libraryId: string;
-  previousStatus: BunnyCatalogStatus | null;
-  newStatus: BunnyCatalogStatus | null;
+  previousStatus?: BunnyCatalogStatus | null;
+  newStatus?: BunnyCatalogStatus | null;
   reasonCode?: string | null;
   reason?: string | null;
   source?: string | null;
@@ -307,8 +310,8 @@ export function buildBunnyLibraryAuditEntry(
     actor_id: input.actorId,
     actor_role: input.actorRole,
     permission_basis: input.permissionBasis,
-    previous_status: input.previousStatus,
-    new_status: input.newStatus,
+    previous_status: input.previousStatus ?? null,
+    new_status: input.newStatus ?? null,
   };
   if (input.reasonCode) entry.reason_code = input.reasonCode;
   if (input.reason) entry.reason = input.reason;

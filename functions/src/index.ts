@@ -8,6 +8,7 @@ import {
   describeBunnyEnvironment,
   normalizeBunnyLibraryId,
   resolveBunnyStreamApiKey,
+  resolveDefaultBunnyLibraryId,
   BunnyPlaybackRuntime,
   bunnyPosterCacheKey,
   resolveBunnyLibraryForResource,
@@ -48,10 +49,12 @@ import {
 import {
   BUNNY_CATALOG_COLLECTION,
   bunnySecretNames,
+  isBunnyCatalogEntryUsable,
   isValidBunnyLibraryId,
   parseBunnyCatalogEntry,
+  type BunnyCatalogEntry,
+  type BunnyTokenAuthMode,
 } from "./core/video/bunny_library_catalog";
-import type {BunnyTokenAuthMode} from "./core/video/bunny_library_catalog";
 import {
   probeBunnyLibraryPlayback,
   probeBunnyLibraryUnsignedPlayback,
@@ -66,6 +69,7 @@ import {
 // ADR-010 pure contracts are re-exported so they are unit-testable from the
 // compiled bundle (same pattern as the other pure helpers below).
 export * from "./core/video/bunny_library_registry";
+export * from "./core/video/bunny_library_secret_resolver";
 export * from "./core/video/bunny_library_catalog";
 export * from "./core/video/bunny_library_catalog_reader";
 export * from "./core/video/bunny_library_migration";
@@ -5035,19 +5039,28 @@ export const generateBunnySignedUrl = onCall({
     rawUrl = rawUrl.replace(/playlist\.m3u8/i, `play_${mp4Quality}.mp4`);
   }
   const url = new URL(rawUrl);
-  // Directory-token mode: authorizes the video directory `/{videoId}/`
-  // (master playlist, rendition playlists, segments, MP4 rendition alike),
-  // so relative HLS children inherit authentication by path resolution.
-  // The returned contract (url, expiresAt, quality, session fields) and
-  // the expiry policy are unchanged; only the URL shape carries the token
-  // in-path instead of in-query.
-  const directoryScope = `/${videoId}/`;
-  const token = hashVideoDirectoryToken(secret, directoryScope, expires);
-  const signedUrl =
-    `${url.origin}/bcdn_token=${token}` +
-    `&token_path=${encodeURIComponent(directoryScope)}` +
-    `&expires=${expires}${url.pathname}`;
-  const signed = new URL(signedUrl);
+  let outputUrl: string;
+  if (bunnyLibrary.tokenAuthMode === "unsigned") {
+    // Unsigned mode (Option B / ADR-010 Amendment 3):
+    // For pull zones without CDN token authentication (legacy platform constraint),
+    // the plain URL is issued directly. All authorization, tier, window, and device
+    // gates were strictly enforced above.
+    outputUrl = url.toString();
+  } else {
+    // Directory-token mode: authorizes the video directory `/{videoId}/`
+    // (master playlist, rendition playlists, segments, MP4 rendition alike),
+    // so relative HLS children inherit authentication by path resolution.
+    // The returned contract (url, expiresAt, quality, session fields) and
+    // the expiry policy are unchanged; only the URL shape carries the token
+    // in-path instead of in-query.
+    const directoryScope = `/${videoId}/`;
+    const token = hashVideoDirectoryToken(secret, directoryScope, expires);
+    const signedUrl =
+      `${url.origin}/bcdn_token=${token}` +
+      `&token_path=${encodeURIComponent(directoryScope)}` +
+      `&expires=${expires}${url.pathname}`;
+    outputUrl = new URL(signedUrl).toString();
+  }
 
   await writeAnalyticsEvent(userId, "Open Video", videoId, {
     subject_id: resolvedSubjectId,
@@ -5068,7 +5081,7 @@ export const generateBunnySignedUrl = onCall({
     guestPreviewSeconds,
   });
   return {
-    url: signed.toString(),
+    url: outputUrl,
     expiresAt: expires,
     quality: selectedQuality,
     ...guestVerdict,
@@ -5237,6 +5250,63 @@ export const validateBunnyVideoAssociation = onCall({
   }
   return {...result, receipt};
 });
+
+/**
+ * Shared core for writing bunny library associations to Firestore.
+ * Updates both lecture_resources (bunny_library_id) and lectures (first_video).
+ * @param {FirebaseFirestore.Transaction} transaction Firestore transaction.
+ * @param {object} params Association parameters.
+ * @return {Promise<void>} Resolves when writes are staged.
+ */
+async function applyBunnyLibraryAssociationCore(
+  transaction: FirebaseFirestore.Transaction,
+  params: {
+    resourceRef: FirebaseFirestore.DocumentReference;
+    resourceId: string;
+    lectureRef: FirebaseFirestore.DocumentReference;
+    lectureId: string;
+    targetLibraryId: string;
+    targetVideoId: string;
+    actorId: string;
+  },
+): Promise<void> {
+  const resourcesSnap = await transaction.get(
+    db.collection("lecture_resources").where("lecture_id", "==", params.lectureId),
+  );
+  const rows: FirstVideoResourceRow[] = resourcesSnap.docs.map((doc) => {
+    const data = dataOf(doc.data());
+    if (doc.id !== params.resourceId) return {id: doc.id, data};
+    return {
+      id: doc.id,
+      data: {
+        ...data,
+        ...bunnyAssociationWriteFields(
+          params.targetLibraryId,
+          params.targetVideoId,
+        ),
+      },
+    };
+  });
+
+  transaction.set(
+    params.resourceRef,
+    {
+      ...bunnyAssociationWriteFields(
+        params.targetLibraryId,
+        params.targetVideoId,
+      ),
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: params.actorId,
+    },
+    {merge: true},
+  );
+
+  transaction.update(params.lectureRef, {
+    first_video: firstVideoFieldsFromResources(rows),
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: params.actorId,
+  });
+}
 
 // ---- ADR-010 server-side verified association ----
 // The ONLY writer of `lecture_resources.bunny_library_id`. A client may name a
@@ -5425,42 +5495,14 @@ export const associateBunnyVideoToLibrary = onCall({
       previousLibraryId === freshPlan.libraryId &&
       previousVideoId === freshPlan.videoId;
 
-    const resourcesSnap = await transaction.get(
-      db.collection("lecture_resources").where("lecture_id", "==", lectureId),
-    );
-    const rows: FirstVideoResourceRow[] = resourcesSnap.docs.map((doc) => {
-      const data = dataOf(doc.data());
-      if (doc.id !== resourceId) return {id: doc.id, data};
-      return {
-        id: doc.id,
-        data: {
-          ...data,
-          ...bunnyAssociationWriteFields(
-            freshPlan.libraryId,
-            freshPlan.videoId,
-          ),
-        },
-      };
-    });
-
-    // Idempotent: a repeated identical request rewrites the same values and
-    // re-derives the pointer instead of failing or duplicating anything.
-    transaction.set(
+    await applyBunnyLibraryAssociationCore(transaction, {
       resourceRef,
-      {
-        ...bunnyAssociationWriteFields(
-          freshPlan.libraryId,
-          freshPlan.videoId,
-        ),
-        updated_at: FieldValue.serverTimestamp(),
-        updated_by: actor.actorId,
-      },
-      {merge: true},
-    );
-    transaction.update(lectureRef, {
-      first_video: firstVideoFieldsFromResources(rows),
-      updated_at: FieldValue.serverTimestamp(),
-      updated_by: actor.actorId,
+      resourceId,
+      lectureRef,
+      lectureId,
+      targetLibraryId: freshPlan.libraryId,
+      targetVideoId: freshPlan.videoId,
+      actorId: actor.actorId,
     });
 
     return {
@@ -8176,6 +8218,349 @@ export const listBunnyLibraryHealth = onCall(
       };
     });
     return {libraries};
+  },
+);
+
+/**
+ * ADR-010 Amendment 3 — D4 Video-to-library auto-discovery (Authoring only).
+ *
+ * Probes candidate active libraries (BUNNY_ACTIVE_LIBRARY_IDS ∩ bunny_libraries active)
+ * by querying Bunny Stream API GET /library/{id}/videos/{videoId}.
+ * Returns found (with libraryId, displayName), not_found, or ambiguous.
+ */
+export const discoverBunnyVideoLibrary = onCall(
+  {
+    ...SECURE_CALL_OPTS,
+    secrets: [SECRET_BUNNY_STREAM_API_KEY],
+  },
+  async (request) => {
+    const actor = await requireContentManager(request);
+    const videoId = getString(request.data?.videoId);
+    if (!videoId || !isValidBunnyVideoId(videoId)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "videoId must be a bare Bunny Video ID (GUID) — URLs are not accepted.",
+      );
+    }
+
+    const allowed = await slidingWindowAllowed(
+      "bunny_discovery_throttle",
+      actor.actorId,
+      60,
+      60 * 1000,
+    );
+    if (!allowed) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Too many discovery requests. Please wait a moment.",
+      );
+    }
+
+    const env = bunnyLibraryEnvSnapshot();
+    const allowList = (env.BUNNY_ACTIVE_LIBRARY_IDS ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "");
+
+    const defaultLib = resolveDefaultBunnyLibraryId(env);
+    if (!allowList.includes(defaultLib)) {
+      allowList.push(defaultLib);
+    }
+
+    const snapshot = await db.collection(BUNNY_CATALOG_COLLECTION).get();
+    const candidateLibraries = snapshot.docs
+      .map((doc) => {
+        const parsed = parseBunnyCatalogEntry(doc.data());
+        if (!parsed.ok) return null;
+        if (!isBunnyCatalogEntryUsable(doc.data())) return null;
+        if (!allowList.includes(parsed.entry.libraryId)) return null;
+        return parsed.entry;
+      })
+      .filter((entry): entry is BunnyCatalogEntry => entry !== null);
+
+    const matches: Array<{libraryId: string; displayName: string}> = [];
+    const deps = bunnyLibrarySecretDeps();
+
+    for (const lib of candidateLibraries) {
+      try {
+        const streamCreds = await resolveBunnyStreamApiCredentials({
+          libraryId: lib.libraryId,
+          deps,
+        });
+        if (!streamCreds.ok) continue;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        let response: Response;
+        try {
+          response = await fetch(
+            `https://video.bunnycdn.com/library/${encodeURIComponent(streamCreds.runtime.apiLibraryId)}/videos/${encodeURIComponent(videoId)}`,
+            {headers: {AccessKey: streamCreds.runtime.apiKey}, signal: controller.signal},
+          );
+        } finally {
+          clearTimeout(timer);
+        }
+
+        if (response.status === 200) {
+          const body: unknown = await response.json().catch(() => null);
+          const candidateGuid =
+            body && typeof body === "object" ?
+              getString((body as Record<string, unknown>).guid) :
+              null;
+          if (candidateGuid ? candidateGuid.toLowerCase() === videoId.toLowerCase() : true) {
+            matches.push({
+              libraryId: lib.libraryId,
+              displayName: lib.displayName,
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`discoverBunnyVideoLibrary probe failed for library ${lib.libraryId}:`, err);
+      }
+    }
+
+    let discoveryStatus: "found" | "not_found" | "ambiguous";
+    let resultPayload: Record<string, unknown>;
+
+    if (matches.length === 1) {
+      discoveryStatus = "found";
+      resultPayload = {
+        status: "found",
+        libraryId: matches[0].libraryId,
+        displayName: matches[0].displayName,
+      };
+    } else if (matches.length === 0) {
+      discoveryStatus = "not_found";
+      resultPayload = {
+        status: "not_found",
+      };
+    } else {
+      discoveryStatus = "ambiguous";
+      resultPayload = {
+        status: "ambiguous",
+        candidateLibraryIds: matches.map((m) => m.libraryId),
+      };
+    }
+
+    await writeBunnyLibraryAudit(
+      buildBunnyLibraryAuditEntry({
+        action: "bunny_video_discover",
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        permissionBasis: actor.permissionBasis,
+        libraryId: matches.length === 1 ? matches[0].libraryId : "none",
+        reasonCode: `status:${discoveryStatus};matches:${matches.length}`,
+      }),
+    );
+
+    return resultPayload;
+  },
+);
+
+/**
+ * ADR-010 Amendment 3 — D6 / Migration Callable (Teacher / Platform Owner only).
+ *
+ * Runs dry-run or applies bunny library associations to existing lecture_resources.
+ * Idempotent, batch-written, audited per resource, excludes fixture I36lvn3FGRPGCX3YKVLw.
+ */
+export const migrateBunnyLibraryAssociations = onCall(
+  {
+    ...SECURE_CALL_OPTS,
+    secrets: [SECRET_BUNNY_STREAM_API_KEY],
+  },
+  async (request) => {
+    const actorId = requireDoctor(request);
+    const dryRun = request.data?.dryRun !== false;
+    const rawBatchSize = Number(request.data?.batchSize);
+    const batchSize = Number.isInteger(rawBatchSize) && rawBatchSize > 0 ?
+      Math.min(rawBatchSize, 100) :
+      50;
+
+    const explicitMap = new Map<string, string>();
+    const resourceMap = new Map<string, string>();
+    if (Array.isArray(request.data?.mapping)) {
+      for (const entry of request.data.mapping) {
+        if (!entry || typeof entry !== "object") continue;
+        const vId = getString((entry as Record<string, unknown>).videoId);
+        const lId = getString((entry as Record<string, unknown>).libraryId);
+        const rId = getString((entry as Record<string, unknown>).resourceId);
+        if (vId && lId) explicitMap.set(vId, lId);
+        if (rId && lId) resourceMap.set(rId, lId);
+      }
+    }
+
+    const defaultTargetLibraryId = getString(request.data?.targetLibraryId);
+
+    const resourcesSnap = await db.collection("lecture_resources").get();
+
+    interface MigrationRowReport {
+      resourceId: string;
+      lectureId: string | null;
+      videoId: string | null;
+      currentLibraryId: string | null;
+      targetLibraryId: string | null;
+      action: "migrated" | "unchanged" | "skipped_no_video_id" | "excluded_fixture" | "unmapped";
+      reason?: string;
+    }
+
+    const reports: MigrationRowReport[] = [];
+    const candidatesToApply: Array<{
+      resourceRef: FirebaseFirestore.DocumentReference;
+      resourceId: string;
+      lectureRef: FirebaseFirestore.DocumentReference;
+      lectureId: string;
+      targetLibraryId: string;
+      videoId: string;
+    }> = [];
+
+    for (const doc of resourcesSnap.docs) {
+      const data = dataOf(doc.data());
+      const resourceId = doc.id;
+      const lectureId = getString(data.lecture_id);
+      const videoId = getString(data.bunny_video_id);
+      const currentLibraryId = getString(data.bunny_library_id);
+
+      // D6 Excluded Staging fixture
+      if (resourceId === "I36lvn3FGRPGCX3YKVLw" || videoId === "47561140-5966-4e0f-8851-83c78ce5bb92") {
+        reports.push({
+          resourceId,
+          lectureId,
+          videoId,
+          currentLibraryId,
+          targetLibraryId: null,
+          action: "excluded_fixture",
+          reason: "D6 excluded staging fixture",
+        });
+        continue;
+      }
+
+      // Rows with no bunny_video_id
+      if (!videoId) {
+        reports.push({
+          resourceId,
+          lectureId,
+          videoId: null,
+          currentLibraryId,
+          targetLibraryId: null,
+          action: "skipped_no_video_id",
+          reason: "empty or missing bunny_video_id",
+        });
+        continue;
+      }
+
+      // Determine target library
+      const targetLib = resourceMap.get(resourceId) ??
+        explicitMap.get(videoId) ??
+        defaultTargetLibraryId;
+
+      if (!targetLib) {
+        reports.push({
+          resourceId,
+          lectureId,
+          videoId,
+          currentLibraryId,
+          targetLibraryId: null,
+          action: "unmapped",
+          reason: "no mapping entry or default target specified",
+        });
+        continue;
+      }
+
+      // Idempotent: already associated to this library
+      if (currentLibraryId === targetLib) {
+        reports.push({
+          resourceId,
+          lectureId,
+          videoId,
+          currentLibraryId,
+          targetLibraryId: targetLib,
+          action: "unchanged",
+          reason: "already associated to target library",
+        });
+        continue;
+      }
+
+      if (!lectureId) {
+        reports.push({
+          resourceId,
+          lectureId: null,
+          videoId,
+          currentLibraryId,
+          targetLibraryId: targetLib,
+          action: "unmapped",
+          reason: "resource not linked to a lecture",
+        });
+        continue;
+      }
+
+      reports.push({
+        resourceId,
+        lectureId,
+        videoId,
+        currentLibraryId,
+        targetLibraryId: targetLib,
+        action: "migrated",
+      });
+
+      candidatesToApply.push({
+        resourceRef: doc.ref,
+        resourceId,
+        lectureRef: db.collection("lectures").doc(lectureId),
+        lectureId,
+        targetLibraryId: targetLib,
+        videoId,
+      });
+    }
+
+    let appliedCount = 0;
+    if (!dryRun && candidatesToApply.length > 0) {
+      for (let i = 0; i < candidatesToApply.length; i += batchSize) {
+        const batchSlice = candidatesToApply.slice(i, i + batchSize);
+        await db.runTransaction(async (transaction) => {
+          for (const item of batchSlice) {
+            await applyBunnyLibraryAssociationCore(transaction, {
+              resourceRef: item.resourceRef,
+              resourceId: item.resourceId,
+              lectureRef: item.lectureRef,
+              lectureId: item.lectureId,
+              targetLibraryId: item.targetLibraryId,
+              targetVideoId: item.videoId,
+              actorId,
+            });
+          }
+        });
+        for (const item of batchSlice) {
+          const prevLib = reports.find((r) => r.resourceId === item.resourceId)?.currentLibraryId ?? "none";
+          await writeBunnyLibraryAudit(
+            buildBunnyLibraryAuditEntry({
+              action: "bunny_library_migrate",
+              actorId,
+              actorRole: "doctor",
+              permissionBasis: "doctor",
+              libraryId: item.targetLibraryId,
+              reasonCode: `resource:${item.resourceId};video:${item.videoId};from:${prevLib}`,
+            }),
+          );
+          appliedCount++;
+        }
+      }
+    }
+
+    const summary = {
+      total: reports.length,
+      migrated: candidatesToApply.length,
+      applied: appliedCount,
+      unchanged: reports.filter((r) => r.action === "unchanged").length,
+      skippedNoVideoId: reports.filter((r) => r.action === "skipped_no_video_id").length,
+      excludedFixture: reports.filter((r) => r.action === "excluded_fixture").length,
+      unmapped: reports.filter((r) => r.action === "unmapped").length,
+    };
+
+    return {
+      dryRun,
+      summary,
+      rows: reports,
+    };
   },
 );
 

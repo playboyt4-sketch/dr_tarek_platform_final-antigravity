@@ -171,7 +171,7 @@ check(
     {storedLibraryId: null},
     {...DEFAULT_ENV, BUNNY_LEGACY_LIBRARY_FALLBACK: "false"},
   ),
-  {ok: false, reason: "legacy_fallback_disabled", libraryId: DEFAULT_BUNNY_LIBRARY_ID},
+  {ok: false, reason: "library_not_resolved", libraryId: null},
 );
 
 // --- playback runtime: per-library template + key ---

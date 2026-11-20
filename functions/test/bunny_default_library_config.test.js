@@ -168,7 +168,7 @@ check(
     {storedLibraryId: null},
     {...PROD_ENV, BUNNY_LEGACY_LIBRARY_FALLBACK: "false"},
   ),
-  {ok: false, reason: "legacy_fallback_disabled", libraryId: "736742"},
+  {ok: false, reason: "library_not_resolved", libraryId: null},
 );
 
 console.log(`\n${passed} checks passed`);
