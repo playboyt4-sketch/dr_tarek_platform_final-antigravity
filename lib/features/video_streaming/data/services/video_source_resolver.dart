@@ -423,10 +423,11 @@ class VideoVerificationPendingException extends VideoSourceException {
 }
 
 /// Video is not associated with any active Bunny library (library_not_resolved).
+/// Never retried automatically: retrying will not resolve an unlinked video.
 class VideoLibraryNotResolvedException extends VideoSourceException {
   const VideoLibraryNotResolvedException([
     super.message = 'الفيديو غير مرتبط بمكتبة تشغيل بعد. يرجى التواصل مع إدارة المنصة.',
-  ]) : super(isRetryable: true);
+  ]) : super(isRetryable: false);
 }
 
 /// Terminal session failure: the server no longer recognizes this device as

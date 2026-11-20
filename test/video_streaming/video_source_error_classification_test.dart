@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('ADR-010 Batch 3c — Video Source Error Classification', () {
-    test('maps library_not_resolved to VideoLibraryNotResolvedException with Arabic message and retryable', () {
+    test('maps library_not_resolved to VideoLibraryNotResolvedException with Arabic message and isRetryable false', () {
       final error = classifyVideoSourceError(
         'failed-precondition',
         'Video playback is not configured.',
@@ -11,11 +11,11 @@ void main() {
       );
 
       expect(error, isA<VideoLibraryNotResolvedException>());
-      expect(error.isRetryable, isTrue);
+      expect(error.isRetryable, isFalse);
       expect(error.message, contains('الفيديو غير مرتبط بمكتبة تشغيل'));
     });
 
-    test('maps unassociated string to VideoLibraryNotResolvedException', () {
+    test('maps unassociated string to VideoLibraryNotResolvedException with isRetryable false', () {
       final error = classifyVideoSourceError(
         'failed-precondition',
         'unassociated video cannot be resolved',
@@ -23,7 +23,7 @@ void main() {
       );
 
       expect(error, isA<VideoLibraryNotResolvedException>());
-      expect(error.isRetryable, isTrue);
+      expect(error.isRetryable, isFalse);
       expect(error.message, contains('الفيديو غير مرتبط بمكتبة تشغيل'));
     });
 
