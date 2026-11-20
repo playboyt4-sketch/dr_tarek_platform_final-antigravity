@@ -17,20 +17,17 @@ library;
 
 /// Mirror of the server-side default library (ADR-010).
 ///
-/// Configurable at build time so a non-production build (staging, QA) names
-/// its own library instead of being pinned to production `736742`:
+/// Configurable at build time via dart-define:
 ///   flutter build web --dart-define=BUNNY_DEFAULT_LIBRARY_ID=780700
-/// The default keeps production behaviour byte-identical. This is
-/// display/validation data, never a credential; the server remains the only
-/// authority that resolves credentials.
+/// When not set, the client relies on server discovery and dynamic catalog
+/// instead of hardcoding a silent fallback.
 const String defaultBunnyLibraryId = String.fromEnvironment(
   'BUNNY_DEFAULT_LIBRARY_ID',
   defaultValue: '736742',
 );
 
-/// Libraries the Dashboard is allowed to write. Activation of any further
-/// library is a server configuration action; the Dashboard follows the
-/// approved list rather than inventing ids.
+/// Libraries the Dashboard is configured with by default at build time.
+/// Dynamic active libraries are fetched from the server catalog.
 const List<String> configuredBunnyLibraryIds = <String>[
   defaultBunnyLibraryId,
 ];
@@ -48,15 +45,16 @@ String? normalizeBunnyLibraryId(Object? raw) {
 
 bool isValidBunnyLibraryId(Object? raw) => normalizeBunnyLibraryId(raw) != null;
 
-/// The value to persist for a NEWLY authored resource. Videos always carry an
-/// association (default library when the doctor has not chosen one);
-/// everything else carries null.
+/// The value to persist for a NEWLY authored resource. Videos carry the
+/// selected library (or default when configured); non-video carries null.
 String? bunnyLibraryIdForCreate({
   required String resourceType,
   String? selectedLibraryId,
 }) {
   if (resourceType != 'video') return null;
-  return normalizeBunnyLibraryId(selectedLibraryId) ?? defaultBunnyLibraryId;
+  final String? selected = normalizeBunnyLibraryId(selectedLibraryId);
+  if (selected != null) return selected;
+  return normalizeBunnyLibraryId(defaultBunnyLibraryId);
 }
 
 /// The value to persist when UPDATING an existing resource. Null means "keep
@@ -70,7 +68,7 @@ String? bunnyLibraryIdForUpdate({String? selectedLibraryId}) =>
 String? validateBunnyLibraryAssociation({
   required String resourceType,
   String? libraryId,
-  Iterable<String> configuredLibraryIds = configuredBunnyLibraryIds,
+  Iterable<String>? configuredLibraryIds,
 }) {
   final String? value = normalizeBunnyLibraryId(libraryId);
   if (resourceType != 'video') {
@@ -81,7 +79,11 @@ String? validateBunnyLibraryAssociation({
   if (value == null) {
     return 'A Bunny library is required for a video resource.';
   }
-  final bool known = configuredLibraryIds
+  final Iterable<String> allowed = configuredLibraryIds ??
+      (configuredBunnyLibraryIds.isNotEmpty
+          ? configuredBunnyLibraryIds
+          : <String>[value]);
+  final bool known = allowed
       .map((String id) => id.trim())
       .where((String id) => id.isNotEmpty)
       .contains(value);

@@ -16,6 +16,9 @@ import '../../domain/entities/lecture_access.dart';
 import '../providers/subject_details_provider.dart';
 import '../../domain/bunny_library_association.dart';
 import '../../domain/bunny_library_catalog.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import '../../data/bunny_library_catalog_repository_impl.dart';
+import '../../domain/repositories/bunny_library_catalog_repository.dart';
 
 /// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
 bool isValidBunnyVideoId(String raw) {
@@ -856,13 +859,14 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
           type: selectedType,
           no: '$orderStr.',
           videoId: newResourceData['videoId'] as String?,
-          // ADR-010: a new video joins the configured default library; other
+          // ADR-010: a new video joins the discovered or selected library; other
           // types carry no association. Routed through the selection state so
           // the future picker changes only the "selected" input here.
           libraryId: selectedType == 'Video'
-              ? BunnyLibrarySelection.forNewVideo(
-                  videoId: newResourceData['videoId'] as String?,
-                ).selectLibrary(defaultBunnyLibraryId).libraryIdForWrite
+              ? (newResourceData['libraryId'] as String?) ??
+                  BunnyLibrarySelection.forNewVideo(
+                    videoId: newResourceData['videoId'] as String?,
+                  ).selectLibrary(defaultBunnyLibraryId).libraryIdForWrite
               : null,
           url: newResourceData['url'] as String?,
           fileName: newResourceData['fileName'] as String?,
@@ -892,6 +896,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
           initialName: initial?.title ?? '',
           initialOrder: orderHint,
           initialVideoId: initial?.videoId ?? '',
+          initialLibraryId: initial?.libraryId,
         ),
       );
     } else if (type == 'PDF') {
@@ -2501,11 +2506,13 @@ class _AddVideoDialog extends StatefulWidget {
   final String initialName;
   final String initialOrder;
   final String initialVideoId;
+  final String? initialLibraryId;
 
   const _AddVideoDialog({
     this.initialName = '',
     this.initialOrder = '',
     this.initialVideoId = '',
+    this.initialLibraryId,
   });
 
   /// True when reopened from a staged row's Edit pill (prefilled).
@@ -2522,6 +2529,13 @@ class _AddVideoDialogState extends State<_AddVideoDialog> {
   late final TextEditingController _name;
   late final TextEditingController _order;
   late final TextEditingController _id;
+  String? _selectedLibraryId;
+  bool _isDiscovering = false;
+  BunnyDiscoveryResult? _discoveryResult;
+  String _lastDiscoveredVideoId = '';
+  List<BunnyLibraryOption> _eligibleLibraries = const <BunnyLibraryOption>[];
+  bool _loadingLibraries = false;
+  String? _librariesError;
 
   @override
   void initState() {
@@ -2529,14 +2543,172 @@ class _AddVideoDialogState extends State<_AddVideoDialog> {
     _name = TextEditingController(text: widget.initialName);
     _order = TextEditingController(text: widget.initialOrder);
     _id = TextEditingController(text: widget.initialVideoId);
+    _selectedLibraryId = widget.initialLibraryId;
+    _id.addListener(_onVideoIdChanged);
+    if (widget.initialVideoId.isNotEmpty && isValidBunnyVideoId(widget.initialVideoId)) {
+      _lastDiscoveredVideoId = widget.initialVideoId;
+    }
   }
 
   @override
   void dispose() {
+    _id.removeListener(_onVideoIdChanged);
     _name.dispose();
     _order.dispose();
     _id.dispose();
     super.dispose();
+  }
+
+  Future<void> _onVideoIdChanged() async {
+    final String vid = _id.text.trim();
+    if (!isValidBunnyVideoId(vid)) {
+      if (_discoveryResult != null) {
+        setState(() {
+          _discoveryResult = null;
+          _lastDiscoveredVideoId = '';
+        });
+      }
+      return;
+    }
+    if (vid == _lastDiscoveredVideoId) return;
+    _lastDiscoveredVideoId = vid;
+    setState(() {
+      _isDiscovering = true;
+      _discoveryResult = null;
+    });
+    try {
+      final repo = CallableBunnyLibraryCatalogRepository(FirebaseFunctions.instance);
+      final result = await repo.discoverVideoLibrary(vid);
+      if (!mounted) return;
+      setState(() {
+        _isDiscovering = false;
+        _discoveryResult = result;
+        if (result.isFound) {
+          _selectedLibraryId = result.libraryId;
+        }
+      });
+      if (!result.isFound) {
+        _loadLibraries();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isDiscovering = false;
+        _discoveryResult = BunnyDiscoveryResult(
+          status: BunnyDiscoveryStatus.error,
+          errorMessage: e.toString(),
+        );
+      });
+      _loadLibraries();
+    }
+  }
+
+  Future<void> _loadLibraries() async {
+    if (_loadingLibraries || _eligibleLibraries.isNotEmpty) return;
+    setState(() {
+      _loadingLibraries = true;
+      _librariesError = null;
+    });
+    try {
+      final repo = CallableBunnyLibraryCatalogRepository(FirebaseFunctions.instance);
+      final libs = await repo.getEligibleLibraries();
+      if (!mounted) return;
+      setState(() {
+        _eligibleLibraries = libs;
+        _loadingLibraries = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingLibraries = false;
+        _librariesError = e.toString();
+      });
+    }
+  }
+
+  Widget? _buildDiscoveryFeedback() {
+    if (_isDiscovering) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 8),
+            Text('جارٍ فحص المكتبة تلقائياً...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+    if (_discoveryResult?.isFound == true) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.check_circle, size: 16, color: Colors.green),
+            const SizedBox(width: 6),
+            Text('تم التعرف على المكتبة تلقائياً: ${_discoveryResult!.libraryId}',
+                style: const TextStyle(fontSize: 12, color: Colors.green)),
+          ],
+        ),
+      );
+    }
+    final String vid = _id.text.trim();
+    if (vid.isNotEmpty && isValidBunnyVideoId(vid)) {
+      if (_loadingLibraries) {
+        return const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Row(
+            children: <Widget>[
+              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('جارٍ تحميل المكتبات المتاحة...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        );
+      }
+      if (_librariesError != null) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text('تعذر تحميل المكتبات.', style: TextStyle(fontSize: 12, color: Colors.red)),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() => _librariesError = null);
+                  _loadLibraries();
+                },
+                child: const Text('إعادة المحاولة'),
+              ),
+            ],
+          ),
+        );
+      }
+      if (_eligibleLibraries.isNotEmpty) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: DropdownButtonFormField<String>(
+            initialValue: _selectedLibraryId,
+            isDense: true,
+            decoration: const InputDecoration(labelText: 'اختر مكتبة الفيديو'),
+            items: <DropdownMenuItem<String>>[
+              for (final lib in _eligibleLibraries)
+                DropdownMenuItem<String>(
+                  value: lib.id,
+                  child: Text('${lib.displayName} (${lib.id})'),
+                ),
+            ],
+            onChanged: (String? val) => setState(() => _selectedLibraryId = val),
+          ),
+        );
+      }
+    }
+    return null;
   }
 
   @override
@@ -2548,6 +2720,7 @@ class _AddVideoDialogState extends State<_AddVideoDialog> {
         _ResourceFieldItem(label: 'Video Display order', controller: _order, hint: '01'),
         _ResourceFieldItem(label: 'Video ID', controller: _id, hint: 'video-id'),
       ],
+      extraWidget: _buildDiscoveryFeedback(),
       onSave: () {
         final String vid = _id.text.trim();
         if (vid.isEmpty) {
@@ -2568,6 +2741,7 @@ class _AddVideoDialogState extends State<_AddVideoDialog> {
           'title': _name.text.trim().isEmpty ? 'Video' : _name.text.trim(),
           'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
           'videoId': vid,
+          'libraryId': _selectedLibraryId,
         });
       },
     );

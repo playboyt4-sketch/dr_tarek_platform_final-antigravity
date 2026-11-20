@@ -10,6 +10,9 @@ import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
 import '../../../students/data/bunny_association_gateway.dart';
 import '../../../students/domain/bunny_library_association.dart';
+import '../../../students/domain/bunny_library_catalog.dart';
+import '../../../students/domain/repositories/bunny_library_catalog_repository.dart';
+import '../../../students/presentation/providers/bunny_library_catalog_provider.dart';
 import '../../../students/presentation/providers/subject_details_provider.dart';
 import '../providers/home_stats_provider.dart';
 
@@ -89,6 +92,10 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
   bool _publishNow = true;
   bool _saving = false;
   String? _error;
+  String? _selectedLibraryId;
+  bool _isDiscovering = false;
+  BunnyDiscoveryResult? _discoveryResult;
+  String _lastDiscoveredVideoId = '';
 
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _bunnyController = TextEditingController();
@@ -102,6 +109,48 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
     super.dispose();
   }
 
+  Future<void> _onVideoIdChanged(String raw) async {
+    final String vid = raw.trim();
+    if (!isValidBunnyVideoId(vid)) {
+      if (_discoveryResult != null || _selectedLibraryId != null) {
+        setState(() {
+          _discoveryResult = null;
+          _selectedLibraryId = null;
+          _lastDiscoveredVideoId = '';
+        });
+      }
+      return;
+    }
+    if (vid == _lastDiscoveredVideoId) return;
+    _lastDiscoveredVideoId = vid;
+    setState(() {
+      _isDiscovering = true;
+      _discoveryResult = null;
+      _selectedLibraryId = null;
+    });
+    try {
+      final repo = ref.read(bunnyLibraryCatalogRepositoryProvider);
+      final result = await repo.discoverVideoLibrary(vid);
+      if (!mounted) return;
+      setState(() {
+        _isDiscovering = false;
+        _discoveryResult = result;
+        if (result.isFound) {
+          _selectedLibraryId = result.libraryId;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isDiscovering = false;
+        _discoveryResult = BunnyDiscoveryResult(
+          status: BunnyDiscoveryStatus.error,
+          errorMessage: e.toString(),
+        );
+      });
+    }
+  }
+
   Future<void> _save() async {
     final String? validationError = validateQuickUpload(
       subjectId: _subjectId,
@@ -111,6 +160,11 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
     );
     if (validationError != null) {
       setState(() => _error = validationError);
+      return;
+    }
+    final String vid = _bunnyController.text.trim();
+    if (vid.isNotEmpty && (_selectedLibraryId == null || _selectedLibraryId!.isEmpty)) {
+      setState(() => _error = 'Please select a Bunny library for this video.');
       return;
     }
     setState(() {
@@ -131,9 +185,8 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
         subjectId: _subjectId!,
         tabKey: _tabKey,
         title: _titleController.text.trim(),
-        bunnyVideoId: _bunnyController.text.trim().isEmpty
-            ? null
-            : _bunnyController.text.trim(),
+        bunnyVideoId: vid.isEmpty ? null : vid,
+        selectedLibraryId: _selectedLibraryId,
         pdfPath: _pdfController.text.trim().isEmpty
             ? null
             : _pdfController.text.trim(),
@@ -257,9 +310,99 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
         TextField(
           controller: _bunnyController,
           enabled: !_saving,
-          decoration: const InputDecoration(labelText: 'Bunny Video ID'),
+          decoration: const InputDecoration(
+            labelText: 'Bunny Video ID',
+            hintText: 'e.g. 11111111-2222-3333-4444-555555555555',
+          ),
           textInputAction: TextInputAction.next,
+          onChanged: _onVideoIdChanged,
         ),
+        if (_isDiscovering) ...<Widget>[
+          const SizedBox(height: 6),
+          const Row(
+            children: <Widget>[
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 8),
+              Text(
+                'جارٍ فحص المكتبة تلقائياً...',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ] else if (_discoveryResult?.isFound == true) ...<Widget>[
+          const SizedBox(height: 6),
+          Row(
+            children: <Widget>[
+              const Icon(Icons.check_circle, size: 16, color: Colors.green),
+              const SizedBox(width: 6),
+              Text(
+                'تم التعرف على المكتبة تلقائياً: ${_discoveryResult!.libraryId}',
+                style: const TextStyle(fontSize: 12, color: Colors.green),
+              ),
+            ],
+          ),
+        ] else if (_bunnyController.text.trim().isNotEmpty &&
+            isValidBunnyVideoId(_bunnyController.text.trim())) ...<Widget>[
+          const SizedBox(height: 8),
+          ref.watch(eligibleBunnyLibrariesProvider).when(
+                loading: () => const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+                error: (Object err, _) => Row(
+                  children: <Widget>[
+                    const Expanded(
+                      child: Text(
+                        'تعذر تحميل قائمة المكتبات.',
+                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => ref
+                          .read(eligibleBunnyLibrariesProvider.notifier)
+                          .retry(),
+                      child: const Text('إعادة المحاولة'),
+                    ),
+                  ],
+                ),
+                data: (List<BunnyLibraryOption> libraries) {
+                  if (libraries.isEmpty) {
+                    return const Text(
+                      'لا توجد مكتبات فيديو مسجلة.',
+                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    );
+                  }
+                  return DropdownButtonFormField<String>(
+                    initialValue: _selectedLibraryId,
+                    decoration: const InputDecoration(
+                      labelText: 'اختر مكتبة الفيديو',
+                      isDense: true,
+                    ),
+                    items: <DropdownMenuItem<String>>[
+                      for (final lib in libraries)
+                        DropdownMenuItem<String>(
+                          value: lib.id,
+                          child: Text('${lib.displayName} (${lib.id})'),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (String? val) =>
+                            setState(() => _selectedLibraryId = val),
+                  );
+                },
+              ),
+        ],
         const SizedBox(height: 12),
         TextField(
           controller: _pdfController,
@@ -348,6 +491,7 @@ Future<String> publishQuickLecture({
   required String title,
   String description = '',
   String? bunnyVideoId,
+  String? selectedLibraryId,
   String? pdfPath,
   required bool publishNow,
   BunnyAssociationGateway? associationGateway,
@@ -506,12 +650,16 @@ Future<String> publishQuickLecture({
       bunnyVideoId != null &&
       bunnyVideoId.isNotEmpty &&
       associationGateway != null) {
-    await associationGateway.associate(
-      resourceId: videoResourceId,
-      lectureId: lectureRef.id,
-      libraryId: bunnyLibraryIdForCreate(resourceType: 'video')!,
-      videoId: bunnyVideoId,
-    );
+    final String? libId = normalizeBunnyLibraryId(selectedLibraryId) ??
+        bunnyLibraryIdForCreate(resourceType: 'video');
+    if (libId != null && libId.isNotEmpty) {
+      await associationGateway.associate(
+        resourceId: videoResourceId,
+        lectureId: lectureRef.id,
+        libraryId: libId,
+        videoId: bunnyVideoId,
+      );
+    }
   }
 
   return lectureRef.id;

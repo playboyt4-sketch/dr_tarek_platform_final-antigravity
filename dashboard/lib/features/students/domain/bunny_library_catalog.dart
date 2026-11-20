@@ -48,10 +48,8 @@ class BunnyLibraryOption {
       };
 }
 
-/// Known libraries. Mirrors the server registry's numeric ids; `775315` is
-/// intentionally NOT selectable yet (library not activated, no approved
-/// design). This is a static local catalog because no approved Firestore
-/// configuration source exists for it — do not invent one.
+/// Default local catalog fallback. Active libraries are loaded dynamically
+/// via [BunnyLibraryCatalogRepository.getEligibleLibraries].
 const List<BunnyLibraryOption> defaultBunnyLibraryCatalog = <BunnyLibraryOption>[
   BunnyLibraryOption(
     id: defaultBunnyLibraryId,
