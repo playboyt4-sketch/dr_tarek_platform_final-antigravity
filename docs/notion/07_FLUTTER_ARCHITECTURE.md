@@ -1,10 +1,11 @@
 # 07 Flutter Architecture
 
-Version: 1.3
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.4
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History (new)
 
+- **1.4** (2026-11-17): ADR-010 Option C alignment. §16.2 rewritten to the implemented callable `generateBunnySignedUrl` with server-side library resolution, the 3600 s expiry and the explicit no-client-library-selection rule; new §16.8 documents the video upload data source (mechanism pending U-05/U-06). Approved by the Platform Owner as Phase 2 governance item E.
 - **1.3** (2026-09-14): Implementation-design detail per the approved Implementation Architecture Specification. Documents the server-issued device handle (opaque session reference), Subject context threading through content flows, Subject-partitioned DRM consumption, Max session-token integration, and explicit BLOCKED UI dependencies. No new names, measurements, copy, or components invented.
 - **1.2** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Global device-binding gate removed (login always succeeds; no global blocked screen; no global `isCurrentDeviceValid` truth); authorization resolves per Subject to Full vs Guest; claims de-scoped to identity; DRM and video-player sections rescoped per Subject with Max single-session continuity. Existing folder/class/provider names kept and marked for rescoping — no new names invented.
 
@@ -488,25 +489,30 @@ Per FINAL_DECISIONS Section 4 and Master Architecture Section 3 ("Bunny CDN is u
 
 ## 16.2 Signed URL Flow
 
-Per FINAL_DECISIONS Section 4: "التطبيق يطلب رابط موقّع من Cloud Function — الرابط يتجدد تلقائياً كل مرة الطالب يفتح الفيديو — الطالب ميشوفش الرابط أبداً."
+Per FINAL_DECISIONS Section 4 (as amended by ADR-010 Amendment 2): "التطبيق يطلب رابط موقّع من Cloud Function — الرابط يتجدد تلقائياً كل مرة الطالب يفتح الفيديو — الطالب ميشوفش الرابط أبداً."
 
 ```
 Student opens lecture video
          ↓
-GetSignedVideoUrlUseCase(lectureId, quality)
+GetSignedVideoUrlUseCase(lectureId, videoId, quality)
          ↓
-BunnyCdnRemoteDataSource calls Cloud Function: getSignedVideoUrl
+BunnyCdnRemoteDataSource calls Cloud Function: generateBunnySignedUrl
+   request: {videoId, deviceId, lectureId, subjectId?, quality?}
          ↓
 Cloud Function:
-  1. Verifies student has access to lecture (Firestore + Custom Claims)
-  2. Checks quality tier against plan (Feature Matrix)
-  3. Generates Bunny CDN signed URL (expires in 1 hour)
-  4. Returns {url: "...", expires_at: timestamp, quality: "720p"}
+  1. Verifies the caller's entitlement, device authorization and lecture access
+  2. Resolves the resource's library from the server catalog (never from the client)
+  3. Rejects unknown / inactive / unverified / emergency-blocked libraries
+  4. Generates a signed URL for that library only (expires in 3600 s)
+  5. Returns {url, expiresAt, quality}
          ↓
-Flutter: feeds URL to video player (chewie/better_player/video_player)
+Flutter feeds the URL to the video player
          ↓
 URL is never exposed in UI, logs, or network inspector (HTTPS only)
 ```
+
+The client never receives a library id, a library host, or any credential. There is no
+client-side library selection and no cross-library fallback.
 
 ## 16.3 Quality Tiers & Plan Mapping
 
@@ -576,6 +582,16 @@ features/video_player/
 - If offline: routes playback through `DecryptForPlaybackUseCase` → feeds decrypted stream to player.
 - If online: routes through `GetSignedVideoUrlUseCase` → streams from Bunny CDN.
 - Seamless fallback: if offline file is corrupted, auto-fallback to online stream (if connected). If this device is Guest for the Subject, playback follows the Guest tier in both modes; login is never affected.
+
+## 16.8 Video Upload Data Source
+
+`BunnyUploadRemoteDataSource` obtains a short-lived upload authorization from the backend,
+bound to one library and one video, then uploads using the resumable protocol. It never
+holds a library API key. Completion is confirmed server-side before the video can be
+associated with a lecture.
+
+**Status:** mechanism pending capability verification (U-05/U-06). No client design is
+finalized until the mechanism is proven.
 
 ---
 

@@ -93,7 +93,7 @@ async function run() {
     });
   }
   await db.collection("lecture_resources").doc("pbs_vidA").set({
-    lecture_id: LEC_A, resource_type: "video", bunny_video_id: "pbs-vid-A",
+    lecture_id: LEC_A, resource_type: "video", bunny_video_id: "22222222-bbbb-4bbb-8bbb-000000000001",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_progress").doc("pbs_progA").set({
@@ -261,12 +261,12 @@ async function run() {
 
   // 19/20. Issuance wiring: Full Max URL carries session fields; a second
   // device's issuance takes over and kills the first token.
-  const v19 = await videoUrl({videoId: "pbs-vid-A", deviceId: "pbs-playback-device-A"});
+  const v19 = await videoUrl({videoId: "22222222-bbbb-4bbb-8bbb-000000000001", deviceId: "pbs-playback-device-A"});
   assert.ok(v19.sessionToken && typeof v19.positionSeconds === "number", "Issuance returns session state");
   const h19 = await beat({studentId: STUDENT, subjectId: SUB_A, deviceId: "pbs-playback-device-A",
     sessionToken: v19.sessionToken});
   assert.ok(h19.positionSeconds >= 0, "Issued token is live");
-  const v20 = await videoUrl({videoId: "pbs-vid-A", deviceId: "pbs-playback-device-B"});
+  const v20 = await videoUrl({videoId: "22222222-bbbb-4bbb-8bbb-000000000001", deviceId: "pbs-playback-device-B"});
   assert.equal(v20.takeover, true, "Second issuance takes over");
   await expectCode(
     beat({studentId: STUDENT, subjectId: SUB_A, deviceId: "pbs-playback-device-A", sessionToken: v19.sessionToken}),

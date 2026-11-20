@@ -2,8 +2,8 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.1
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.2
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Owner-Ratified iOS Finals (recorded 2026-10-14, still Draft until approved)
 
@@ -21,6 +21,7 @@ Status: Draft — pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History
 
+- **1.2** (2026-11-17): ADR-010 Option C alignment. Environment matrix Bunny row now names registered libraries; added a Bunny Multi-Library pre-release checklist section (playback isolation, deactivation, emergency list, credential isolation, audit). Approved by the Platform Owner as Phase 2 governance item E.
 - **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Release checklist and deliverables now describe per-Subject authorization (login succeeds; Full vs Guest per Subject) instead of login-rejection enforcement. No release history rewritten.
 
 ---
@@ -171,6 +172,13 @@ Must be completed before any release candidate is built.
 - [ ] Custom Claims refresh verified after Admin actions.
 - [ ] Password reset flow tested end-to-end.
 - [ ] Offline content encryption verified (AES-256, key derivation, Secure Storage).
+
+#### Bunny Multi-Library (ADR-010 Option C)
+- [ ] Multi-library playback verified: a video from each registered library plays, and no video plays from a library it is not associated with.
+- [ ] Library deactivation verified: deactivating a library stops its playback immediately.
+- [ ] Emergency eligibility list verified: engaging it removes a library from eligibility and never adds one.
+- [ ] Credential isolation verified: a missing credential for one library fails closed and does not fall back to another library.
+- [ ] Audit records present for registration, deactivation, association and upload.
 
 #### Performance
 - [ ] Cold start time < 3 seconds on mid-range device.
@@ -497,7 +505,7 @@ dr-tarek-prod    — Production
 | Analytics collection | Disabled | Enabled (test mode) | Enabled |
 | Crashlytics | Enabled | Enabled | Enabled |
 | FCM quiet hours | Disabled | Enabled | Enabled |
-| Bunny CDN | Test library | Test library | Production library |
+| Bunny CDN | ≥2 registered test libraries | ≥2 registered test libraries | Registered libraries (currently 1: `736742`) |
 | Payment logging | Mock | Test data | Real |
 | Subject-Device Authorization | Relaxed (evaluation logging only) | Strict | Strict |
 | Password reset | Auto-approve | Admin-approve | Admin-approve |

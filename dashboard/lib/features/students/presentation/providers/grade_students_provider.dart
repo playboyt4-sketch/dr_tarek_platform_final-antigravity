@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/grade.dart';
 import '../../data/mock_students.dart';
+import '../../domain/live_student.dart';
 import 'student_profile_subjects_provider.dart' show planDisplayForKey;
 
 /// Honest per-student plan summary for the grade Students list.
@@ -232,6 +233,9 @@ Future<GradeStudentsData> _fetchLive(Ref ref, String gradeKey) async {
   final List<GradeStudent> students = <GradeStudent>[];
   for (final doc in approvedSnap.docs) {
     final Map<String, dynamic> data = doc.data();
+    // Soft-deleted / disabled accounts stay in Firestore for audit, but they
+    // are not active students: never render them, not even as Inactive rows.
+    if (!isLiveStudent(data)) continue;
     if (data['approval_status'] != 'approved') continue;
     if (normalizeGradeKey(data['grade']) != gradeKey) continue;
     students.add(GradeStudent.fromDoc(doc));
@@ -239,7 +243,9 @@ Future<GradeStudentsData> _fetchLive(Ref ref, String gradeKey) async {
 
   int pending = 0;
   for (final doc in pendingSnap.docs) {
-    if (normalizeGradeKey(doc.data()['grade']) == gradeKey) pending++;
+    final Map<String, dynamic> data = doc.data();
+    if (!isLiveStudent(data)) continue;
+    if (normalizeGradeKey(data['grade']) == gradeKey) pending++;
   }
 
   // Honest plan data, read live — never denormalized onto `users` (a

@@ -2,11 +2,14 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.10
-Status: Proposed — Pending Teacher Database Change Approval
+Version: 1.13
+Status: Proposed (v1.13 - ADR-010 Amendment 3 completion, documentation only). v1.11 remains the approved operational baseline; data operations still require separate approval. v1.10 subject-device/playback-session proposals remain Proposed.
 
 ## Version History
 
+- **1.13** (2026-11-20, proposed): ADR-010 Amendment 3 completion (Staging). Clarifies the eligibility predicate: a non-default library is activated only by the environment's activation allow-list (`BUNNY_ACTIVE_LIBRARY_IDS`), which is also the emergency deny switch (removing an id, or emptying the list, disables it without a deploy). No third env var (`BUNNY_DENIED_LIBRARY_IDS`) is introduced: emergency shutdown is provided via audited `deactivateBunnyLibrary` (`status = "disabled"`), and the canonical default library bypass is eliminated once `BUNNY_LEGACY_LIBRARY_FALLBACK` is switched off post-migration. Numbering note: v1.9 (2026-09-14) is the Subject-Device Authorization revision; this line continues from v1.12. Documentation only: no data operation, Bunny change, secret change or deployment is authorized.
+- **1.12** (2026-11-19, proposed): ADR-010 Amendment 3. Added `bunny_libraries.token_auth_mode` (`"signed"` | `"unsigned"`; `null` only before a successful verification). Eligibility now requires a **proved** mode and a `token_auth_enabled` value consistent with it, so an unsigned library whose pull zone carries no CDN Token Authentication can be `active` without pretending to be signed. Records that `775315` and `776525` are approved **unsigned** libraries because a legacy platform consumes them (external constraint; `AllowedReferrers` is empty, so any non-empty Referer is accepted), with the Owner-accepted residual risk, a mandatory review date (2027-02-19) and the permanent signed-library migration path. `bunny_library_id` is server-owned; a resource without it is not playable after the legacy fallback is switched off. Documentation only: no data operation, Bunny change, secret change or deployment is authorized.
+- **1.11** (2026-11-17, approved): Added `bunny_libraries` (server-managed Bunny Stream library catalog), the Bunny fields on `lecture_resources` (`bunny_video_id`, `bunny_library_id`, `storage_provider`), and the `admin_audit_log` field vocabulary for library operations. No plaintext credentials are stored; only Secret Manager entry names. Approved by the Platform Owner as Phase 2 governance item C — documentation only; creating catalog documents, backfilling data and deploying remain separately gated.
 - **1.10** (2026-09-14, proposed): Implementation-design detail for Subject-Level Device Binding per the approved Implementation Architecture Specification. Documents the PROPOSED `subject_device_authorizations` relationship (fields, deterministic ID, query/index patterns, reset/unbind, audit) and the PROPOSED `playback_sessions` scope — all clearly labeled as recommendations pending approval. Approval status unchanged: Version 1.7 remains the approved baseline; nothing here is marked Approved.
 - **1.9** (2026-09-14, proposed): Conceptual alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Separates the account-level Device Registry from per-Subject authorization; deprecates global authorization semantics of existing device fields; requires a new Subject-Device Authorization relationship whose final storage shape is an explicit schema decision pending approval. No new collection, field, deterministic ID, soft-delete strategy, or index is finalized here. Version 1.7 remains the approved baseline.
 - **1.8** (2026-08-15, proposed): Feature 14 Membership + Independent Subject Access + updated approval/access rules. Version 1.7 remains preserved as the approved baseline.
@@ -463,6 +466,75 @@ Contains
 
 ---
 
+## bunny_libraries
+
+Server-managed Bunny Stream library catalog (ADR-010 Option C). This is the trusted,
+non-secret source of truth for which Bunny Stream libraries the platform may use. The
+document id equals `library_id`. It is never client-readable and never client-writable;
+all access is through Cloud Functions or the Admin SDK. It stores **no key material** —
+only Secret Manager entry **names**.
+
+Contains
+
+- Library ID
+- Display Name
+- Status
+- Pull Zone ID
+- Playback Host
+- Token Auth Enabled
+- Token Auth Verified
+- Token Auth Mode
+- Credential Refs
+- Source
+- Last Verified At
+- Last Error Code
+
+| Field | Type | Purpose | Req. | Validation | Authorized Writer | Authorized Reader | Sensitivity | Authority |
+|---|---|---|---|---|---|---|---|---|
+| `library_id` | String | Bunny Stream library identity; equals the document id | Yes | `^\d{1,20}$` | Registration callable (Doctor only) | Server only | Low | Authoritative |
+| `display_name` | String | Operator-facing label in the library picker | Yes | non-empty after trim | Registration callable (Doctor only) | Server; projected to client as `{libraryId, displayName}` | Low | Informational |
+| `status` | String enum | Lifecycle state | Yes | `pending_verification` \| `active` \| `disabled` \| `error` | Registration / verification callables | Server only | Medium | Authoritative |
+| `pull_zone_id` | Number | Bunny pull zone bound to the library | Yes | integer > 0 | Registration callable | Server only | Medium | Informational |
+| `playback_host` | String | CDN hostname used to build signed URLs | Yes | `^[a-z0-9][a-z0-9-]{0,62}\.b-cdn\.net$` | Registration callable | Server only | Medium | Authoritative for URL construction |
+| `token_auth_enabled` | Boolean | CDN Token Authentication state | Yes | strict boolean | Registration / verification callables | Server only | Medium | Authoritative |
+| `token_auth_verified` | Boolean | Whether a probe proved the library's protection mode works | Yes | strict boolean | Verification job only | Server only | Medium | Authoritative |
+| `token_auth_mode` | String enum \| null | Proved protection mode of the pull zone: `signed` (CDN token authentication enforced) or `unsigned` (plain playback, external constraint) | Yes once verified | `"signed"` \| `"unsigned"`; `null` only before a successful verification; any other value makes the document invalid | Verification callable only | Server only | Medium | Authoritative |
+| `credential_refs` | Map | Secret Manager entry **names** for this library's keys | Yes | keys exactly `stream_api_key`, `token_key`; values `^[A-Z][A-Z0-9_]{2,63}$` | Registration callable (derived from the library id) | Server only | Medium — names only, never values | Authoritative |
+| `source` | String enum | How the library entered the catalog | Yes | `auto_discovered` \| `manual_registration` \| `legacy_env` | Registration callable | Server only | Low | Informational |
+| `last_verified_at` | Timestamp \| null | Last successful verification | No | Firestore Timestamp or null | Verification job only | Server only | Low | Informational |
+| `last_error_code` | String \| null | Typed verification failure code (never a message with secrets) | No | string; empty normalizes to null | Verification job only | Server only | Low | Informational |
+
+**State machine**
+
+| From | To | Trigger | Preconditions |
+|---|---|---|---|
+| — | `pending_verification` | Registration | Valid id; not already registered; display name present; credentials exist |
+| `pending_verification` | `active` | Verification | `token_auth_verified === true` and a proved `token_auth_mode`: `signed` with `token_auth_enabled === true` and a successful signed-URL probe, or `unsigned` with `token_auth_enabled === false` and a successful plain-URL probe |
+| `active` | `disabled` | Doctor deactivation | Authorization only |
+| `active` / `pending_verification` | `error` | Verification failure | Typed error code recorded |
+| `error` | `pending_verification` | Doctor retry | Authorization only |
+| `disabled` | `pending_verification` | Doctor re-enable | Re-verification mandatory; never straight to `active` |
+
+A Dashboard toggle alone can never move a library to `active`.
+
+**Eligibility predicate.** A library is usable only when the document parses, `status ===
+"active"`, `token_auth_verified === true`, `token_auth_mode` is present, and
+`token_auth_enabled` equals `(token_auth_mode === "signed")` - a `signed` library must have
+token authentication enabled and an `unsigned` library must not claim it. It must also be
+activated for the environment: a non-default library is usable only when its id is present in
+the legacy-named `BUNNY_ACTIVE_LIBRARY_IDS` (the activation allow-list and the emergency deny
+switch); an empty or unset list denies every non-default library. Emergency shutdown of any library is provided via audited `deactivateBunnyLibrary` (`status = "disabled"`), and the canonical default library bypass is eliminated once `BUNNY_LEGACY_LIBRARY_FALLBACK` is switched off post-migration (no extra env var).
+The list can never make an ineligible row usable. A missing or unknown mode fails closed:
+absence of evidence is never read as `unsigned`. Any other state fails closed.
+
+**Credentials are never stored here.** Per-library secrets live in Secret Manager under
+deterministic names derived from the library id: `BUNNY_<libraryId>_STREAM_API_KEY` and
+`BUNNY_<libraryId>_TOKEN_KEY`.
+
+**Security Rules:** `allow read, write: if false` (unchanged).
+
+---
+
 ## lecture_resources
 
 Stores lecture content.
@@ -487,6 +559,24 @@ Contains
 - Thumbnail
 - Duration
 - Visibility
+- Bunny Video ID
+- Bunny Library ID
+- Storage Provider
+
+**Bunny fields (ADR-010 Option C)**
+
+| Field | Type | Purpose | Req. | Validation | Authorized Writer | Authorized Reader | Sensitivity | Authority |
+|---|---|---|---|---|---|---|---|---|
+| `bunny_video_id` | String \| null | Bunny video GUID inside the associated library | Conditional — required for a playable `video` resource | bare GUID only; URLs and embed links rejected | `associateBunnyVideoToLibrary` (after receipt verification) and legacy admin write paths | Server; client receives the video id when requesting playback | Low | Authoritative |
+| `bunny_library_id` | String \| null | Which library owns `bunny_video_id` | Optional today; required for multi-library correctness | `^\d{1,20}$` when set | Backend only. Rules force `null` on client create and immutability on client update | Server only — never projected to clients | Medium | Authoritative |
+| `storage_provider` | String enum | Which provider holds a non-video resource | Yes for non-video resources | `"bunny"` \| `"firebase"`; defaults to `"firebase"` when absent | Upload callables | Server; may be needed by the client to choose a fetch path | Low | Informational |
+
+A client may not set `bunny_library_id` directly; it is **server-owned** and is written only
+by the verified association path after the backend has proved, with that library's own
+Stream key, that the video exists in that library. Cross-library association is rejected
+server-side. A resource that carries a `bunny_video_id` but no `bunny_library_id` is **not
+playable** once the legacy fallback is switched off: it is repaired by the audited
+migration, never by guessing a library.
 
 ---
 
@@ -1015,6 +1105,52 @@ Contains
 - Default Plan
 - Latest Version
 - Minimum Version
+
+---
+
+## admin_audit_log
+
+Server-generated audit trail for sensitive administrative operations. The collection
+already exists and is written by more than twenty callables. Clients can never create,
+update, or delete an audit record.
+
+Contains
+
+- Action
+- Entity
+- Target ID
+- Actor ID
+- Actor Role
+- Permission Basis
+- Created At / Timestamp
+
+| Field | Type | Purpose |
+|---|---|---|
+| `action` | String | Verb, e.g. `approve_student`, `content_create`, `bunny_library_register` |
+| `entity` | String | Subject of the action |
+| `target_id` | String | Affected document id |
+| `actor_id` | String | Acting uid |
+| `actor_role` | String | Role at the time of the action |
+| `permission_basis` | String | Which permission justified the action |
+| `created_at` / `timestamp` | Timestamp | Server timestamp only |
+
+**Option C action vocabulary (ADR-010)**
+
+| Action | Emitted by | Required extra fields |
+|---|---|---|
+| `bunny_library_register` | Registration callable | `library_id`, `source`, `result` |
+| `bunny_library_verify` | Verification job | `library_id`, `previous_status`, `new_status`, `reason_code` |
+| `bunny_library_deactivate` | Deactivation callable | `library_id`, `previous_status`, `reason` |
+| `bunny_library_reactivate` | Reactivation callable | `library_id`, `previous_status` |
+| `bunny_credential_ref_set` | Registration / fallback callable | `library_id`, `credential_kind` — never the value, never a fingerprint |
+| `bunny_video_associate` | Association callable | `library_id`, `video_id`, `resource_id`, `lecture_id`, `replaced` |
+| `bunny_video_upload` | Upload callables | `library_id`, `resource_id`, `result` |
+| `bunny_emergency_list_change` | Configuration change (if exposed) | `previous`, `next` |
+
+**Forbidden in audit payloads:** secret values, secret version payloads, token keys,
+signed URLs, and any string that could be used to reconstruct a credential.
+
+**Security Rules:** `allow get, list: if isDoctor() || (isAdmin() && resource.data.actor_id == request.auth.uid); allow create, update, delete: if false;` (unchanged).
 
 ---
 

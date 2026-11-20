@@ -1,10 +1,11 @@
 # 08 Development Standards
 
-Version: 1.3
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.4
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History (new)
 
+- **1.4** (2026-11-17): Added §12 Bunny Credential Standards for ADR-010 Option C — derived secret naming, one-library credential scope, no secret material in responses/logs/audit, one IAM binding per secret, metadata-only verification, and no rotation outside an approved procedure. Approved by the Platform Owner as Phase 2 governance item E.
 - **1.3** (2026-09-14): Implementation-design detail per the approved Implementation Architecture Specification. Client identifiers documented as untrusted; server-issued handle, no client slot counting, transactional binding, authorization audit, Max concurrency, and race/isolation tests recorded. No fingerprint algorithm invented; existing stable-identification standard preserved.
 - **1.2** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Claims, testing, DRM, and review-checklist sections rescoped to per-Subject authorization (login always succeeds; Full vs Guest per Subject). No new algorithms, durations, or values invented.
 
@@ -215,8 +216,27 @@ Student receives In-App Notification: "Password reset by admin. Login with your 
 
 # 11. Open Items (flagged for Teacher review)
 
-- [ ] Confirm whether a linter config (e.g., `very_good_analysis` or `flutter_lints` with custom rules) should be standardized and checked in CI — assumed desirable but not previously specified.
-- [ ] Confirm CI/CD tooling (GitHub Actions vs. other) — no prior document specifies this; deferred until decided, not invented here.
+- [ ] Confirm whether a linter config (e.g., `very_good_analysis` or `flutter_lints` with custom rules) should be standardized and checked in CI - assumed desirable but not previously specified.
+- [ ] Confirm CI/CD tooling (GitHub Actions vs. other) - no prior document specifies this; deferred until decided, not invented here.
+
+---
+
+# 12. Bunny Credential Standards (per ADR-010 Option C)
+
+1. **Naming is derived, never chosen.** Per-library secrets are
+   `BUNNY_<libraryId>_STREAM_API_KEY` and `BUNNY_<libraryId>_TOKEN_KEY`. An operator may
+   not invent a secret name.
+2. **One library, one credential scope.** A callable may read only the credential of the
+   library it is acting on. There is no global Bunny key in new code.
+3. **Secrets never leave the server.** No key, token, signed URL or credential reference
+   may appear in a client response, a Firestore document, a log line, an exception
+   message, or an audit payload.
+4. **IAM is one binding per secret.** The runtime service account receives
+   `roles/secretmanager.secretAccessor` on the specific secret. No broader role.
+5. **Verification reads metadata, not payloads.** Checking a secret means listing
+   versions and IAM, never `versions access`.
+6. **No key rotation without a separate approved procedure.** Rotation is an incident or
+   lifecycle event, not a routine deploy step.
 
 ---
 

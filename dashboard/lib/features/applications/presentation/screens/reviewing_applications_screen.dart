@@ -8,6 +8,7 @@ import '../../domain/entities/join_application.dart';
 import '../../domain/grade.dart';
 import '../../../students/presentation/providers/grade_pending_requests_provider.dart';
 import '../../../students/presentation/providers/grade_students_provider.dart';
+import '../../../home/presentation/providers/home_stats_provider.dart';
 import '../providers/join_applications_provider.dart';
 import '../widgets/application_decision_dialog.dart';
 
@@ -129,6 +130,8 @@ class _ApplicationCard extends ConsumerWidget {
       // approved student appears in Students without a manual reload.
       ref.invalidate(joinApplicationsProvider);
       ref.invalidate(gradeStudentsProvider);
+      ref.invalidate(homeAnalyticsProvider);
+      ref.invalidate(homeStatsProvider);
       if (application.gradeKey != null) {
         ref.invalidate(
           gradePendingRequestsProvider(application.gradeKey!),

@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.1
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.2
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History
 
+- **1.2** (2026-11-17): Added Doctor-only operations for Bunny Stream libraries (register, deactivate, re-activate, fallback token key, emergency blocking, health viewing) — never delegable to any `ADMIN_*` set. Replaced the `ADMIN_CONTENT` "Upload video (enter video_id)" row with "Upload video to a registered library" and "Associate a verified video to a lecture" per ADR-010 Option C. No new permission set created; `ADMIN_CONTENT` is not widened. Approved by the Platform Owner as Phase 2 governance item D.
 - **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). `ADMIN_DEVICES` rescoped to per-Subject authorization management and the approved Device Reset model (student request → Teacher/authorized Admin acts; login never blocked; lost device alone triggers nothing). No new permission sets or audit action IDs introduced.
 
 ---
@@ -127,7 +128,8 @@ Admin permissions are **not binary** (Admin vs. non-Admin). Instead, the Teacher
 | Edit lecture | `ADMIN_CONTENT` | — |
 | Publish lecture | `ADMIN_CONTENT` | — |
 | Archive lecture | `ADMIN_CONTENT` | — |
-| Upload video (enter video_id) | `ADMIN_CONTENT` | Video file uploaded to Bunny CDN separately |
+| Upload video to a registered library | `ADMIN_CONTENT` | Library is selected from the server-provided eligible list; the backend binds the upload to that library; no credential is exposed to the browser |
+| Associate a verified video to a lecture | `ADMIN_CONTENT` | Video must be verified against the selected library by the backend; cross-library association is rejected |
 | Upload PDF | `ADMIN_CONTENT` | Max file size enforced |
 | Create timeline quiz | `ADMIN_CONTENT` | — |
 | Edit timeline quiz | `ADMIN_CONTENT` | — |
@@ -137,6 +139,25 @@ Admin permissions are **not binary** (Admin vs. non-Admin). Instead, the Teacher
 | Grade essay questions | `ADMIN_CONTENT` | — |
 | Configure lecture access rules | `ADMIN_CONTENT` | — |
 | Reset student watch attempts | `ADMIN_CONTENT` | — |
+
+#### Doctor-Only Operations (Bunny Stream Libraries)
+
+These operations are **never delegable**. They are not part of any `ADMIN_*` permission
+set and cannot be granted to an Admin. Enforcement is server-side via `requireDoctor`
+plus Firestore Rules that deny all client writes to `bunny_libraries`.
+
+| Action | Requires | Additional Constraints |
+|--------|----------|------------------------|
+| Register a Bunny library | Doctor | Library must not already be registered; credentials for that library id must exist in Secret Manager; result is `pending_verification`, never `active` |
+| Deactivate a Bunny library | Doctor | Immediately makes the library ineligible; existing playback of that library fails closed |
+| Re-activate a Bunny library | Doctor | Returns the library to `pending_verification`; re-verification is mandatory before it can serve playback |
+| Enter fallback token key | Doctor | One-time, masked input, never echoed back, never stored in Firestore, written only to Secret Manager |
+| Enable/disable emergency blocking | Doctor | Can only reduce eligibility; can never grant it |
+| View library health and verification history | Doctor | Read-only; verification results are produced by the system, not entered manually |
+
+Every row above must emit an `admin_audit_log` entry. The action vocabulary and forbidden
+payloads are defined in `05 Database` (`admin_audit_log`) and in
+`21_ADR_010_Amendment_2.md`.
 
 #### ADMIN_CHAT — Communication
 

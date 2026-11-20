@@ -95,6 +95,11 @@ class FirstVideoRef {
 
   /// Bunny Stream video id used as issuance input for the signed-URL path.
   final String bunnyVideoId;
+
+  /// ADR-010 additive metadata: the library that owns [bunnyVideoId].
+  /// Null for legacy pointers (server-side default-library fallback).
+  /// Hint only — never a credential selector on the client.
+  final String? bunnyLibraryId;
   final String? title;
   final int displayOrder;
 
@@ -106,6 +111,7 @@ class FirstVideoRef {
   const FirstVideoRef({
     required this.resourceId,
     required this.bunnyVideoId,
+    this.bunnyLibraryId,
     this.title,
     this.displayOrder = 0,
     this.thumbnailPath,
@@ -125,6 +131,7 @@ class FirstVideoRef {
     return FirstVideoRef(
       resourceId: resourceId,
       bunnyVideoId: bunnyVideoId,
+      bunnyLibraryId: _nonEmpty(map['bunny_library_id']),
       title: _nonEmpty(map['title']),
       displayOrder: (map['display_order'] as num?)?.toInt() ?? 0,
       thumbnailPath: _nonEmpty(map['thumbnail_path']),

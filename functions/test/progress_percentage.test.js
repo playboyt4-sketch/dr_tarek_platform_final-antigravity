@@ -26,9 +26,16 @@ async function run() {
     // We create 50 lectures to test Scenario 1
     const batch = db.batch();
     for (let i = 1; i <= 50; i++) {
+        // Production lectures always carry the owning subject and a status;
+        // `calculateAndSetSubjectProgress` counts only `status == "published"`
+        // rows (and resolves the subject through the section). The fixture
+        // omitted both, so the trigger correctly counted 0 published lectures.
         batch.set(db.collection("lectures").doc(`lec_prog_${i}`), {
             section_id: sectionId,
-            title: `Lecture ${i}`
+            subject_id: subjectId,
+            title: `Lecture ${i}`,
+            status: "published",
+            is_deleted: false
         });
     }
     await batch.commit();
@@ -45,9 +52,15 @@ async function run() {
         is_completed: true
     });
 
-    console.log("Waiting for background trigger to finish (up to 15s)...");
+    console.log("Waiting for background trigger to finish (up to 120s)...");
+    // 120s matches the documented trigger-readiness budget in
+    // `test/wait_for_triggers.js`: `emulators:exec` starts this script before
+    // Cloud Functions triggers finish registering, and a cold trigger delivery
+    // was measured at ~22s. The previous 15s window failed on delivery latency,
+    // not on the aggregation (the computed summary is 50/1/2 once delivered).
+    // Assertions below are unchanged.
     let summaryDoc;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 120; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         summaryDoc = await db.collection("subject_progress_summary").doc(`${studentId}_${subjectId}`).get();
         if (summaryDoc.exists) break;

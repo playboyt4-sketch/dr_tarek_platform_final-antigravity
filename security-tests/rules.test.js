@@ -5,6 +5,7 @@ const {
   assertSucceeds,
   assertFails,
 } = require('@firebase/rules-unit-testing');
+const {serverTimestamp} = require('firebase/firestore');
 
 const projectId = 'dr-tarek-platform-rules-test';
 const root = path.resolve(__dirname, '..');
@@ -1089,6 +1090,9 @@ async function run() {
       is_visible: true,
       visibility: true,
       is_deleted: false,
+      // ADR-010: `created_at` must be the server's request time (Rules compare
+      // it with `request.time`) and no client may author `bunny_library_id`.
+      created_at: serverTimestamp(),
     };
     await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-video-1').set(resourceBase));
     await assertSucceeds(contentAdminDb.collection('lecture_resources').doc('res-pdf-1').set({
@@ -1167,6 +1171,8 @@ async function run() {
       is_visible: true,
       visibility: true,
       is_deleted: false,
+      // ADR-010: must equal the server's request time (Rules check request.time).
+      created_at: serverTimestamp(),
     }));
     await assertSucceeds(doctorDb3.collection('lecture_resources').doc('res-hidden-1').set({
       lecture_id: 'lec-student-vis',
@@ -1181,6 +1187,8 @@ async function run() {
       is_visible: false,
       visibility: false,
       is_deleted: false,
+      // ADR-010: must equal the server's request time (Rules check request.time).
+      created_at: serverTimestamp(),
     }));
 
     // (b) Callable layer (Admin SDK context): replicate getLectureResources'

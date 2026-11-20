@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/entities/join_application.dart';
 import '../../../applications/domain/grade.dart';
+import '../../domain/live_student.dart';
 
 /// One row of the grade pending-requests table.
 class PendingRequestRow {
@@ -103,7 +104,9 @@ Future<List<PendingRequestRow>> _fetchLive(
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs =
       <QueryDocumentSnapshot<Map<String, dynamic>>>[
     for (final doc in snap.docs)
-      if (normalizeGradeKey(doc.data()['grade']) == gradeKey) doc,
+      if (isLiveStudent(doc.data()) &&
+          normalizeGradeKey(doc.data()['grade']) == gradeKey)
+        doc,
   ];
 
   if (docs.isEmpty) return <PendingRequestRow>[];

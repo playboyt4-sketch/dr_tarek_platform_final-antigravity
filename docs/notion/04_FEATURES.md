@@ -1,10 +1,11 @@
 # 04_FEATURES
 
-Version: 2.0
+Version: 2.1
 Status: Approved
 
 ## Version History
 
+- **2.1** (2026-11-17): Added the ADR-010 Option C library dimension to Feature 05 — server-side library resolution with no cross-library fallback, Doctor-only library registration/management, and the video-upload flow. Upload mechanism remains pending capability verification (U-05/U-06). No student-facing business rule changed. Approved by the Platform Owner as Phase 2 governance item E.
 - **2.0** (2026-09-14): Major alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Feature 01 rewritten (login always succeeds; authorization per Student + Subject + Device on first Subject access; Guest tier); content-protection, video, PDF, exam, membership, and profile sections rescoped to per-Subject Full vs Guest; Max defined as 2 authorized devices + single active playback session. No minute values, UI copy, or implementation details invented.
 - **1.4** (2026-08-04): Rewrote Registration Main Flow and Business Rules to match the approved Figma onboarding sequence (Student Type → Full Name → Phone Number → Photo → Grade selection → Password), replacing the earlier "phone number and password only" flow. Added self-selected `grade` (Frqa) as a new student-owned attribute, distinct from the existing admin-only "Academic Year/Term" (subject-scheduling metadata), which is unchanged. See 05 Database v1.6 for the new field and 11 Assets for the per-grade color tokens.
 - **1.3** and earlier: see prior revisions.
@@ -735,6 +736,28 @@ Provide a secure, high-performance video learning experience with intelligent pr
 
 ---
 
+## Library Resolution (ADR-010)
+
+A video belongs to exactly one Bunny Stream library. The library is **not** chosen by the
+student and is never sent to the client. When a student opens a video, the backend:
+
+1. resolves the `lecture_resources` row for the requested video;
+2. resolves that row's library from the server-managed catalog;
+3. rejects the request if the library is unknown, inactive, unverified, or blocked by the
+   emergency list;
+4. issues a signed URL for that library only.
+
+There is **no cross-library fallback**. If the associated library cannot serve the video,
+the student receives a typed failure, not a stream from a different library.
+
+**Acceptance criteria**
+- A video associated with library A never plays from library B.
+- A library that is deactivated stops serving immediately.
+- The client never receives a library id, host, or credential.
+- Existing single-library behaviour is unchanged until the catalog is populated.
+
+---
+
 ## Actors
 
 - Student
@@ -1059,7 +1082,48 @@ No capability is hardcoded to any membership plan.
 - Analytics are recorded accurately.
 - Content protection remains active throughout playback.
 
-# Feature 06 — PDF Viewer
+---
+
+## Library Registration and Management (Doctor only)
+
+**Actors:** Doctor (Platform Owner).
+**Entry point:** Dashboard → Video Libraries.
+
+**Main flow**
+1. Doctor enters a Bunny library id and display name.
+2. Backend validates the id format, confirms it is not already registered, and confirms
+   credentials exist for that id in Secret Manager.
+3. Backend creates the catalog entry with status `pending_verification`.
+4. Backend verifies CDN Token Authentication is enabled and that a signed URL actually
+   plays; only then does the library become `active`.
+5. Every step writes an audit record.
+
+**Alternative flow — automatic verification unavailable**
+If the backend cannot read or enable Token Authentication, the Doctor may supply the
+token key once through a masked field. The key goes directly to Secret Manager, is never
+returned, and the library still requires verification before activation.
+
+**Business rules**
+- The platform never creates a Bunny library.
+- A library that is not `active` + verified is never offered in any picker.
+- Deactivation takes effect immediately and is audited.
+
+---
+
+## Video Upload (Doctor or ADMIN_CONTENT)
+
+1. The author selects a lecture and a library from the server-provided eligible list.
+2. The backend creates the video in that library and returns a short-lived upload
+   authorization bound to that video and that library.
+3. The client uploads; the browser never receives a library API key.
+4. The backend verifies completion and the resulting video identity before the video can
+   be associated with the lecture.
+5. Failed or abandoned uploads leave no associable state.
+
+**Status:** the upload mechanism itself is an unresolved capability (U-05/U-06). This
+feature text describes required behaviour, not a chosen mechanism.
+
+# Feature 06 - PDF Viewer
 
 ## Purpose
 

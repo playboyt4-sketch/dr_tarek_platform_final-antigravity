@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_typography.dart';
+import '../../../students/domain/live_student.dart';
 
 /// Broadcast audiences for the quick announcement dialog.
 const List<({String key, String label})> announcementAudiences =
@@ -266,7 +267,12 @@ Future<int> publishAnnouncement({
   }
 
   final QuerySnapshot<Map<String, dynamic>> targets = await query.get();
-  if (targets.docs.isEmpty) {
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> liveTargets =
+      targets.docs
+          .where((QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+              isLiveStudent(doc.data()))
+          .toList(growable: false);
+  if (liveTargets.isEmpty) {
     throw StateError('No targeted students found for audience "$audienceKey".');
   }
 
@@ -283,7 +289,7 @@ Future<int> publishAnnouncement({
   }
 
   for (final QueryDocumentSnapshot<Map<String, dynamic>> student
-      in targets.docs) {
+      in liveTargets) {
     final DocumentReference<Map<String, dynamic>> ref =
         db.collection('notifications').doc();
     batch.set(ref, <String, dynamic>{

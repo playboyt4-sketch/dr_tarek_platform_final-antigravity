@@ -19,7 +19,8 @@
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "*.local",
+        ".env*"
       ],
       "predeploy": ["npm --prefix functions run build"],
       "timeout": "60s"

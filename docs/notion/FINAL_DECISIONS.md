@@ -6,13 +6,14 @@
 
 # تم الاتفاق عليها في شات مراجعة المعمارية
 
-Version: 2.2
+Version: 2.3
 Status: Approved
-Date: 2026-11-01
-Authority: 00_MASTER_ARCHITECTURE.md Version 2.2 / ADR-004 + ADR-005 + ADR-009 (highest authoritative source)
+Date: 2026-11-17
+Authority: 00_MASTER_ARCHITECTURE.md Version 2.3 / ADR-004 + ADR-005 + ADR-009 + ADR-010 (highest authoritative source)
 
 ## Version History
 
+- **2.3** (2026-11-17): Section 4 amended for ADR-010 Option C: the Dashboard may register Bunny libraries (Doctor only) and select a library when uploading or associating a video, while Video-ID entry remains available as a fallback. Added: the library is resolved server-side only; no automatic cross-library fallback; the platform never creates Bunny libraries; library `775315` remains deferred and inactive. No other section changed.
 - **2.2** (2026-11-01): §9 amended per ADR-009 — Light Mode remains the canonical design and Dark Mode is a fully supported appearance mode (System default). No enforcement, schema or permission change.
 - **2.1** (2026-09-17): Added Section 26 recording approved ADR-005 — Platform Owner role migration (`teacher` → `doctor`). No enforcement change in this document update.
 - **2.0** (2026-09-14): Major update to Subject-Level Device Binding per ADR-004. Rewrote Section 1 to Student + Subject + Device authorization; updated Sections 2, 3, 5, 10, 14 for consistency; added Sections 16–25 (membership per Subject, Guest tier, Max two-devices-plus-single-playback, device identity, claims authority, reset/lost-device, term/freeze, migration, highest-plan rule, separation, supersession). No exact Guest minute values, no DRM durations, no fingerprint algorithm, no database/function/class details added. Sections 4, 6, 7, 8, 9, 11, 12, 13, 15 unchanged.
@@ -49,11 +50,16 @@ Authority: 00_MASTER_ARCHITECTURE.md Version 2.2 / ADR-004 + ADR-005 + ADR-009 (
 ## 4. Bunny CDN
 
 - الفيديو يرفع على Bunny → Bunny يعمل transcoding
-- Dashboard: أدخل Video ID فقط
+- Dashboard: تسجيل مكتبات Bunny (Doctor فقط)، واختيار المكتبة عند رفع الفيديو أو ربطه بالمحاضرة. إدخال Video ID يبقى متاحاً كمسار احتياطي للمحتوى القديم.
 - التطبيق يطلب رابط موقّع (Signed URL) من Cloud Function
 - الرابط يتجدد تلقائياً كل مرة الطالب يفتح الفيديو
 - الطالب ميشوفش الرابط أبداً
 - الجودة المتاحة: محددة حسب الاشتراك (من Dashboard)
+- المكتبة تُحدَّد من السيرفر فقط: الطالب لا يختار المكتبة، ولا يعرف هويتها، ولا يستلم أي مفتاح
+- لا يوجد انتقال تلقائي بين المكتبات: مكتبة غير مسجّلة أو غير مفعّلة أو غير محقّقة = رفض العملية
+- كل فيديو ينتمي لمكتبة واحدة فقط، ولا يمكن ربط فيديو بمكتبة لا تنتمي إليها
+- المنصة لا تنشئ مكتبات Bunny إطلاقاً
+- المكتبة 775315 مؤجلة وغير مفعّلة، ولا يتم إعدادها
 
 ## 5. الاشتراكات
 

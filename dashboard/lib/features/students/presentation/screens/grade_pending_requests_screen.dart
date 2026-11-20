@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/presentation/widgets/application_decision_dialog.dart';
+import '../../../home/presentation/providers/home_stats_provider.dart';
 import '../providers/grade_pending_requests_provider.dart';
 import '../providers/grade_students_provider.dart';
 import 'grade_students_screen.dart'
@@ -71,8 +72,11 @@ class _GradePendingRequestsScreenState
     if (message != null) {
       ref.invalidate(gradePendingRequestsProvider(_gradeKey));
       // Approved students join the Students table: refresh it too so no
-      // manual reload is needed.
+      // manual reload is needed. The home counters/analytics read the same
+      // `users` rows, so drop their caches as well.
       ref.invalidate(gradeStudentsProvider);
+      ref.invalidate(homeAnalyticsProvider);
+      ref.invalidate(homeStatsProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );

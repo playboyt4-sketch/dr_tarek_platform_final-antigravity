@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../admin/domain/admin_grades.dart'
@@ -26,6 +27,30 @@ import 'admin_content_data_source.dart';
   );
 }
 
+/// Canonical denormalized `first_video` projection for one video resource.
+///
+/// Mirrors the Dashboard selector and the server's
+/// `firstVideoFieldsFromResources`: identity + display metadata only. The
+/// ADR-010 `bunny_library_id` is additive (null for legacy rows) so the
+/// fast-lane hint never diverges from the authoritative resource association.
+Map<String, Object?> lectureFirstVideoFields({
+  required String resourceId,
+  required String bunnyVideoId,
+  String? bunnyLibraryId,
+  String? title,
+  int displayOrder = 0,
+}) {
+  return <String, Object?>{
+    'resource_id': resourceId,
+    'bunny_video_id': bunnyVideoId,
+    'bunny_library_id': bunnyLibraryId,
+    'title': title,
+    'display_order': displayOrder,
+    'thumbnail_path': null,
+    'thumbnail_storage_provider': null,
+  };
+}
+
 /// Firestore access for staff content authoring.
 /// All writes land on collections governed by firestore.rules staff clauses;
 /// file bytes move through ResourceStorageGateway implementations
@@ -38,13 +63,90 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
   final FirebaseFirestore firestore;
   final FirebaseAuth auth;
 
+  /// ADR-010: server-verified library association. Lazy so unit tests that
+  /// never touch a video resource do not need a Functions instance.
+  final FirebaseFunctions? _functionsOverride;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ?? FirebaseFunctions.instance;
+
+  /// Server default Bunny library (non-secret display value). New video
+  /// resources are associated with it unless the row already has one.
+  ///
+  /// Overridable per build so a non-production environment names its own
+  /// library instead of inheriting production `736742`:
+  ///   flutter build apk --dart-define=BUNNY_DEFAULT_LIBRARY_ID=780700
+  /// The server still verifies the association and remains the only
+  /// authority that resolves credentials.
+  static const String _defaultBunnyLibraryId = String.fromEnvironment(
+    'BUNNY_DEFAULT_LIBRARY_ID',
+    defaultValue: '736742',
+  );
+
   AdminContentRemoteDataSourceImpl({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
+    FirebaseFunctions? functions,
   })  : firestore = firestore ?? FirebaseFirestore.instance,
-        auth = auth ?? FirebaseAuth.instance;
+        auth = auth ?? FirebaseAuth.instance,
+        _functionsOverride = functions;
 
   String get _actorId => auth.currentUser?.uid ?? 'unknown_staff';
+
+  /// ADR-010: verify + persist a video row's library association through the
+  /// trusted callables. `bunny_library_id` is server-owned (Firestore Rules
+  /// deny client writes), so a video row stays PENDING — and unplayable —
+  /// until this succeeds. Failures are surfaced, never silently downgraded to
+  /// the legacy default-library path.
+  Future<void> _associateVideoResource({
+    required String resourceId,
+    required String lectureId,
+    required String? videoId,
+    required String? resourceType,
+    String? storedLibraryId,
+    bool replaceVideo = false,
+  }) async {
+    final String? normalizedVideoId = videoId?.trim();
+    if (normalizedVideoId == null || normalizedVideoId.isEmpty) return;
+    if (resourceType != null && resourceType != 'video') return;
+    final String? stored = storedLibraryId?.trim();
+    final String libraryId =
+        (stored != null && stored.isNotEmpty) ? stored : _defaultBunnyLibraryId;
+    try {
+      final HttpsCallableResult<dynamic> validation =
+          await _functions.httpsCallable('validateBunnyVideoAssociation').call(
+        <String, dynamic>{
+          'libraryId': libraryId,
+          'videoId': normalizedVideoId,
+          'resourceId': resourceId,
+          'lectureId': lectureId,
+        },
+      );
+      final Object? raw = validation.data;
+      final Map<String, dynamic> payload =
+          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      final Object? receipt = payload['receipt'];
+      if (payload['status'] != 'verified' || receipt == null) {
+        throw Exception(
+          'Video verification failed (${payload['reason'] ?? 'unavailable'}).',
+        );
+      }
+      await _functions.httpsCallable('associateBunnyVideoToLibrary').call(
+        <String, dynamic>{
+          'resourceId': resourceId,
+          'lectureId': lectureId,
+          'libraryId': libraryId,
+          'videoId': normalizedVideoId,
+          'replaceVideo': replaceVideo,
+          'receipt': receipt,
+        },
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw Exception(
+        error.message ?? 'The verified library association was not saved.',
+      );
+    }
+  }
 
   Map<String, dynamic> get _createStamp => {
         'created_at': FieldValue.serverTimestamp(),
@@ -79,6 +181,7 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     String? winnerId;
     String? winnerTitle;
     String? winnerBunnyId;
+    String? winnerLibraryId;
     int? winnerOrder;
     for (final doc in snap.docs) {
       final d = doc.data();
@@ -94,20 +197,20 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         winnerId = doc.id;
         winnerTitle = ((d['title'] ?? d['resource_title']) as String?) ?? '';
         winnerBunnyId = bunnyId;
+        winnerLibraryId = (d['bunny_library_id'] as String?)?.trim();
         winnerOrder = order;
       }
     }
     await firestore.collection('lectures').doc(lectureId).update({
       'first_video': winnerId == null
           ? null
-          : <String, Object?>{
-              'resource_id': winnerId,
-              'bunny_video_id': winnerBunnyId,
-              'title': winnerTitle,
-              'display_order': winnerOrder,
-              'thumbnail_path': null,
-              'thumbnail_storage_provider': null,
-            },
+          : lectureFirstVideoFields(
+              resourceId: winnerId,
+              bunnyVideoId: winnerBunnyId!,
+              bunnyLibraryId: winnerLibraryId,
+              title: winnerTitle,
+              displayOrder: winnerOrder ?? 0,
+            ),
       'updated_at': FieldValue.serverTimestamp(),
       'updated_by': _actorId,
     });
@@ -605,6 +708,9 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         if (subjectId != null) payload['subject_id'] = subjectId;
       }
     }
+    // ADR-010: `bunny_library_id` is server-owned. A client value is dropped
+    // here (the server writes the verified one), so rules stay enforce-only.
+    payload.remove('bunny_library_id');
     await firestore
         .collection('lecture_resources')
         .doc(resourceId)
@@ -612,6 +718,14 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     final lectureId = payload['lecture_id'] as String?;
     if (lectureId != null && lectureId.isNotEmpty) {
       await _syncLectureFirstVideo(lectureId);
+    }
+    if (lectureId != null && lectureId.isNotEmpty) {
+      await _associateVideoResource(
+        resourceId: resourceId,
+        lectureId: lectureId,
+        videoId: payload['bunny_video_id'] as String?,
+        resourceType: payload['resource_type'] as String?,
+      );
     }
   }
 
@@ -635,6 +749,18 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         if (subjectId != null) payload['subject_id'] = subjectId;
       }
     }
+    // ADR-010: the association is server-owned; a verified row's Video ID may
+    // only change through the association callable (rules reject a direct
+    // pointer swap), so an edited Video ID is deferred to the server below.
+    payload.remove('bunny_library_id');
+    final String? storedLibraryId =
+        (stored?['bunny_library_id'] as String?)?.trim();
+    final String? incomingVideoId = payload['bunny_video_id'] as String?;
+    if (incomingVideoId != null &&
+        storedLibraryId != null &&
+        storedLibraryId.isNotEmpty) {
+      payload.remove('bunny_video_id');
+    }
     await firestore.collection('lecture_resources').doc(resourceId).update({
       ...payload,
       'updated_at': FieldValue.serverTimestamp(),
@@ -644,6 +770,15 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
         (payload['lecture_id'] ?? stored?['lecture_id']) as String?;
     if (lectureId != null && lectureId.isNotEmpty) {
       await _syncLectureFirstVideo(lectureId);
+      await _associateVideoResource(
+        resourceId: resourceId,
+        lectureId: lectureId,
+        videoId: incomingVideoId,
+        resourceType: (payload['resource_type'] ?? stored?['resource_type'])
+            as String?,
+        storedLibraryId: storedLibraryId,
+        replaceVideo: storedLibraryId != null && storedLibraryId.isNotEmpty,
+      );
     }
   }
 

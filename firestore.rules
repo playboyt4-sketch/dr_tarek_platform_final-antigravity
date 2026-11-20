@@ -153,6 +153,14 @@ service cloud.firestore {
 
     // User profiles are readable only after password_hash has been migrated
     // out of users/{userId}. All sensitive transitions use Admin SDK Functions.
+    // ADR-010 Amendment 1 — server-managed Bunny library catalog.
+    // SERVER-ONLY: it holds credential *names*, verification state and the
+    // playback host used to select signing material. Clients read eligible
+    // libraries through the listEligibleBunnyLibraries callable, never here.
+    match /bunny_libraries/{libraryId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       allow get, list: if signedIn()
         && hasNoPasswordHash(resource.data)
@@ -291,12 +299,41 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ADR-010 server-verified association.
+    // `bunny_library_id` selects which library's signing credentials issue
+    // playback, so it is SERVER-ONLY: clients may never create, change or
+    // remove it (the associateBunnyVideoToLibrary callable writes it through
+    // the Admin SDK, which bypasses these rules). A newly created video row is
+    // therefore "pending" until that callable has verified its association,
+    // and the issuance gate refuses to play a pending row. `bunny_video_id` is
+    // still authorable by content managers — it is only a pointer — but a
+    // VERIFIED row's pointer is immutable here: rebinding a verified video to
+    // a different Video ID requires the server callable (which re-verifies),
+    // so a client can never swap the bytes under a verified association.
+    // `created_at` must be the SERVER's request time: it is what the issuance
+    // gate uses to tell a genuine legacy row from a newly created (pending)
+    // one, so a client must not be able to forge an old stamp. Every authoring
+    // path writes `FieldValue.serverTimestamp()`, which Rules resolve to
+    // `request.time`.
     match /lecture_resources/{resourceId} {
       allow get, list: if (resource == null ? false : (isApprovedContent(resource.data) && hasSubjectAccess(request.auth.uid, resource.data.get('subject_id', 'missing-subject')) && !isLectureDenied(request.auth.uid, resource.data.get('lecture_id', ''))))
         || canManageContent()
         || isDoctor();
-      allow create: if canManageContent();
-      allow update: if canManageContent();
+      allow create: if canManageContent()
+        && request.resource.data.get('bunny_library_id', null) == null
+        && request.resource.data.get('created_at', null) == request.time;
+      allow update: if canManageContent()
+        && request.resource.data.get('bunny_library_id', null) == resource.data.get('bunny_library_id', null)
+        && request.resource.data.get('resource_type', '') == resource.data.get('resource_type', '')
+        // `created_at` is the issuance gate's only legacy/pending discriminator:
+        // it must be immutable after creation, or a pending row could be
+        // backdated/nulled into the legacy default-library fallback.
+        && request.resource.data.get('created_at', null) == resource.data.get('created_at', null)
+        && (
+          request.resource.data.get('bunny_video_id', null) == resource.data.get('bunny_video_id', null)
+          || (resource.data.get('bunny_library_id', null) == null
+            && request.resource.data.get('bunny_library_id', null) == null)
+        );
       allow delete: if false;
     }
 

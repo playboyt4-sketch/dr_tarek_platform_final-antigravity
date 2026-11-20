@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.1
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.2
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History
 
+- **1.2** (2026-11-17): Added ADR-010 Option C operator capabilities: `video.library.manage` (Doctor only, never a student plan value) and `video.upload` (delegable via `ADMIN_CONTENT`); administrative rows for Bunny library registration/deactivation/re-activation, credential configuration, fallback token entry, emergency blocking and health viewing; and the effective-maximum-quality rule `min(plan, library)`. No student-facing feature key changed. Approved by the Platform Owner as Phase 2 governance item D.
 - **1.1** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Device Matrix rows now describe per-Subject allowances (Free 1 / Pro 1 / Max 2, no cross-Subject leakage); ABAC claims de-scoped to identity; device admin/audit rows rescoped to per-Subject authorization and the approved reset model. No new permission or audit-event IDs introduced.
 
 ---
@@ -101,12 +102,20 @@ This document is the single source of truth for access control across the platfo
 | `video.watermark` | Dynamic watermark | ✅ | ✅ | ✅ | ✅ |
 | `video.security.screen_record_detect` | Detect screen recording | ✅ | ✅ | ✅ | ✅ |
 | `video.security.screenshot_prevent` | Prevent screenshots (Android) / detect-only on iOS — see note | ✅ | ✅ | ✅ | ✅ |
+| `video.library.manage` | Manage Bunny libraries (register, deactivate, credentials) — operator capability, never a student plan value | N/A | N/A | N/A | N/A — Doctor only |
+| `video.upload` | Upload video to a registered library | N/A | N/A | N/A | N/A — delegable via `ADMIN_CONTENT` |
 
 > **iOS note (owner decision 2026-10-14, detection-only):** on iOS the platform
 > cannot prevent screenshots or screen capture; `AppDelegate` observes
 > `capturedDidChangeNotification` and overlays a black shield (detection +
 > deterrence only). Do not promise prevention on iOS in UI copy, store
 > listing, or review notes. Android behavior is unchanged.
+
+**Effective maximum quality (ADR-010).** With multiple Bunny Stream libraries, the
+delivered maximum resolution is `min(plan video.quality.max, library maximum)`. A library
+that cannot serve the plan's maximum must not silently downgrade the plan definition; it
+downgrades only the delivered stream, and the reason must be observable server-side. The
+plan value remains the entitlement; the library limit is a delivery constraint.
 
 ### PDF & Documents
 
@@ -313,11 +322,20 @@ The platform uses **Role-Based Access Control (RBAC)** with **Attribute-Based Ac
 | Edit lecture | ✅ | ✅ | |
 | Publish lecture | ✅ | ✅ | |
 | Archive lecture | ✅ | ✅ | |
-| Upload video (Bunny CDN) | ✅ | ✅ | Enter video_id in Dashboard |
+| Upload video to a registered library | ✅ | ✅ | Library is selected from the server-provided eligible list; the backend binds the upload to that library; no credential is exposed to the browser |
+| Associate a verified video to a lecture | ✅ | ✅ | Backend verifies the video against the selected library; cross-library association is rejected |
 | Upload PDF | ✅ | ✅ | |
 | Upload attachment | ✅ | ✅ | |
 | Configure lecture access | ✅ | ✅ | |
 | Reset watch attempts | ✅ | ✅ | |
+| **Bunny Library Management (ADR-010)** |
+| Register Bunny library | ❌ | ✅ | Doctor only. Result is `pending_verification`, never `active` |
+| Deactivate Bunny library | ❌ | ✅ | Doctor only. Takes effect immediately and fails closed |
+| Re-activate Bunny library | ❌ | ✅ | Doctor only. Returns to `pending_verification`; re-verification mandatory |
+| Configure library credentials | ❌ | ✅ | Doctor only. Never delegable; values go only to Secret Manager |
+| Enter fallback token key | ❌ | ✅ | Doctor only. Masked, single-use, never echoed, never stored in Firestore |
+| Enable/disable emergency blocking | ❌ | ✅ | Doctor only. Can only reduce eligibility, never grant it |
+| View library health / verification history | ❌ | ✅ | Doctor only. Read-only |
 | **Quiz & Exam Management** |
 | Create timeline quiz | ✅ | ✅ | |
 | Edit timeline quiz | ✅ | ✅ | |

@@ -1,0 +1,89 @@
+function,trigger,secret_mounts,action
+GUEST_STUDENT_TYPE,non-function,,create
+CENTER_STUDENT_TYPE,non-function,,create
+GUEST_PLAN_ID,non-function,,create
+FREE_WINDOW_BLOCKED_MESSAGE,non-function,,create
+LECTURE_ACCESS_DENIED_MESSAGE,non-function,,create
+registerNewStudent,onCall(secure),,update
+changePassword,onCall(secure),,update
+createCustomGroup,onCall(secure),,update
+updateCustomGroup,onCall(secure),,update
+verifyPhonePassword,onCall(secure),,update
+onLoginAttempt,onCall(secure),,update
+resolveSubjectTier,onCall(secure),,update
+resetStudentDevices,onCall(secure),,update
+unbindSubjectDevice,onCall(secure),,update
+beginOrTakeoverPlayback,onCall(secure),,update
+heartbeatPlayback,onCall(secure),,update
+approveStudent,onCall(secure),,update
+rejectStudent,onCall(secure),,update
+convertStudentType,onCall(secure),,update
+updateStudentGrade,onCall(secure),,update
+updateStudentProfileByStaff,onCall(secure),,update
+changeStudentGrade,onCall(secure),,update
+onStudentApproved,onDocumentUpdated,,update
+recalculateSubjectProgress,onDocumentUpdated,,update
+enforceDisplayHandleUniqueness,onCall(secure),,update
+enforceOneSubscriptionPerSubject,onDocumentCreated,,update
+sendPushNotification,onDocumentCreated,,update
+processNotificationQueue,onSchedule,,update
+setPlanQualityFeature,onCall(secure),,update
+setPlanFeature,onCall(secure),,update
+generateBunnySignedUrl,onCall,BUNNY_TOKEN_KEY BUNNY_PLAYBACK_URL_TEMPLATE BUNNY_STREAM_API_KEY,update
+validateBunnyVideoAssociation,onCall,BUNNY_TOKEN_KEY BUNNY_STREAM_API_KEY,create
+associateBunnyVideoToLibrary,onCall,BUNNY_TOKEN_KEY BUNNY_STREAM_API_KEY,create
+getVideoWatchWindow,onCall(secure),,update
+revalidateOfflineAccess,onCall(secure),,update
+generateProtectedPdfUrl,onCall(secure),,update
+generatePdfDownloadUrl,onCall(secure),,update
+getLectureResources,onCall,BUNNY_TOKEN_KEY BUNNY_STORAGE_BASE_URL BUNNY_PLAYBACK_URL_TEMPLATE BUNNY_STREAM_API_KEY,update
+getSectionDisplayMedia,onCall,BUNNY_TOKEN_KEY BUNNY_STORAGE_BASE_URL BUNNY_PLAYBACK_URL_TEMPLATE BUNNY_STREAM_API_KEY,update
+onDeviceChangeRequest,onCall(secure),,update
+onPasswordResetRequest,onDocumentCreated,,update
+onPasswordResetApproved,onCall(secure),,update
+onSecurityEvent,onCall(secure),,update
+setSubjectAccess,onCall(secure),,update
+getSubjectAccessConfig,onCall(secure),,update
+grantSubjectAccessWithPlan,onCall(secure),,update
+activateFreePlan,onCall(secure),,update
+onPaymentLogged,onCall(secure),,update
+setStudentFinancialAccount,onCall(secure),,update
+setStudentSubjectPricing,onCall(secure),,update
+correctPaymentLog,onCall(secure),,update
+onDeviceTokenRefresh,onCall(secure),,update
+cleanupInvalidDeviceTokens,onSchedule,,update
+upgrade,onCall(secure),,update
+downgrade,onCall(secure),,update
+renew,onCall(secure),,update
+setSubscriptionDisciplinaryStatus,onCall(secure),,update
+initializeAcademicPeriods,onCall(secure),,update
+getAcademicPeriods,onCall(secure),,update
+createExceptionalAcademicPeriod,onCall(secure),,update
+setAcademicPeriodStatus,onCall(secure),,update
+listEligibleBunnyLibraries,onCall(secure),,create
+createSubject,onCall(secure),,update
+updateSubject,onCall(secure),,update
+deleteSubject,onCall(secure),,update
+addAdmin,onCall(secure),,update
+removeAdmin,onCall(secure),,update
+setAdminPermissions,onCall(secure),,update
+setPlatformFeature,onCall(secure),,update
+propagatePlanFeatureChange,onDocumentUpdated,,update
+getActiveCustomGroups,onCall(secure),,update
+listStaffDirectory,onCall(secure),,update
+verifyStaffPassword,onCall(secure),,update
+uploadBunnyResource,onCall,BUNNY_TOKEN_KEY BUNNY_STORAGE_BASE_URL BUNNY_STORAGE_ZONE_NAME BUNNY_STORAGE_PASSWORD,update
+deleteBunnyResource,onCall,BUNNY_TOKEN_KEY BUNNY_STORAGE_BASE_URL BUNNY_STORAGE_ZONE_NAME BUNNY_STORAGE_PASSWORD,update
+generateBunnyResourceUrl,onCall,BUNNY_TOKEN_KEY BUNNY_STORAGE_BASE_URL BUNNY_STREAM_API_KEY,update
+submitPasswordResetRequest,onCall(secure),,update
+getAssessmentQuestions,onCall(secure),,create
+submitAssessmentAttempt,onCall(secure),,update
+submitExamAttempt,submitAssessmentAttempt,,update
+onSectionWritten,contentAuditTrigger,,update
+onLectureWritten,contentAuditTrigger,,update
+onLectureResourceWritten,contentAuditTrigger,,update
+onLectureAccessGrantWritten,contentAuditTrigger,,update
+autoPublishDueLectures,onSchedule,,update
+setDefaultStorageProvider,onCall(secure),,update
+deleteMyAccount,onCall,,update
+deleteAccountByOwner,onCall,,update

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
+import '../../../students/data/bunny_association_gateway.dart';
+import '../../../students/domain/bunny_library_association.dart';
 import '../../../students/presentation/providers/subject_details_provider.dart';
 import '../providers/home_stats_provider.dart';
 
@@ -135,6 +138,8 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
             ? null
             : _pdfController.text.trim(),
         publishNow: _publishNow,
+        associationGateway:
+            CallableBunnyAssociationGateway(FirebaseFunctions.instance),
       );
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -345,6 +350,7 @@ Future<String> publishQuickLecture({
   String? bunnyVideoId,
   String? pdfPath,
   required bool publishNow,
+  BunnyAssociationGateway? associationGateway,
 }) async {
   final String tabLabel = quickUploadTabs
       .firstWhere(
@@ -432,6 +438,9 @@ Future<String> publishQuickLecture({
       'resource_type': 'video',
       'title': title,
       'display_order': resourceOrder,
+      // ADR-010: the Video ID is only a pointer on an unverified row. The
+      // library association is SERVER-OWNED (Rules deny a client write) and is
+      // persisted by `associateBunnyVideoToLibrary` after verification below.
       'bunny_video_id': bunnyVideoId,
       'storage_path': null,
       'thumbnail': null,
@@ -488,6 +497,22 @@ Future<String> publishQuickLecture({
     'first_video':
         quickWinner == null ? null : firstVideoFields(quickWinner),
   });
+
+  // ADR-010: verify + persist the association through the server AFTER the
+  // pointer write, so the callable's trusted recomputation of `first_video`
+  // (which carries the verified library) wins. A failure leaves the video row
+  // pending — and therefore unplayable — never a legacy default-library row.
+  if (videoResourceId != null &&
+      bunnyVideoId != null &&
+      bunnyVideoId.isNotEmpty &&
+      associationGateway != null) {
+    await associationGateway.associate(
+      resourceId: videoResourceId,
+      lectureId: lectureRef.id,
+      libraryId: bunnyLibraryIdForCreate(resourceType: 'video')!,
+      videoId: bunnyVideoId,
+    );
+  }
 
   return lectureRef.id;
 }

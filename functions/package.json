@@ -11,13 +11,14 @@
     "logs": "firebase functions:log",
     "backfill:prices": "ts-node src/scripts/backfill_subject_prices.ts",
     "test": "npm run build && firebase emulators:exec --project demo-tarek-platform --only firestore,functions,auth \"node test/run_all.js\"",
-    "test:pure": "npm run build && node test/rolling_window_policy.test.js && node test/final_decisions_addendum.test.js && node test/guest_migration.test.js"
+    "test:pure": "npm run build && node test/rolling_window_policy.test.js && node test/final_decisions_addendum.test.js && node test/guest_migration.test.js && node test/acceptance_notification.test.js && node test/bunny_library_registry.test.js && node test/bunny_library_migration.test.js && node test/bunny_playback_regression.test.js && node test/bunny_video_validation.test.js && node test/bunny_library_association.test.js && node test/bunny_library_lifecycle.test.js && node test/bunny_library_verify_modes.test.js && node test/bunny_playback_probe.test.js && node test/bunny_library_catalog_reader.test.js && node test/bunny_library_secret_resolver.test.js && node test/app_check_enforcement.test.js"
   },
   "engines": {
     "node": "24"
   },
   "main": "lib/index.js",
   "dependencies": {
+    "@google-cloud/secret-manager": "^8.0.0",
     "firebase-admin": "^13.6.0",
     "firebase-functions": "^7.0.0"
   },

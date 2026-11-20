@@ -1,0 +1,14 @@
+resource_id,lecture_id,subject_id,subject_title,lecture_title,lecture_status,lecture_deleted,resource_deleted,visible,bunny_video_id,bunny_library_id,evidence,probe_736742,probe_775315,confidence,notes
+1Lv5zsow5Ap5GJNaArcP,UNQPFUbQwwggZTH0JAj4,HDkMwocOZPWJaKONuw1t,أخلاقيات مهنة المحاسبة,تجربة اخلاق,published,false,false,true,,,,,,MISSING,no bunny_video_id
+6xIQtr6XHq68FkHfkQ7C,nWwf4XGZJiQkUOofPhnQ,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,المحاضرة الثانية,published,false,false,true,94710db9-8bd4-4c8e-ab21-4d68913dd9be,775315,playlist 200 on vz-c850a9e1-eb4 only,404,200,VERIFIED,68:26
+Ey3Nqi1zgTQ8hOpXOcYv,CvhGSQyEGAZfQ3NEQjK1,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,مقطع من اول محاضرة,archived,true,false,true,,,,,,MISSING,no bunny_video_id
+ICz33MA21JQSy9e8OJ7h,CvhGSQyEGAZfQ3NEQjK1,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,مقطع من اول محاضرة,archived,true,true,false,,,,,,MISSING,no bunny_video_id
+TCmr0PTvUwVYrOkLzKyd,JyBPO388gp70DYdbddB4,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,محاسبة مالية - المحاضرة الأولي,archived,true,false,true,6ffb23ad-f073-480d-9a68-43baaf9803d5,736742,signed playlist 200 on vz-c6abe953-876 only,200,404,VERIFIED,archived+deleted lecture still playable
+YmV7LRp9diX9kUCn4PRT,cYI0V5VCA2yHVAJgkhPH,F7TEzymtI6uGeoGJDYjK,محاسبة تكاليف,تحربة محاسبة تكاليف,published,false,false,true,,,,,,MISSING,no bunny_video_id
+iqfThonRycgDJ5xOdoKh,UG32WrckEwYnlCGA43Ux,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,تجربة url,archived,true,false,true,6ffb23ad-f073-480d-9a68-43baaf9803d5,736742,signed playlist 200 on vz-c6abe953-876 only,200,404,VERIFIED,duplicate video id + archived/deleted lecture
+ju1taw2UbenaC6FIrgFV,CAjfNajyccdQpsAwSE9L,K2G5fXbtBDMh4L7USXMn,شركات الأشخاص,تجربة شركات,published,false,false,true,,,,,,MISSING,no bunny_video_id
+mKzGszf8oiMQjkm0WzxW,QTAPgWN1vQcpZ8sgPjId,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,المحاضرة الثالثة,published,false,false,true,4dd8a3b0-4363-4f39-a21d-cb6bb7c2b99c,775315,playlist 200 on vz-c850a9e1-eb4 only,404,200,VERIFIED,39:20
+n2IpE7D3XslmNgBeeSeq,rtJ0JBuudn5beK6eB3Ue,6vqiLbU4BUii3Rzp5y9t,محاسبة مالية,المحاضرة الأولي,published,false,false,true,7ddd0e6e-a0ae-43f6-a11c-ff7ca5db1c31,775315,playlist 200 on vz-c850a9e1-eb4 only; dashboard GUID search title match,404,200,VERIFIED,35:54
+qctAJDSdM9sxND9e2Ehq,J94QootP8CDYWBrwD28,EWk6RJewNzWmT6UKeCYH,مشاكل محاسبية,تجربة مشاكل محاسبية,published,false,false,true,,,,,,MISSING,no bunny_video_id
+t9vPlLeXRlH5zG1UjPDE,9WJGceAhfYq6w0avq1RQ,HDkMwocOZPWJaKONuw1t,أخلاقيات مهنة المحاسبة,تجربة تجربة,published,false,false,true,d0c31ca2-5bb0-4821-8f5d-64bde4bcc5de,736742,signed playlist 200 on vz-c6abe953-876 only,200,404,VERIFIED,
+yjwx89srQkzr3d4PKdGe,lD3HNpB1mawsM0SAxI9H,7yIhcJ56vBfdLCEGrh3d,محاسبة حكومية,تجربة محاسبة حكومية,published,false,false,true,,,,,,MISSING,no bunny_video_id

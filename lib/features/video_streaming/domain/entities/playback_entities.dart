@@ -243,6 +243,13 @@ class VideoResource {
   final String resourceType;
   final String? bunnyVideoId;
 
+  /// ADR-010 additive metadata: the Bunny Stream library that owns
+  /// [bunnyVideoId], as resolved by the server (or null for legacy rows).
+  /// Display/telemetry only — the client never selects signing credentials
+  /// from it and never constructs a playback URL. Tolerant parse: malformed
+  /// values degrade to null (legacy path).
+  final String? bunnyLibraryId;
+
   /// Renderable preview image for this resource. Since the storage-delivery
   /// completion, getLectureResources returns this as a SERVER-RESOLVED,
   /// short-lived signed URL (`thumbnailUrl`) for both providers — raw
@@ -292,6 +299,7 @@ class VideoResource {
     required this.title,
     required this.resourceType,
     this.bunnyVideoId,
+    this.bunnyLibraryId,
     this.thumbnailUrl,
     this.storageProvider = 'firebase',
     this.thumbnailProvider,
@@ -323,7 +331,8 @@ class VideoResource {
       id: map['id'] as String? ?? '',
       title: map['title'] as String? ?? 'مورد تعليمي',
       resourceType: map['resourceType'] as String? ?? 'attachment',
-      bunnyVideoId: _sanitizeBunnyId(map['bunnyVideoId'] as String?),
+      bunnyVideoId: _sanitizeBunnyId(map['bunnyVideoId']),
+      bunnyLibraryId: _sanitizeLibraryId(map['bunnyLibraryId']),
       thumbnailUrl:
           (map['thumbnailUrl'] as String?) ?? map['thumbnail'] as String?,
       storageProvider: map['storageProvider'] as String? ?? 'firebase',
@@ -348,10 +357,21 @@ class VideoResource {
     return _guidPattern.hasMatch(raw.trim());
   }
 
-  static String? _sanitizeBunnyId(String? raw) {
-    if (raw == null) return null;
+  static String? _sanitizeBunnyId(Object? raw) {
+    if (raw is! String) return null;
     final value = raw.trim();
     return value.isEmpty ? null : value;
+  }
+
+  /// Numeric library ids only; anything else is treated as "not provided"
+  /// so a malformed payload still parses through the legacy path instead of
+  /// breaking the whole listing.
+  static final RegExp _libraryIdPattern = RegExp(r'^\d{1,20}$');
+
+  static String? _sanitizeLibraryId(Object? raw) {
+    if (raw is! String) return null;
+    final value = raw.trim();
+    return _libraryIdPattern.hasMatch(value) ? value : null;
   }
 
   static Duration? _durationFromMap(Object? value) {

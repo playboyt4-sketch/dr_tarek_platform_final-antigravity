@@ -1,10 +1,11 @@
 # 09 Tasks
 
-Version: 1.3
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.4
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Version History (new)
 
+- **1.4** (2026-11-17): ADR-010 Option C alignment. T-000.9 rewritten for the server-managed library catalog and per-video library selection; added T-CF.25–T-CF.29 and T-DB.1; closed the signed-URL expiry open item (video 3600 s, Storage 300 s, receipt 600 s). Approved by the Platform Owner as Phase 2 governance item E.
 - **1.3** (2026-09-14): Implementation work breakdown per the approved Implementation Architecture Specification. Added tasks for registry rescope, transactional first access, Guest enforcement, Max session, unbind/reset operations, Subject-scoped DRM, Rules/Functions enforcement, indexes, audit, race/security tests, and staged cutover (T-CF.15–T-CF.24). Proposed callable names from 06 §6.7 referenced as proposals only; no implementation started.
 - **1.2** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Login-rejection tasks converted to per-Subject authorization requirements (login always succeeds; Full vs Guest per Subject); claims tasks de-scoped to identity; device-management, DRM, sequencing, and open items updated. No new implementation names invented; affected function references kept and marked for redesign.
 
@@ -33,7 +34,7 @@ Tasks are grouped into three categories:
 | T-000.6 | Configure CI (lint + test on PR) per 08 Development Standards Section 9 | T-000.1, pending tooling decision |
 | T-000.7 | Set up Bunny CDN account/library integration for video delivery | — |
 | **T-000.8** | **Implement Custom Tokens authentication (Firebase Auth identity claims: `role` + `student_type` + `approved`; per-Subject subscription/authorization resolves server-side per ADR-004). Replaces deprecated Pseudo-Email approach per Final Decisions Section 3.** | **T-000.2** |
-| **T-000.9** | **Configure Bunny CDN integration: Dashboard inputs Video ID only; Cloud Function generates Signed URL per request; student never sees raw URL; quality tiers controlled by membership (per Final Decisions Section 4).** | **T-000.7** |
+| **T-000.9** | **Configure Bunny CDN integration: server-managed library catalog (`bunny_libraries`); Dashboard registers libraries (Doctor only) and selects a library per video; Cloud Function `generateBunnySignedUrl` issues the signed URL per request after server-side library resolution; student never sees the raw URL, the library id, or any credential; quality tiers controlled by membership (per Final Decisions Section 4 as amended by ADR-010 Amendment 2).** | **T-000.7** |
 | **T-000.10** | **Implement phone number validation (Egypt format: 0100... without country code in V1) per Final Decisions Section 3.** | **T-000.8** |
 | **T-000.11** | **Implement "Forgot Password" flow: student requests reset → notification sent to Admin/Teacher → password changed from Dashboard per Final Decisions Section 3.** | **T-000.8** |
 | **T-000.12** | **Set up AES-256 offline DRM infrastructure: encrypted local storage, Secure Storage integration, per-Subject authorization check before offline playback (Guest has no protected downloads; per-Subject wipe only) per ADR-004.** | **T-000.2** |
@@ -101,6 +102,12 @@ Per 06 Firebase Architecture Section 6 and Final Decisions — these are not tie
 | T-CF.22 | Authorization indexes + audit views —declare query indexes; Admin per-Subject/stale-slot visibility | 14, 15 | Per 05 §16, 15 §ADMIN_DEVICES |
 | T-CF.23 | Race/security test matrix — final-slot races, isolation, Guest bypass attempts, takeover storms, reset-during-playback (emulator) | 01, 05, 14 | Per 08 §7.1 |
 | T-CF.24 | Staged cutover — additive server deploy → client rescope → Admin tooling → monitored cutover; no auto-migration; request-only bulk reset support | All | Never mark complete until Teacher-approved rollout |
+| T-CF.25 | `registerBunnyLibrary` / `deactivateBunnyLibrary` / `reactivateBunnyLibrary` — Doctor only, audited, state machine `pending_verification → active` requires verification | 05, ADR-010 Amendment 2 | Per 05 `bunny_libraries` |
+| T-CF.26 | Receipt-key migration to `BUNNY_ASSOCIATION_RECEIPT_KEY` with 600 s dual-verify window | ADR-010 N5 | Separate Secret Manager approval required |
+| T-CF.27 | Scheduled library verification + approved alert channel | ADR-010 N9 | Alert channel is an open owner decision (D-04) |
+| T-CF.28 | Secure Stream video upload — mechanism pending capability verification | ADR-010 N4/N8 | U-05/U-06 must pass first |
+| T-CF.29 | Backfill `bunny_library_id` for the 6 rows with a verified video id | 05, ADR-010 Amendment 2 | Separate data-migration approval |
+| T-DB.1 | Register Production library `736742` in the catalog (`source: legacy_env`) | 05 approval | Separate data-change approval |
 
 ---
 
@@ -138,7 +145,7 @@ Presentation-Final work across all features starts together once `03 UI & UX` is
 - [ ] This document assumes Domain/Data/Scaffolding work can proceed without Figma — confirm this sequencing is acceptable, or if the team prefers to wait for Figma before starting anything (would change Section 6).
 - [ ] Issue-tracker tool (Jira, Linear, GitHub Issues, etc.) not yet specified — task IDs here (T-xxx) are placeholders for whatever tool is chosen.
 - [ ] Per-Subject allowances confirmed by ADR-004 (Free: 1, Pro: 1, Max: 2 for that Subject). Confirm Dashboard UI for per-Subject authorization display (per FINAL_DECISIONS v2.0).
-- [ ] **NEW**: Confirm Bunny CDN Signed URL expiry duration (suggested: 5 minutes per request).
+- [x] Bunny CDN signed-URL expiry confirmed (2026-11-17): video 3600 s, Bunny Storage resources 300 s, association receipt 600 s. The 5-minute suggestion is not adopted for video.
 - [ ] **NEW**: Confirm AES-256 offline encryption key management strategy (per-device key vs. user-bound key).
 
 ---

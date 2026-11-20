@@ -11,8 +11,9 @@
  *
  * Result shape (identity + display metadata ONLY — never signed URLs,
  * secrets, storage URLs, or per-student authorization state):
- *   first_video: {resource_id, bunny_video_id, title?, display_order,
- *                 thumbnail_path?, thumbnail_storage_provider?} | null
+ *   first_video: {resource_id, bunny_video_id, bunny_library_id?, title?,
+ *                 display_order, thumbnail_path?,
+ *                 thumbnail_storage_provider?} | null
  * Thumbnail keys are written only when the resource row already carries
  * authoritative values; otherwise explicit nulls (same as Dashboard).
  *
@@ -276,6 +277,13 @@ function firstVideoFields(winner) {
   return {
     resource_id: winner.id,
     bunny_video_id: data.bunny_video_id.trim(),
+    // ADR-010 additive hint: mirrors the Dashboard/server projection so a
+    // rerun never drops the library that the authoritative resource row holds.
+    bunny_library_id:
+      typeof data.bunny_library_id === "string" &&
+      data.bunny_library_id.trim() !== ""
+        ? data.bunny_library_id.trim()
+        : null,
     title: title,
     display_order:
       typeof data.display_order === "number" &&
@@ -297,6 +305,7 @@ function sameFirstVideo(stored, computed) {
   const keys = [
     "resource_id",
     "bunny_video_id",
+    "bunny_library_id",
     "title",
     "display_order",
     "thumbnail_path",

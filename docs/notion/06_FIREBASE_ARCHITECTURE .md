@@ -1,10 +1,13 @@
 # 06 Firebase Architecture
 
-Version: 1.4
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.7
+Status: Approved (v1.7 — ADR-010 Amendment 3 ratified per Platform Owner review)
 
 ## Changelog
 
+- **1.7** (2026-11-20): ADR-010 Amendment 3 completion and approval. Corrected §6.4.1: the legacy-named `BUNNY_ACTIVE_LIBRARY_IDS` is the implemented activation allow-list for non-default libraries and the emergency deny switch; no third env var (`BUNNY_DENIED_LIBRARY_IDS`) is introduced — emergency shutdown is provided exclusively via audited `deactivateBunnyLibrary` (`status="disabled"`) and removing the default-library bypass once `BUNNY_LEGACY_LIBRARY_FALLBACK` is switched off. Added explicit deviation from FINAL_DECISIONS §4 for unsigned libraries (persistent static URL visible to network observers, accepted by Platform Owner until permanent exit). Documents `discoverBunnyVideoLibrary` authoring callable, client Referer evidence (iOS/Android `httpHeaders`, Web page origin), and completed Staging catalog (`736742`/`780700` signed, `775315`/`776525` unsigned). Approved per Platform Owner review.
+- **1.6** (2026-11-19): ADR-010 Amendment 3 alignment. §6.4/§6.4.1 now document verified per-library protection modes (`token_auth_mode`: `signed` | `unsigned`), the metadata-free verification probe and its mandatory platform Referer, the unsigned-library exposure and its Owner-accepted risk, the removal of the silent default library, `playback_host`-derived playback URLs, server-owned `bunny_library_id`, the unassociated-row policy, and the separation of the legacy-named emergency list from the planned explicit deny list. Draft until the Platform Owner approves `21_ADR_010_Amendment_3.md`; this entry authorizes no callable behaviour by itself.
+- **1.5** (2026-11-17): ADR-010 Option C alignment. §6.4 rewritten to the implemented callables (`generateBunnySignedUrl`, `listEligibleBunnyLibraries`, `validateBunnyVideoAssociation`, `associateBunnyVideoToLibrary`) with server-side library resolution; new §6.4.1 documents the catalog, per-library credential isolation, fail-closed eligibility and the legacy-named emergency eligibility list. Corrected the stale `generateSignedVideoUrl` reference. Approved by the Platform Owner as Phase 2 governance item E.
 - **1.4** (2026-09-14): Implementation-design detail per the approved Implementation Architecture Specification. Documents the PROPOSED server-side direction: transactional first-access binding, no LRU auto-eviction, server-issued device handle, proposed callable names (explicitly labeled proposed), tier-checked artifact issuance, server-authoritative Max sessions, and the Rules trust boundary (client-provided device identity is never hardware proof; IP is metadata only).
 - **1.3** (2026-09-14): Alignment with Subject-Level Device Binding (ADR-004, FINAL_DECISIONS.md v2.0). Claims de-scoped to identity; login decoupled from device authorization; Rules strategy moved to server-side per-Subject evaluation; login-gating responsibilities marked for redesign; offline revocation rescoped per Subject. No new function, rule, or protocol invented; device-identity mechanism for Rules marked as an open implementation decision.
 - **1.2** (2026-08-25): Ratified addendum FINAL_DECISIONS §11–15. Section 5 rewritten to document the DUAL storage-provider architecture (Bunny Storage zone `dr-tarek-resources` + Firebase Storage simultaneously, per-resource `storage_provider` dispatch), the Bunny signed-URL pattern extended to PDFs/attachments/thumbnails, and the new resource callables (`generateBunnyResourceUrl`, `uploadBunnyResource`, `deleteBunnyResource`) plus the scheduled auto-publish function (`autoPublishDueLectures`, Section 6.7).
@@ -41,6 +44,9 @@ Per PRD (FR-01.02) and Features (Feature 01), login uses **phone number + passwo
 ## 3.2 Decision — Custom Tokens (Approved)
 
 Per the Final Decisions (2026-08-04), Version 1 uses **Custom Authentication Tokens** minted by a Cloud Function. This replaces the previously-considered pseudo-email workaround.
+
+**Deviation from FINAL_DECISIONS §4 (Unsigned Libraries):**
+FINAL_DECISIONS §4 established that "URL auto-refreshes every time student opens video" and "Student never sees the URL". For unsigned libraries (`775315`, `776525`), the returned URL is persistent, unsigned, static, and visible to network observers. Deviation accepted by the Platform Owner, scoped to unsigned libraries until the permanent exit (section 3.3).
 
 **Flow:**
 
@@ -214,19 +220,101 @@ Cloud Functions handle everything that must not run purely on the client: privil
 
 ## 6.4 Bunny CDN — Signed URL Generation
 
-Per Final Decisions Section 4:
+Per FINAL_DECISIONS Section 4, as amended for ADR-010 Option C.
 
 | Function | Trigger | Responsibility |
 | --- | --- | --- |
-| `generateSignedVideoUrl` | Callable, invoked by app when student opens a video | Receives `video_id` (Bunny Video ID entered by Admin/Teacher in Dashboard); validates student's subscription and Feature Matrix (`plan_features` video quality, preview duration); returns a Bunny CDN **signed URL** (time-limited, token-authenticated) at the allowed quality level; URL is never exposed to the student — the app streams through the signed URL transparently |
+| `generateBunnySignedUrl` | Callable, invoked when a student opens a video | Receives `{videoId, deviceId, lectureId?, subjectId?, quality?}`; validates the caller's entitlement, device authorization and lecture access; resolves the resource's library from `bunny_libraries`; rejects unknown, not activated, unverified or disabled libraries; returns a playback URL for that library only (signed, or unsigned for a proved `unsigned` library); `videoId` must be a bare GUID — URLs are rejected. |
+| `discoverBunnyVideoLibrary` | Callable, authoring (Doctor / delegated Admin) | Receives `{videoId}`; validates bare GUID with `isValidBunnyVideoId`; probes candidate active libraries (`BUNNY_ACTIVE_LIBRARY_IDS ∩ bunny_libraries` with `active`) via Stream API; returns `{status: "found" | "not_found" | "ambiguous", libraryId?, displayName?}`; rate-limited; audited; returns no secrets or URLs. |
+| `listEligibleBunnyLibraries` | Callable, Dashboard | Returns `{libraries: [{libraryId, displayName}]}`. No host, pull zone, credential reference or verification stamp is ever returned. |
+| `validateBunnyVideoAssociation` | Callable, authoring | Verifies, using that library's own Stream key, that the video exists in that library. Returns a short-lived receipt (600 s). Writes nothing. |
+| `associateBunnyVideoToLibrary` | Callable, authoring | Verifies the receipt, then writes `bunny_video_id` and `bunny_library_id` on the resource. `bunny_library_id` is server-owned: no client write path exists, and an unassociated resource is never played by inference. |
+| `registerBunnyLibrary` | Callable, Doctor only, audited | Creates the catalog row in `pending_verification` and derives the credential **names** from the library id. Never activates. |
+| `verifyBunnyLibrary` | Callable, Doctor only, audited | Proves the library's protection mode without reading library metadata (see §6.4.1) and writes `token_auth_mode`, `token_auth_enabled`, `token_auth_verified`, `status` and the typed error code. |
+| `deactivateBunnyLibrary` / `reactivateBunnyLibrary` | Callable, Doctor only, audited | Emergency deactivation always wins; reactivation returns to `pending_verification` and never straight to `active`. |
+| `listBunnyLibraryHealth` | Callable, Doctor only | Read-only projection: id, display name, status, mode, verification stamp, typed error code. No host, pull zone or credential name. |
 
 **Flow:**
-1. Admin/Teacher uploads video to Bunny CDN (Bunny handles transcoding).
-2. Admin/Teacher enters only the Bunny `video_id` in the Dashboard.
-3. App requests playback → calls `generateSignedVideoUrl(video_id)`.
-4. Cloud Function validates access and returns a signed URL.
-5. App plays video; student never sees the raw URL.
-6. Each video open generates a fresh signed URL (auto-refresh).
+1. A video is uploaded to, or registered in, a specific library.
+2. The backend verifies the video belongs to that library and issues a receipt.
+3. The association is written only after receipt verification.
+4. The library is resolved server-side from `bunny_library_id`; there is no silent default.
+5. Playback is issued in the mode proved for that library: a signed directory-token URL for
+   `signed`, a plain URL for `unsigned`. The URL expires after 3600 s; a new one is issued on
+   each open.
+6. The student never sees the raw URL, the library id, or any credential.
+
+**Non-goals:** the platform never creates Bunny libraries; the client never selects a
+library for playback.
+
+### 6.4.1 Library Catalog, Verified Modes and Credential Isolation
+
+`bunny_libraries/{libraryId}` is the non-secret source of truth. It stores ids, host,
+booleans, the **proved** `token_auth_mode`, verification stamps, error codes and Secret
+Manager **names** only.
+
+Credentials are stored in Secret Manager under deterministic names derived from the
+library id: `BUNNY_<libraryId>_STREAM_API_KEY` and, only for a `signed` library,
+`BUNNY_<libraryId>_TOKEN_KEY`. A request concerning one library may read only that
+library's credentials. A missing credential is an error, never a reason to fall back to
+another library.
+
+**Eligibility** requires `status === "active"`, `token_auth_verified === true`, a present
+`token_auth_mode`, and `token_auth_enabled === (token_auth_mode === "signed")`. A missing or
+unknown mode fails closed: absence of evidence is never read as `unsigned`.
+
+**Verification (`verifyBunnyLibrary`)** never reads library metadata. It lists one existing
+video with that library's own Stream key, then:
+
+- if a `BUNNY_<libraryId>_TOKEN_KEY` exists, requests a signed directory-token playlist URL;
+  a 2xx proves mode `signed` (`token_auth_enabled = true`, `token_auth_verified = true`);
+- otherwise, requests the plain playlist URL; a 2xx proves mode `unsigned`
+  (`token_auth_enabled = false`, `token_auth_verified = true`);
+- a 401/403 on the plain URL means the zone is protected and no signed proof exists, so the
+  library stays unverified with a typed error code.
+
+Every probe request carries the platform Referer (`https://dr-tarek-platform.web.app/`):
+all pull zones in this account set `BlockNoneReferrer`, so a probe without it measures the
+hotlink rule instead of token enforcement.
+
+**Unsigned mode is exposure, not protection.** Such a pull zone enforces no CDN token and its
+`AllowedReferrers` list is empty, so any client sending any Referer can play a video whose
+GUID it knows. The platform's entitlement, device and lecture gates still run before a URL
+is issued, but they cannot stop playback of a GUID obtained elsewhere. This is an external
+constraint (a legacy platform consumes those libraries) and is accepted by the Platform
+Owner with a mandatory review date of 2027-02-19 and the permanent remediation path recorded
+in ADR-010 Amendment 3 §3: a new platform-only `signed` library, video copy, audited
+re-association, then retirement of the unsigned libraries.
+
+**Playback URL construction** derives from the catalog `playback_host`. The legacy
+`BUNNY_PLAYBACK_URL_TEMPLATE` is a pre-cutover compatibility input only and is retired with
+the default-library fallback.
+
+**No silent default.** An unresolved library is a typed denial
+(`library_not_resolved`), never library `736742`. `736742` remains usable only as a
+registered, verified catalog entry. A legacy default path may exist only behind the explicit
+`BUNNY_LEGACY_LIBRARY_FALLBACK` cutover flag, defaulted off after the production migration
+and removed afterwards. A resource with a `bunny_video_id` and no `bunny_library_id` is not
+playable after cutover; it is repaired by the audited migration, never by guessing.
+
+**Authoring only:** the dashboard picker lists eligible catalog entries, and a server-side
+discovery callable may list the account's Stream libraries. Discovery never implies
+eligibility — a discovered library must still be registered and verified — and the client
+never selects the library used for playback.
+
+`BUNNY_ACTIVE_LIBRARY_IDS` keeps its legacy name but has two documented roles in the
+implemented code, and one known gap:
+
+1. **Activation allow-list (grant).** A non-default library is eligible only when its id is
+   listed. Registration plus verification make a library eligible; listing it makes it active
+   in that environment.
+2. **Emergency deny switch (revoke).** Removing an id - or emptying the variable - disables
+   that library immediately, without a deploy. An empty or unset value denies every non-default
+   library (fail-closed); a malformed value is never read as "allow all".
+3. **No third environment variable:** No `BUNNY_DENIED_LIBRARY_IDS` is introduced. Immediate emergency shutdown of ANY library is provided exclusively via the audited `deactivateBunnyLibrary` callable (`bunny_libraries/{id}.status = "disabled"`), taking immediate effect across all server resolution paths without deployment. Once `BUNNY_LEGACY_LIBRARY_FALLBACK` is switched off post-migration, the default-library bypass is closed permanently.
+
+The list can never make an ineligible library usable: the catalog row and the proved mode
+remain the authority, and a listed id with no valid catalog row still fails closed.
 
 ## 6.5 Notifications
 
@@ -336,7 +424,7 @@ Per Database.md Section 19 ("Offline Learning Rules") and Final Decisions Sectio
 
 - [x] ~~Confirm Section 3.2's pseudo-email authentication approach~~ — **Resolved**: Custom Tokens approved per Final Decisions (2026-08-04).
 - [ ] `devices.fcm_token` field needs to be formally added to 05 Database (Section 16) — flagged, not added here, to respect Database.md's ownership of schema.
-- [x] ~~Confirm Bunny CDN token-signing responsibility~~ — **Resolved**: Cloud Function (`generateSignedVideoUrl`) approved per Final Decisions (2026-08-04).
+- [x] ~~Confirm Bunny CDN token-signing responsibility~~ - **Resolved**: Cloud Function (`generateBunnySignedUrl`) approved per Final Decisions (2026-08-04). The library dimension was added by ADR-010 Option C: the function resolves the resource's library from `bunny_libraries` server-side before signing.
 - [ ] Confirm AES-256 key derivation strategy (device ID + Firebase UID + server-secret salt) — proposed, pending security review.
 - [ ] Per-Subject device allowances confirmed by ADR-004 (Free = 1, Pro = 1, Max = 2 for that Subject) — Dashboard UI specification for per-Subject authorization display still pending.
 - [ ] OPEN DECISION — device-identity mechanism for Rules/Functions (client-asserted identifier vs server-bound session device vs attestation): requires implementation architecture; not invented here.

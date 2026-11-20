@@ -125,7 +125,7 @@ async function run() {
   });
 
   await db.collection("lecture_resources").doc("pcont_vidV").set({
-    lecture_id: "pcont_lecV", resource_type: "video", bunny_video_id: "pcont-vid-V",
+    lecture_id: "pcont_lecV", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000001",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_resources").doc("pcont_pdfV").set({
@@ -133,7 +133,7 @@ async function run() {
     title: "V notes", is_visible: true, display_order: 2,
   });
   await db.collection("lecture_resources").doc("pcont_vidP").set({
-    lecture_id: "pcont_lecP", resource_type: "video", bunny_video_id: "pcont-vid-P",
+    lecture_id: "pcont_lecP", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000006",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_resources").doc("pcont_pdfP").set({
@@ -141,7 +141,7 @@ async function run() {
     title: "P notes", is_visible: true, display_order: 2,
   });
   await db.collection("lecture_resources").doc("pcont_vidM").set({
-    lecture_id: "pcont_lecM", resource_type: "video", bunny_video_id: "pcont-vid-M",
+    lecture_id: "pcont_lecM", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000005",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_resources").doc("pcont_attM").set({
@@ -149,11 +149,11 @@ async function run() {
     storage_path: "res/pcont-m.zip", title: "M pack", is_visible: true, display_order: 2,
   });
   await db.collection("lecture_resources").doc("pcont_vidDeny").set({
-    lecture_id: "pcont_lecDeny", resource_type: "video", bunny_video_id: "pcont-vid-Deny",
+    lecture_id: "pcont_lecDeny", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000002",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_resources").doc("pcont_vidNG").set({
-    lecture_id: "pcont_lecNG", resource_type: "video", bunny_video_id: "pcont-vid-NG",
+    lecture_id: "pcont_lecNG", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000003",
     is_visible: true, display_order: 1,
   });
 
@@ -165,7 +165,7 @@ async function run() {
   }
 
   // 1. Full authorized Free device can access permitted video.
-  const r1 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-A"});
+  const r1 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-A"});
   assert.ok(r1.url.includes("cdn.example.com"), "Signed URL issued");
   assert.equal(r1.quality, "720p");
   assert.ok(!("previewLimitSeconds" in r1), "Full response keeps its existing shape");
@@ -174,7 +174,7 @@ async function run() {
 
   // 2. Second Free device resolves Guest (limited preview URL, no record).
   const before2 = await authzCount(SUB_V);
-  const r2 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-B"});
+  const r2 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-B"});
   assert.equal(r2.previewLimitSeconds, 300, "Guest preview from per-lecture minutes");
   assert.equal(r2.previewAudience, "center", "Center unauthorized-device audience");
   assert.equal(await authzCount(SUB_V), before2, "Guest issuance binds nothing");
@@ -184,24 +184,24 @@ async function run() {
   const l3 = await list({lectureId: "pcont_lecP", deviceId: "pcont-test-device-A"});
   assert.ok(l3.resources.some((r) => r.resourceType === "pdf"), "Full listing includes protected PDF");
   assert.equal(l3.guestPreview, null, "No preview cap on Full tier");
-  const r3 = await videoUrl({videoId: "pcont-vid-P", deviceId: "pcont-test-device-A"});
+  const r3 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000006", deviceId: "pcont-test-device-A"});
   assert.ok(!("previewLimitSeconds" in r3), "Full video has no preview cap");
   console.log("ok 3 - Full Pro protected content intact");
 
   // 4. Second Pro device resolves Guest.
-  const r4 = await videoUrl({videoId: "pcont-vid-P", deviceId: "pcont-test-device-B"});
+  const r4 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000006", deviceId: "pcont-test-device-B"});
   assert.equal(r4.previewLimitSeconds, 180, "Guest preview from per-lecture minutes");
   console.log("ok 4 - Second Pro device Guest");
 
   // 5/6. First two Max devices resolve Full.
-  const r5 = await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-A"});
-  const r6 = await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-B"});
+  const r5 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-A"});
+  const r6 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-B"});
   assert.ok(!("previewLimitSeconds" in r5) && !("previewLimitSeconds" in r6));
   console.log("ok 5/6 - First two Max devices Full");
 
   // 7. Third Max device Guest (preview, no record).
   const before7 = await authzCount(SUB_M);
-  const r7 = await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-C"});
+  const r7 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-C"});
   assert.equal(r7.previewLimitSeconds, 240);
   assert.equal(await authzCount(SUB_M), before7);
   console.log("ok 7 - Third Max device Guest");
@@ -238,17 +238,17 @@ async function run() {
     is_deleted: false, guest_enabled: true,
   });
   await db.collection("lecture_resources").doc("pcont_vidW0").set({
-    lecture_id: "pcont_lecW0", resource_type: "video", bunny_video_id: "pcont-vid-W0",
+    lecture_id: "pcont_lecW0", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000007",
     is_visible: true, display_order: 1,
   });
   await db.collection("lecture_resources").doc("pcont_vidW2").set({
-    lecture_id: "pcont_lecW2", resource_type: "video", bunny_video_id: "pcont-vid-W2",
+    lecture_id: "pcont_lecW2", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000008",
     is_visible: true, display_order: 1,
   });
   const wVideoUrl = (payload) => signedUrlRaw({data: payload, auth: {uid: WSTUDENT}});
   // A: first issuance on the minuteless lecture => URL + zero preview,
   // and the rolling window opens on this lecture.
-  const rA = await wVideoUrl({videoId: "pcont-vid-W0", deviceId: WDEV_B});
+  const rA = await wVideoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000007", deviceId: WDEV_B});
   assert.equal(rA.previewLimitSeconds, 0, "Zero playable minutes");
   assert.equal(rA.previewAudience, "center", "Center unauthorized-device audience");
   const winA = (await db.collection("video_watch_windows").doc(WSTUDENT).get()).data();
@@ -256,7 +256,7 @@ async function run() {
   assert.ok(winA.window_expires_at.toMillis() > Date.now(), "Window expiry in the future");
   console.log("ok 7b/7c - Zero-preview issuance opens the window");
   // B: a different lecture before expiry is rejected with window details.
-  await wVideoUrl({videoId: "pcont-vid-W2", deviceId: WDEV_B}).then(
+  await wVideoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000008", deviceId: WDEV_B}).then(
     () => {
       throw new Error("different lecture: expected resource-exhausted");
     },
@@ -269,7 +269,7 @@ async function run() {
   );
   console.log("ok 7d - Different lecture blocked with window details");
   // C: reopening the same lecture stays allowed (resume consumes nothing).
-  const rC = await wVideoUrl({videoId: "pcont-vid-W0", deviceId: WDEV_B});
+  const rC = await wVideoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000007", deviceId: WDEV_B});
   assert.equal(rC.previewLimitSeconds, 0, "Same-lecture resume allowed");
   const winC = (await db.collection("video_watch_windows").doc(WSTUDENT).get()).data();
   assert.equal(winC.active_lecture_id, "pcont_lecW0", "Resume does not move the window");
@@ -313,11 +313,11 @@ async function run() {
     is_deleted: false, guest_enabled: true,
   });
   await db.collection("lecture_resources").doc("pcont_vidG").set({
-    lecture_id: "pcont_lecG", resource_type: "video", bunny_video_id: "pcont-vid-G",
+    lecture_id: "pcont_lecG", resource_type: "video", bunny_video_id: "11111111-aaaa-4aaa-8aaa-000000000004",
     is_visible: true, display_order: 1,
   });
   const gVideoUrl = (payload) => signedUrlRaw({data: payload, auth: {uid: GSTUDENT}});
-  const rG = await gVideoUrl({videoId: "pcont-vid-G", deviceId: GDEV_Y});
+  const rG = await gVideoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000004", deviceId: GDEV_Y});
   assert.equal(rG.previewLimitSeconds, 0, "Disabled zero-minute default yields zero");
   assert.equal(rG.previewAudience, "guest", "External Guest audience");
   console.log("ok 7f - External Guest zero-preview audience");
@@ -336,19 +336,24 @@ async function run() {
   console.log("ok 8/9 - Guest denied protected PDF/download/resource");
 
   // 10/11. Explicit lecture deny blocks Full and Guest alike.
-  await expectCode(videoUrl({videoId: "pcont-vid-Deny", deviceId: "pcont-test-device-A"}), "permission-denied", "deny blocks Full");
-  await expectCode(videoUrl({videoId: "pcont-vid-Deny", deviceId: "pcont-test-device-ZZZ"}), "permission-denied", "deny blocks Guest");
+  await expectCode(videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000002", deviceId: "pcont-test-device-A"}), "permission-denied", "deny blocks Full");
+  await expectCode(videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000002", deviceId: "pcont-test-device-ZZZ"}), "permission-denied", "deny blocks Guest");
   console.log("ok 10/11 - Explicit deny overrides both tiers");
 
   // Guest on a preview-disabled lecture is denied (never upgraded).
-  await expectCode(videoUrl({videoId: "pcont-vid-NG", deviceId: "pcont-test-device-B"}), "permission-denied", "no-preview lecture denies Guest");
+  // The rolling 24h window opened by the earlier STUDENT cases is cleared
+  // first: the window check runs before the preview/entitlement verdict, so a
+  // leftover window would mask the denial with resource-exhausted and the
+  // assertion would no longer test what it claims.
+  await db.collection("video_watch_windows").doc(STUDENT).delete();
+  await expectCode(videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000003", deviceId: "pcont-test-device-B"}), "permission-denied", "no-preview lecture denies Guest");
 
   // 12/13. Disabled assignment and inactive subscription block access.
   await db.collection("subject_access_assignments").doc(`${STUDENT}_${SUB_V}`).update({enabled: false});
-  await expectCode(videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-A"}), "permission-denied", "disabled assignment");
+  await expectCode(videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-A"}), "permission-denied", "disabled assignment");
   await db.collection("subject_access_assignments").doc(`${STUDENT}_${SUB_V}`).update({enabled: true});
   await db.collection("subscriptions").doc(`pcont_sub_${SUB_V}`).update({status: "expired"});
-  await expectCode(videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-A"}), "permission-denied", "expired subscription");
+  await expectCode(videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-A"}), "permission-denied", "expired subscription");
   await db.collection("subscriptions").doc(`pcont_sub_${SUB_V}`).update({status: "active"});
   console.log("ok 12/13 - Disabled assignment and expired subscription block");
 
@@ -356,7 +361,7 @@ async function run() {
   // nothing anywhere (V slots are held by devA), so its P listing is Guest.
   const totalBefore14 = (await db.collection("subject_device_authorizations")
     .where("student_id", "==", STUDENT).get()).size;
-  await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-V"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-V"});
   assert.equal(
     (await db.collection("subject_device_authorizations").where("student_id", "==", STUDENT).get()).size,
     totalBefore14,
@@ -374,24 +379,28 @@ async function run() {
   const resetRaw = test.wrap(functions.resetStudentDevices);
   await resetRaw({data: {studentId: STUDENT, reason: "pcont-test15-setup"},
     auth: {uid: "pcont-doctor", token: {role: "doctor"}}});
-  await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-M"});
-  await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-A"});
-  const r15 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-M"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-M"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-A"});
+  const r15 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-M"});
   assert.equal(r15.previewLimitSeconds, 300, "Max device is Guest on the Free subject");
   console.log("ok 15 - No cross-Subject uplift");
 
   // 16/17. Forgery attempts: fabricated tier/plan/allowance fields and
   // unknown devices never yield Full.
-  const r16 = await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-forged", tier: "full", plan_id: "pcont_plan_max", max_devices: 99, subscription_status: "active"});
+  const r16 = await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-forged", tier: "full", plan_id: "pcont_plan_max", max_devices: 99, subscription_status: "active"});
   assert.equal(r16.previewLimitSeconds, 300, "Client-supplied tier/plan fields ignored");
   // Fill the remaining Max slot first (post-reset state: devM holds one).
-  await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-ZZZ"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-ZZZ"});
   const l17 = await list({lectureId: "pcont_lecM", deviceId: "pcont-test-device-V"});
   assert.ok(!l17.resources.some((r) => r.resourceType === "attachment"), "V-only device sees no Max attachments");
   console.log("ok 16/17 - Forgery impossible via client input");
 
   // 18. Authorization failure never defaults to Full.
-  await expectCode(videoUrl({videoId: "pcont-nope", deviceId: "pcont-test-device-A"}), "not-found", "unknown video is not Full");
+  // The unknown video must stay GUID-shaped: a non-GUID is rejected earlier by
+  // the VIDEO-ID-ONLY format guard (invalid-argument), which would mask the
+  // not-found verdict this case asserts.
+  const unknownGuid = "99999999-aaaa-4aaa-8aaa-000000000099";
+  await expectCode(videoUrl({videoId: unknownGuid, deviceId: "pcont-test-device-A"}), "not-found", "unknown video is not Full");
   await expectCode(pdfView({resourceId: "pcont_pdfV"}), "invalid-argument", "missing deviceId is not Full");
   console.log("ok 18 - Failures never default to Full");
 
@@ -405,8 +414,8 @@ async function run() {
     .docs.map((d) => ({id: d.id, ...d.data()}));
   const authzBefore = (await db.collection("subject_device_authorizations")
     .where("student_id", "==", STUDENT).get()).size;
-  await videoUrl({videoId: "pcont-vid-V", deviceId: "pcont-test-device-B"});
-  await videoUrl({videoId: "pcont-vid-M", deviceId: "pcont-test-device-C"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000001", deviceId: "pcont-test-device-B"});
+  await videoUrl({videoId: "11111111-aaaa-4aaa-8aaa-000000000005", deviceId: "pcont-test-device-C"});
   await pdfView({resourceId: "pcont_pdfM", deviceId: "pcont-test-device-C"}).catch(() => null);
   const subsAfter = (await db.collection("subscriptions").where("student_id", "==", STUDENT).get())
     .docs.map((d) => ({id: d.id, ...d.data()}));

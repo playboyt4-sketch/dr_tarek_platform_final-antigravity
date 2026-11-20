@@ -14,6 +14,8 @@ import '../../../authentication/domain/entities/dashboard_session.dart';
 import '../../../../core/errors/failure.dart';
 import '../../domain/entities/lecture_access.dart';
 import '../providers/subject_details_provider.dart';
+import '../../domain/bunny_library_association.dart';
+import '../../domain/bunny_library_catalog.dart';
 
 /// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
 bool isValidBunnyVideoId(String raw) {
@@ -38,6 +40,15 @@ class _StagedResource {
   Uint8List? fileBytes;
   String? contentType;
 
+  /// ADR-010: library association staged alongside [videoId]. No picker is
+  /// rendered (blocked on the approved Figma spec); new videos default to the
+  /// default library and edits keep the stored value.
+  String? libraryId;
+
+  /// ADR-010: true when [videoId] changed under an existing association and a
+  /// future picker must confirm it before saving. Nonvisual flag only.
+  bool libraryReviewRequired = false;
+
   _StagedResource({
     required this.title,
     required this.type,
@@ -47,6 +58,7 @@ class _StagedResource {
     this.fileName,
     this.fileBytes,
     this.contentType,
+    this.libraryId,
   });
 }
 
@@ -65,6 +77,13 @@ class _ExistingResourceEntry {
   String? videoId;
   String? url;
   String? storagePath;
+
+  /// ADR-010: stored library association (null = legacy row).
+  String? libraryId;
+
+  /// ADR-010: set when the Video ID was edited and the association needs a
+  /// future picker confirmation. Nonvisual flag only.
+  bool libraryReviewRequired = false;
   Uint8List? newFileBytes;
   String? newFileName;
   String? newContentType;
@@ -80,6 +99,7 @@ class _ExistingResourceEntry {
     this.videoId,
     this.url,
     this.storagePath,
+    this.libraryId,
   });
 }
 
@@ -375,6 +395,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
             no: '${resource.displayOrder.toString().padLeft(2, '0')}.',
             order: resource.displayOrder,
             videoId: resource.bunnyVideoId,
+            libraryId: resource.bunnyLibraryId,
             url: resource.externalUrl,
             storagePath: resource.storagePath,
           ));
@@ -835,6 +856,14 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
           type: selectedType,
           no: '$orderStr.',
           videoId: newResourceData['videoId'] as String?,
+          // ADR-010: a new video joins the configured default library; other
+          // types carry no association. Routed through the selection state so
+          // the future picker changes only the "selected" input here.
+          libraryId: selectedType == 'Video'
+              ? BunnyLibrarySelection.forNewVideo(
+                  videoId: newResourceData['videoId'] as String?,
+                ).selectLibrary(defaultBunnyLibraryId).libraryIdForWrite
+              : null,
           url: newResourceData['url'] as String?,
           fileName: newResourceData['fileName'] as String?,
           fileBytes: newResourceData['fileBytes'] as Uint8List?,
@@ -921,6 +950,7 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       type: current.typeDisplay,
       no: current.no.replaceAll('.', '').trim(),
       videoId: current.videoId,
+      libraryId: current.libraryId,
       url: current.url,
       fileName: storedFileName.isEmpty ? null : storedFileName,
     );
@@ -944,7 +974,19 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
       current.no = '$orderStr.';
       if (parsedOrder != null) current.order = parsedOrder;
       if (updated.containsKey('videoId')) {
+        final String? previousVideoId = current.videoId;
         current.videoId = (updated['videoId'] as String?)?.trim();
+        // ADR-010: a changed Video ID may belong to another library. Keep the
+        // stored association (never guess) but flag it for review; the state
+        // model refuses to return an invalid library id either way.
+        final BunnyLibrarySelection selection = BunnyLibrarySelection
+            .forExisting(
+              videoId: previousVideoId,
+              storedLibraryId: current.libraryId,
+            )
+            .withVideoId(current.videoId);
+        current.libraryId = selection.libraryIdForWrite;
+        current.libraryReviewRequired = selection.requiresReview;
       }
       if (updated.containsKey('url')) {
         current.url = (updated['url'] as String?)?.trim();
@@ -981,6 +1023,10 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
         // reopened dialog never silently clears them.
         bunnyVideoId:
             entry.wireType == 'video' ? (entry.videoId ?? '') : null,
+        // ADR-010: echo the stored association so an unrelated edit keeps it
+        // (null would also mean "keep", this just makes it explicit).
+        bunnyLibraryId:
+            entry.wireType == 'video' ? entry.libraryId : null,
         externalUrl: entry.wireType == 'external_link'
             ? (entry.url ?? '')
             : null,
@@ -1168,6 +1214,12 @@ class _AddLectureOverlayState extends ConsumerState<AddLectureOverlay> {
         title: row.title.trim(),
         displayOrder: i + 1,
         bunnyVideoId: videoId,
+        // ADR-010: every new video gets a library association; non-video
+        // types stay null.
+        bunnyLibraryId: bunnyLibraryIdForCreate(
+          resourceType: row.type == 'Video' ? 'video' : 'other',
+          selectedLibraryId: row.libraryId,
+        ),
         externalUrl: url,
         fileBytes: row.fileBytes,
         fileName: row.fileName,

@@ -1,4 +1,77 @@
-import {SECURE_CALL_OPTS} from "./core/utils/security_helpers";
+import {
+  APP_CHECK_ENFORCEMENT_STATE,
+  APP_CHECK_ENFORCEMENT_VAR,
+  SECURE_CALL_OPTS,
+} from "./core/utils/security_helpers";
+import {
+  DEFAULT_BUNNY_LIBRARY_ID,
+  describeBunnyEnvironment,
+  normalizeBunnyLibraryId,
+  resolveBunnyStreamApiKey,
+  BunnyPlaybackRuntime,
+  bunnyPosterCacheKey,
+  resolveBunnyLibraryForResource,
+} from "./core/video/bunny_library_registry";
+import {
+  buildBunnyLibraryEnvSnapshot,
+  bunnyCredentialFailureReason,
+  createBunnySecretAccessor,
+  firestoreBunnyCatalogSource,
+  isBunnySecretEmulator,
+  resolveBunnyLibraryDefinition,
+  resolveBunnyPlaybackCredentials,
+  resolveBunnyStreamApiCredentials,
+  type BunnySecretFailureReason,
+  type BunnySecretResolverDeps,
+} from "./core/video/bunny_library_secret_resolver";
+import {
+  BunnyVideoValidationResult,
+  interpretBunnyMetadataError,
+  interpretBunnyMetadataResponse,
+  planBunnyVideoValidation,
+  signBunnyValidationReceipt,
+} from "./core/video/bunny_video_validation";
+import {
+  bunnyAssociationWriteFields,
+  isBunnyAssociationRequired,
+  mayResolveBunnyLibraryForPlayback,
+  planBunnyAssociationShape,
+  planBunnyAssociationWrite,
+  resolveBunnyAssociationCutoverMs,
+  signBunnyAssociationReceipt,
+  verifyBunnyAssociationReceipt,
+} from "./core/video/bunny_library_association";
+import {
+  EligibleBunnyLibrary,
+  loadEligibleBunnyLibraries,
+} from "./core/video/bunny_library_catalog_reader";
+import {
+  BUNNY_CATALOG_COLLECTION,
+  bunnySecretNames,
+  isValidBunnyLibraryId,
+  parseBunnyCatalogEntry,
+} from "./core/video/bunny_library_catalog";
+import type {BunnyTokenAuthMode} from "./core/video/bunny_library_catalog";
+import {
+  probeBunnyLibraryPlayback,
+  probeBunnyLibraryUnsignedPlayback,
+} from "./core/video/bunny_playback_probe";
+import {
+  buildBunnyLibraryAuditEntry,
+  planBunnyLibraryRegistration,
+  planBunnyLibraryStatusTransition,
+  planBunnyLibraryVerificationWrite,
+  resolveBunnyReceiptSigningKeys,
+} from "./core/video/bunny_library_lifecycle";
+// ADR-010 pure contracts are re-exported so they are unit-testable from the
+// compiled bundle (same pattern as the other pure helpers below).
+export * from "./core/video/bunny_library_registry";
+export * from "./core/video/bunny_library_catalog";
+export * from "./core/video/bunny_library_catalog_reader";
+export * from "./core/video/bunny_library_migration";
+export * from "./core/video/bunny_video_validation";
+export * from "./core/video/bunny_library_association";
+export * from "./core/video/bunny_library_lifecycle";
 import {onCall, HttpsError, CallableRequest} from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
@@ -22,6 +95,12 @@ import {defineSecret} from "firebase-functions/params";
 // --- Helpers for restored functions ---
 
 const SECRET_BUNNY_TOKEN_KEY = defineSecret("BUNNY_TOKEN_KEY");
+
+// ADR-010 Amendment 1: the per-library Stream API key is a Secret Manager
+// secret (previously a plain env var). Mounted on every callable that reads
+// Stream metadata; an unmounted/empty value yields an incomplete runtime, so
+// metadata stays disabled instead of borrowing another library's key.
+const SECRET_BUNNY_STREAM_API_KEY = defineSecret("BUNNY_STREAM_API_KEY");
 
 const SECRET_BUNNY_PLAYBACK_URL_TEMPLATE = defineSecret("BUNNY_PLAYBACK_URL_TEMPLATE");
 
@@ -1417,7 +1496,7 @@ async function createNotification(
   body: string,
   options: Record<string, unknown> = {},
 ) {
-  return db.collection("notifications").add({
+  const payload = {
     user_id: userId,
     notification_type: type,
     title,
@@ -1431,7 +1510,26 @@ async function createNotification(
     delivery_status: "pending",
     created_at: FieldValue.serverTimestamp(),
     created_by: "system",
-  });
+  };
+
+  // Deterministic IDs let retried triggers / repeated approval calls reuse the
+  // same document instead of emitting duplicate acceptance notifications.
+  // `create()` is atomic: it throws ALREADY_EXISTS when the doc is present, in
+  // which case the existing notification is returned untouched (no second
+  // `sendPushNotification` event).
+  const notificationId = getString(options.notification_id);
+  if (notificationId) {
+    const ref = db.collection("notifications").doc(notificationId);
+    try {
+      await ref.create(payload);
+    } catch (error) {
+      const code = (error as {code?: number | string}).code;
+      if (code !== 6 && code !== "already-exists") throw error;
+    }
+    return ref;
+  }
+
+  return db.collection("notifications").add(payload);
 }
 
 async function notifyUsersByRole(
@@ -1535,14 +1633,227 @@ function getEnv(name: string): string {
   return value;
 }
 
+// ADR-010: server-only view of the environment used by the library
+// resolvers. Never serialized, never returned to a client.
+function bunnyLibraryEnvSnapshot(): Record<string, string | undefined> {
+  const env = {...process.env} as Record<string, string | undefined>;
+  let mounted: string | undefined;
+  try {
+    mounted = SECRET_BUNNY_STREAM_API_KEY.value();
+  } catch {
+    // Secret not mounted in this invocation (e.g. an older deployment).
+    mounted = undefined;
+  }
+  env.BUNNY_STREAM_API_KEY = resolveBunnyStreamApiKey({
+    secretValue: mounted,
+    env,
+    isEmulator: process.env.FUNCTIONS_EMULATOR === "true",
+  });
+  return env;
+}
+
+// ADR-010 Mission 17: per-library Secret Manager resolver dependencies.
+// The Firestore catalog is the ONLY source of secret NAMES; the values come
+// from Secret Manager (or, in emulation only, from an env var with the same
+// name). The accessor is created once so its short positive cache is shared;
+// a failed read is never cached, so a new/rotated secret is picked up at once
+// and a cached value expires within `BUNNY_SECRET_CACHE_TTL_MS`.
+const bunnyCatalogDocumentSource = firestoreBunnyCatalogSource(db);
+let bunnySecretAccessorSingleton: ReturnType<
+  typeof createBunnySecretAccessor
+> | null = null;
+
+function bunnySecretAccessor(): ReturnType<typeof createBunnySecretAccessor> {
+  if (bunnySecretAccessorSingleton === null) {
+    bunnySecretAccessorSingleton = createBunnySecretAccessor({
+      isEmulator: isBunnySecretEmulator(),
+    });
+  }
+  return bunnySecretAccessorSingleton;
+}
+
+// Server-only resolver inputs for ONE invocation. The env snapshot is rebuilt
+// per call so tests and rotation can change it without a restart.
+function bunnyLibrarySecretDeps(): BunnySecretResolverDeps {
+  return {
+    catalog: bunnyCatalogDocumentSource,
+    secrets: bunnySecretAccessor(),
+    env: bunnyLibraryEnvSnapshot(),
+  };
+}
+
+/**
+ * N5 transition verifier: accept a receipt signed by the dedicated receipt key
+ * OR by the legacy CDN token key, so rotating the receipt key never invalidates
+ * an in-flight association. Fails closed when no key is available.
+ * @param {object} input Receipt plus the exact association being written.
+ * @return {boolean} True only for a live, authentic, matching receipt.
+ */
+function verifyBunnyAssociationReceiptWithRotation(input: {
+  receipt: unknown;
+  resourceId: string;
+  lectureId: string;
+  libraryId: string;
+  videoId: string;
+}): boolean {
+  const keys = resolveBunnyReceiptSigningKeys({
+    env: process.env,
+    legacyTokenKey: getEnv("BUNNY_TOKEN_KEY"),
+  });
+  if (keys === null) return false;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return keys.verifyKeys.some((secret) =>
+    verifyBunnyAssociationReceipt({
+      secret,
+      receipt: input.receipt,
+      resourceId: input.resourceId,
+      lectureId: input.lectureId,
+      libraryId: input.libraryId,
+      videoId: input.videoId,
+      nowSeconds,
+    }),
+  );
+}
+
+// ADR-010 diagnostic: surface a canonical-default / Stream-API identity split
+// at boot (skipped under test so the suites stay deterministic). Diagnostic
+// only — no resolution behaviour depends on it.
+if (process.env.NODE_ENV !== "test") {
+  if (APP_CHECK_ENFORCEMENT_STATE.malformed) {
+    // ADR-010 Mission 21: enforcement is disabled by the parse, so say so at
+    // boot instead of failing open silently. The value itself is never logged.
+    console.warn(
+      `${APP_CHECK_ENFORCEMENT_VAR} is not exactly "true" or "false" ` +
+        `(${APP_CHECK_ENFORCEMENT_STATE.rawLength} chars) — App Check ` +
+        `enforcement is DISABLED for this deployment. Set it to a single ` +
+        `boolean value.`,
+    );
+  }
+  const invariant = describeBunnyEnvironment(bunnyLibraryEnvSnapshot());
+  if (invariant.mismatch) {
+    console.warn(
+      `ADR-010 library identity split: canonical default=` +
+        `${invariant.defaultLibraryId} but BUNNY_STREAM_LIBRARY_ID=` +
+        `${invariant.streamApiLibraryId}. Set BUNNY_DEFAULT_LIBRARY_ID to ` +
+        `the canonical id of this environment.`,
+    );
+  }
+}
+
+// ADR-010: trusted playback configuration for one resource. Resolution uses
+// the stored resource record (client input is only a validated hint) and
+// FAILS CLOSED — an unknown, unactivated or incomplete library never falls
+// back to another library's credentials. Mission 17: the library is resolved
+// through the Firestore catalog (compiled registry first, catalog for
+// onboarded libraries) and its token-signing key is read from that library's
+// Secret Manager entry.
+async function resolveIssuanceBunnyLibrary(
+  resource: DocumentData,
+  clientLibraryHintId: string | null,
+): Promise<BunnyPlaybackRuntime> {
+  const env = bunnyLibraryEnvSnapshot();
+  const storedLibraryId = normalizeBunnyLibraryId(resource.bunny_library_id);
+  const hintLibraryId = normalizeBunnyLibraryId(clientLibraryHintId);
+  if (
+    storedLibraryId !== null &&
+    hintLibraryId !== null &&
+    hintLibraryId !== storedLibraryId
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Bunny playback library configuration is unavailable " +
+        "(library_mismatch).",
+    );
+  }
+  let libraryId: string;
+  if (storedLibraryId !== null) {
+    // The stored association is authoritative; the resolver decides whether
+    // that library is known, active and complete.
+    libraryId = storedLibraryId;
+  } else {
+    const resolution = resolveBunnyLibraryForResource(
+      {storedLibraryId: null, clientLibraryHintId: null},
+      env,
+    );
+    if (!resolution.ok) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Bunny playback library configuration is unavailable " +
+          `(${resolution.reason}).`,
+      );
+    }
+    libraryId = resolution.libraryId;
+  }
+  const credentials = await resolveBunnyPlaybackCredentials({
+    libraryId,
+    deps: bunnyLibrarySecretDeps(),
+  });
+  if (!credentials.ok) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Bunny playback library configuration is unavailable " +
+        `(${bunnyCredentialFailureReason(credentials.reason)}).`,
+    );
+  }
+  return credentials.runtime;
+}
+
+// Best-effort variant for read-only display media: null (no Bunny-derived
+// poster/preview) instead of throwing, and never another library's zone. Only
+// the library ID is resolved here — credentials are read later, per operation,
+// so a metadata-only flow never touches the token-signing key.
+function resolveBestEffortBunnyLibraryId(
+  resource: DocumentData,
+): string | null {
+  // ADR-010 gate (display media): a post-cutover row whose association is
+  // still pending must not borrow the legacy default library's zone even for
+  // a poster. Pre-cutover legacy rows keep their existing fallback.
+  const createdAtMs =
+    resource.created_at && typeof resource.created_at.toMillis === "function" ?
+      resource.created_at.toMillis() :
+      null;
+  if (
+    isBunnyAssociationRequired(
+      createdAtMs,
+      resolveBunnyAssociationCutoverMs(bunnyLibraryEnvSnapshot()),
+    ) &&
+    !getString(resource.bunny_library_id)
+  ) {
+    return null;
+  }
+  // A stored association names the library even when it was onboarded through
+  // the catalog only; credential resolution below still fails closed.
+  const storedLibraryId = normalizeBunnyLibraryId(resource.bunny_library_id);
+  if (storedLibraryId !== null) return storedLibraryId;
+  const resolution = resolveBunnyLibraryForResource(
+    {storedLibraryId: null},
+    bunnyLibraryEnvSnapshot(),
+  );
+  return resolution.ok ? resolution.libraryId : null;
+}
+
 // Signed URL for any file under a video's directory scope (posters,
-// custom thumbnails). Same scheme/validity as playback signing.
-function buildBunnyFileUrl(
+// custom thumbnails). Same scheme/validity as playback signing, resolved
+// through the SAME per-library resolver so display media and playback can
+// never diverge (ADR-010). Only this library's token key is read.
+async function buildBunnyFileUrl(
   videoId: string,
   fileName: string,
   expiresInSeconds = 3600,
-): string {
-  const template = getEnv("BUNNY_PLAYBACK_URL_TEMPLATE");
+  libraryId: string = DEFAULT_BUNNY_LIBRARY_ID,
+): Promise<string> {
+  const credentials = await resolveBunnyPlaybackCredentials({
+    libraryId,
+    deps: bunnyLibrarySecretDeps(),
+  });
+  if (!credentials.ok) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Bunny playback library configuration is unavailable " +
+        `(${bunnyCredentialFailureReason(credentials.reason)}).`,
+    );
+  }
+  const template = credentials.runtime.playbackUrlTemplate;
   const probe = template
     .replace("{video_id}", "0")
     .replace("{videoId}", "0")
@@ -1550,7 +1861,7 @@ function buildBunnyFileUrl(
     .replace("{quality}", "720p")
     .replace("{res}", "720p");
   const origin = new URL(probe).origin;
-  const secret = getEnv("BUNNY_TOKEN_KEY");
+  const secret = credentials.runtime.tokenKey;
   const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
   const scope = `/${videoId}/`;
   const token = hashVideoDirectoryToken(secret, scope, expires);
@@ -1577,10 +1888,23 @@ const bunnyPosterCache = new Map<string, BunnyPosterCacheEntry>();
 const BUNNY_POSTER_CACHE_TTL_MS = 60 * 60 * 1000;
 const BUNNY_POSTER_NEG_TTL_MS = 10 * 60 * 1000;
 
-function bunnyStreamApiConfig(): {apiKey: string; libraryId: string} | null {
-  const apiKey = (process.env.BUNNY_STREAM_API_KEY ?? "").trim();
-  const libraryId = (process.env.BUNNY_STREAM_LIBRARY_ID ?? "").trim();
-  return apiKey !== "" && libraryId !== "" ? {apiKey, libraryId} : null;
+// Per-library Stream API credential (ADR-010 Mission 17). Resolved through
+// the catalog + Secret Manager; unconfigured → null, which keeps every
+// caller's existing "no metadata" fallback. Only the Stream API key is read —
+// a metadata-only flow never touches the token-signing key.
+async function bunnyStreamApiConfig(
+  libraryId: string = DEFAULT_BUNNY_LIBRARY_ID,
+): Promise<{apiKey: string; libraryId: string} | null> {
+  const credentials = await resolveBunnyStreamApiCredentials({
+    libraryId,
+    deps: bunnyLibrarySecretDeps(),
+  });
+  return credentials.ok ?
+    {
+      apiKey: credentials.runtime.apiKey,
+      libraryId: credentials.runtime.apiLibraryId,
+    } :
+    null;
 }
 
 // Stream video metadata needed for display media: the selected poster
@@ -1589,9 +1913,13 @@ function bunnyStreamApiConfig(): {apiKey: string; libraryId: string} | null {
 // when unconfigured).
 async function fetchBunnyVideoMeta(
   videoId: string,
+  libraryId: string = DEFAULT_BUNNY_LIBRARY_ID,
 ): Promise<{file: string | null; hasHQPreview: boolean} | null> {
   const now = Date.now();
-  const cached = bunnyPosterCache.get(videoId);
+  // Cache key is per library: the same video id in two libraries is two
+  // different videos, so a shared key would leak metadata across libraries.
+  const cacheKey = bunnyPosterCacheKey(libraryId, videoId);
+  const cached = bunnyPosterCache.get(cacheKey);
   if (cached) {
     const ttl = cached.file || cached.hasHQPreview ?
       BUNNY_POSTER_CACHE_TTL_MS :
@@ -1600,7 +1928,7 @@ async function fetchBunnyVideoMeta(
       return {file: cached.file, hasHQPreview: cached.hasHQPreview};
     }
   }
-  const config = bunnyStreamApiConfig();
+  const config = await bunnyStreamApiConfig(libraryId);
   if (!config) return null;
   try {
     const controller = new AbortController();
@@ -1616,7 +1944,7 @@ async function fetchBunnyVideoMeta(
       clearTimeout(timer);
     }
     if (!response.ok) {
-      bunnyPosterCache.set(videoId, {file: null, hasHQPreview: false, cachedAt: now});
+      bunnyPosterCache.set(cacheKey, {file: null, hasHQPreview: false, cachedAt: now});
       return null;
     }
     const data = (await response.json()) as {
@@ -1634,10 +1962,10 @@ async function fetchBunnyVideoMeta(
       if (last) file = last;
     }
     const meta = {file, hasHQPreview: data.hasHighQualityPreview === true};
-    bunnyPosterCache.set(videoId, {...meta, cachedAt: now});
+    bunnyPosterCache.set(cacheKey, {...meta, cachedAt: now});
     return meta;
   } catch {
-    bunnyPosterCache.set(videoId, {file: null, hasHQPreview: false, cachedAt: now});
+    bunnyPosterCache.set(cacheKey, {file: null, hasHQPreview: false, cachedAt: now});
     return null;
   }
 }
@@ -1683,20 +2011,27 @@ async function resolveVideoDisplayMedia(
   const posterId = storedBunnyId ?
     (normalizeBunnyVideoIdForLookup(storedBunnyId) ?? storedBunnyId) :
     null;
+  // ADR-010: the poster/preview library comes from the resource record, so
+  // display media always matches the library playback will be signed for.
+  // An unresolvable library yields no Bunny-derived media (never another
+  // library's pull zone).
+  const mediaLibrary = posterId ? resolveBestEffortBunnyLibraryId(resource) : null;
+  const mediaLibraryId = mediaLibrary ?? null;
   let meta: {file: string | null; hasHQPreview: boolean} | null = null;
-  if (posterId) {
+  if (posterId && mediaLibraryId) {
     try {
-      meta = await fetchBunnyVideoMeta(posterId);
+      meta = await fetchBunnyVideoMeta(posterId, mediaLibraryId);
     } catch {
       meta = null;
     }
   }
-  if (!thumbnailUrl && posterId) {
+  if (!thumbnailUrl && posterId && mediaLibraryId) {
     try {
-      thumbnailUrl = buildBunnyFileUrl(
+      thumbnailUrl = await buildBunnyFileUrl(
         posterId,
         meta?.file ?? "thumbnail.jpg",
         3600,
+        mediaLibraryId,
       );
     } catch {
       thumbnailUrl = null;
@@ -1705,9 +2040,14 @@ async function resolveVideoDisplayMedia(
   const isVideoRow =
     (getString(resource.resource_type) ?? "attachment") === "video" &&
     posterId != null;
-  if (isVideoRow && posterId && meta?.hasHQPreview === true) {
+  if (isVideoRow && posterId && mediaLibraryId && meta?.hasHQPreview === true) {
     try {
-      previewUrl = buildBunnyFileUrl(posterId, "preview_hq.mp4", 3600);
+      previewUrl = await buildBunnyFileUrl(
+        posterId,
+        "preview_hq.mp4",
+        3600,
+        mediaLibraryId,
+      );
     } catch {
       previewUrl = null;
     }
@@ -3543,6 +3883,9 @@ export const onStudentApproved = onDocumentUpdated("users/{userId}", async (even
   const after = event.data?.after.data();
   if (!before || !after) return;
   if (before.approval_status === "approved" || after.approval_status !== "approved") return;
+  // Never notify a soft-deleted or disabled account, even if a stale approval
+  // transition slips through (e.g. delete/approve racing in one write).
+  if (after.is_deleted === true || after.account_status === "disabled") return;
 
   const userId = event.params.userId;
   const studentType = getString(after.student_type);
@@ -3587,13 +3930,38 @@ export const onStudentApproved = onDocumentUpdated("users/{userId}", async (even
     updated_by: "system",
   });
 
-  await createNotification(
-    userId,
-    "system",
-    "Account Approved",
-    "Your student account has been approved.",
-    {priority: "critical", deep_link: "/home"},
+  // Idempotent acceptance notification: the deterministic id makes a retried
+  // event or a repeated approval call a no-op. The extra single-field read
+  // also covers legacy approvals whose notification predates the
+  // deterministic id (the two students approved before this deploy), so a
+  // later re-approval cannot create a second acceptance message.
+  // `priority: critical` bypasses quiet hours; the in-app inbox row is the
+  // source of truth when no device token exists yet.
+  const acceptanceTitle = "تم قبول طلب تسجيلك";
+  const acceptanceBody =
+    "تم قبول تسجيلك بنجاح في Dr. Tarek Platform. يمكنك الآن تسجيل الدخول والاستفادة من المحتوى الدراسي.";
+  const recentNotifications = await db
+    .collection("notifications")
+    .where("user_id", "==", userId)
+    .limit(50)
+    .get();
+  const alreadyNotified = recentNotifications.docs.some(
+    (doc) => getString(doc.data().title) === acceptanceTitle,
   );
+
+  if (!alreadyNotified) {
+    await createNotification(
+      userId,
+      "system",
+      acceptanceTitle,
+      acceptanceBody,
+      {
+        priority: "critical",
+        deep_link: "/home",
+        notification_id: `approval_${userId}`,
+      },
+    );
+  }
 
   await writeAnalyticsEvent(userId, "Account Approved", userId, {
     student_type: studentType,
@@ -4224,7 +4592,11 @@ export const setPlanFeature = onCall(SECURE_CALL_OPTS, async (request) => {
 
 export const generateBunnySignedUrl = onCall({
   ...SECURE_CALL_OPTS,
-  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+  secrets: [
+    SECRET_BUNNY_TOKEN_KEY,
+    SECRET_BUNNY_PLAYBACK_URL_TEMPLATE,
+    SECRET_BUNNY_STREAM_API_KEY,
+  ],
 }, async (request) => {
   const userId = requireAuthenticated(request);
   const videoId = getString(request.data?.videoId);
@@ -4337,6 +4709,26 @@ export const generateBunnySignedUrl = onCall({
     throw new HttpsError(
       "invalid-argument",
       "Lecture identity mismatch for this video.",
+    );
+  }
+  // ADR-010: a video resource may only resolve a library when its association
+  // is server-verified. Legacy rows (created before the cutover) keep the
+  // documented default-library fallback; a post-cutover row with no verified
+  // association is PENDING and must never play through that fallback.
+  const resourceCreatedAtMs =
+    resource.created_at && typeof resource.created_at.toMillis === "function" ?
+      resource.created_at.toMillis() :
+      null;
+  if (
+    !mayResolveBunnyLibraryForPlayback({
+      createdAtMs: resourceCreatedAtMs,
+      storedLibraryId: resource.bunny_library_id,
+      cutoverMs: resolveBunnyAssociationCutoverMs(bunnyLibraryEnvSnapshot()),
+    })
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Video resource library association is pending verification.",
     );
   }
   // The route lecture (asserted by the client, verified above) is the
@@ -4593,14 +4985,22 @@ export const generateBunnySignedUrl = onCall({
       }
     });
   }
+  // ADR-010: trusted per-library playback configuration. Resolved after every
+  // authorization/window/session verdict above, so allow/deny precedence and
+  // error codes are unchanged; only a missing/invalid library config fails
+  // here, and it never falls back to another library's credentials.
+  const bunnyLibrary = await resolveIssuanceBunnyLibrary(
+    resource,
+    getString(request.data?.libraryId),
+  );
   console.log(
     `generateBunnySignedUrl identity requestedLecture=${requestedLectureId ?? "-"} ` +
     `resolvedLecture=${lectureId} subject=${resolvedSubjectId} video=${videoId} ` +
-    `tier=${tier.tier} window=${windowDecision}`,
+    `tier=${tier.tier} window=${windowDecision} library=${bunnyLibrary.libraryId}`,
   );
 
-  const template = getEnv("BUNNY_PLAYBACK_URL_TEMPLATE");
-  const secret = getEnv("BUNNY_TOKEN_KEY");
+  const template = bunnyLibrary.playbackUrlTemplate;
+  const secret = bunnyLibrary.tokenKey;
   const expires = Math.floor(Date.now() / 1000) + 300;
   // Accept every historical placeholder spelling so a misconfigured
   // template fails loudly instead of emitting a URL with `{...}` in it.
@@ -4611,7 +5011,10 @@ export const generateBunnySignedUrl = onCall({
     .replace("{quality}", encodeURIComponent(selectedQuality))
     .replace("{res}", encodeURIComponent(selectedQuality));
   if (rawUrl.includes("{") && rawUrl.includes("}")) {
-    throw new HttpsError("failed-precondition", "Server configuration BUNNY_PLAYBACK_URL_TEMPLATE has unresolved placeholders.");
+    throw new HttpsError(
+      "failed-precondition",
+      `Server configuration for Bunny library ${bunnyLibrary.libraryId} has unresolved playback URL placeholders.`,
+    );
   }
   // P1 web fix: Flutter Web (Chrome/Edge/Firefox) feeds the URL into a
   // plain <video> element, which cannot demux HLS playlists
@@ -4676,6 +5079,400 @@ export const generateBunnySignedUrl = onCall({
       heartbeatIntervalMs: PLAYBACK_HEARTBEAT_INTERVAL_MS,
     } : {}),
   };
+});
+
+// ---- ADR-010 pre-write library/video validation ----
+// Doctor-only (content authoring): "does this Video ID belong to this
+// library?". Existence is answered by the library-scoped Stream API, so the
+// answer is authoritative for that library and is never inferred from subject,
+// grade, title or ordering. Returns a verdict plus a short-lived signed receipt
+// binding (library, video); credentials are never returned. `unavailable` is
+// NOT success and never falls back to another library.
+interface BunnyValidationCacheEntry {
+  result: BunnyVideoValidationResult;
+  cachedAt: number;
+}
+const bunnyValidationCache = new Map<string, BunnyValidationCacheEntry>();
+const BUNNY_VALIDATION_CACHE_TTL_MS = 10 * 60 * 1000;
+const BUNNY_VALIDATION_RECEIPT_TTL_SECONDS = 10 * 60;
+
+// Client-visible mapping for a credential-resolution failure. Secret-specific
+// reasons are collapsed: a caller must never be able to probe secret state.
+function bunnyValidationFailureReason(
+  reason: BunnySecretFailureReason,
+): string {
+  const mapped = bunnyCredentialFailureReason(reason);
+  return mapped === "library_not_activated" ? "inactive_library" : mapped;
+}
+
+export const validateBunnyVideoAssociation = onCall({
+  ...SECURE_CALL_OPTS,
+  // The token key only signs the receipt; the Stream API key is a plain
+  // server-side env value (metadata is best-effort by design).
+  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STREAM_API_KEY],
+}, async (request) => {
+  // Content authoring (doctor or delegated admin_content) may ask whether a
+  // Video ID belongs to a library; nothing is written here.
+  await requireContentManager(request);
+  // Optional binding: when the caller names the exact resource/lecture it is
+  // about to associate, the receipt is bound to that pair so it cannot be
+  // replayed onto another resource. Without them the legacy library+video
+  // receipt is returned unchanged (backward compatible).
+  const boundResourceId = getString(request.data?.resourceId);
+  const boundLectureId = getString(request.data?.lectureId);
+  // Mission 17: the format gate runs first (so `invalid_video_id` precedence
+  // is unchanged), then ONLY this library's Stream API key is read through the
+  // catalog + Secret Manager. The token-signing key is never read here.
+  const formatGate = planBunnyVideoValidation(
+    {libraryId: request.data?.libraryId, videoId: request.data?.videoId},
+    bunnyLibraryEnvSnapshot(),
+  );
+  if (!formatGate.ok && formatGate.result.reason === "invalid_video_id") {
+    return {...formatGate.result, receipt: null};
+  }
+  const requestedLibraryId =
+    typeof request.data?.libraryId === "string" ?
+      request.data.libraryId.trim() :
+      "";
+  const requestedVideoId =
+    typeof request.data?.videoId === "string" ?
+      request.data.videoId.trim() :
+      "";
+  const streamCredentials = await resolveBunnyStreamApiCredentials({
+    libraryId: requestedLibraryId,
+    deps: bunnyLibrarySecretDeps(),
+  });
+  if (!streamCredentials.ok) {
+    // Secret/catalog failures collapse to `incomplete_configuration`; the
+    // client never learns whether a secret exists, is denied or is invalid.
+    return {
+      status: "unavailable",
+      reason: bunnyValidationFailureReason(streamCredentials.reason),
+      libraryId: requestedLibraryId,
+      videoId: requestedVideoId,
+      receipt: null,
+    };
+  }
+  const plan = planBunnyVideoValidation(
+    {libraryId: requestedLibraryId, videoId: requestedVideoId},
+    bunnyLibraryEnvSnapshot(),
+    {
+      libraryId: streamCredentials.runtime.libraryId,
+      apiLibraryId: streamCredentials.runtime.apiLibraryId,
+      apiKey: streamCredentials.runtime.apiKey,
+    },
+  );
+  if (!plan.ok) return {...plan.result, receipt: null};
+
+  const probe = plan.request;
+  const now = Date.now();
+  // Same identity as the poster cache: metadata is per (library, video), so a
+  // duplicate Video ID across libraries can never share a verdict.
+  const cacheKey = bunnyPosterCacheKey(probe.libraryId, probe.videoId);
+  const cached = bunnyValidationCache.get(cacheKey);
+  let result: BunnyVideoValidationResult;
+  if (cached && now - cached.cachedAt < BUNNY_VALIDATION_CACHE_TTL_MS) {
+    result = cached.result;
+  } else {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      let response: Response;
+      try {
+        response = await fetch(
+          `https://video.bunnycdn.com/library/${encodeURIComponent(probe.apiLibraryId)}` +
+            `/videos/${encodeURIComponent(probe.videoId)}`,
+          {headers: {AccessKey: probe.apiKey}, signal: controller.signal},
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      result = interpretBunnyMetadataResponse(
+        {status: response.status, body},
+        probe,
+      );
+    } catch (error) {
+      result = interpretBunnyMetadataError(error, probe);
+    }
+    bunnyValidationCache.set(cacheKey, {result, cachedAt: now});
+  }
+
+  let receipt: unknown = null;
+  if (result.status === "verified") {
+    // N5: sign with the dedicated receipt key when it is bound; otherwise the
+    // CDN token key remains the signer (current behaviour, unchanged).
+    const receiptKeys = resolveBunnyReceiptSigningKeys({
+      env: process.env,
+      legacyTokenKey: getEnv("BUNNY_TOKEN_KEY"),
+    });
+    if (receiptKeys === null) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Server configuration BUNNY_TOKEN_KEY is missing.",
+      );
+    }
+    receipt = boundResourceId && boundLectureId ?
+      signBunnyAssociationReceipt({
+        secret: receiptKeys.signKey,
+        resourceId: boundResourceId,
+        lectureId: boundLectureId,
+        libraryId: result.libraryId,
+        videoId: result.videoId,
+        issuedAtSeconds: Math.floor(now / 1000),
+        ttlSeconds: BUNNY_VALIDATION_RECEIPT_TTL_SECONDS,
+      }) :
+      signBunnyValidationReceipt({
+        secret: receiptKeys.signKey,
+        libraryId: result.libraryId,
+        videoId: result.videoId,
+        issuedAtSeconds: Math.floor(now / 1000),
+        ttlSeconds: BUNNY_VALIDATION_RECEIPT_TTL_SECONDS,
+      });
+  }
+  return {...result, receipt};
+});
+
+// ---- ADR-010 server-side verified association ----
+// The ONLY writer of `lecture_resources.bunny_library_id`. A client may name a
+// resource, lecture, video and library, but the server: checks content
+// authority, reads the trusted documents, re-plans the association through the
+// registry (unknown/inactive/incomplete fail closed), verifies a receipt bound
+// to exactly this resource/lecture/library/video, then writes the association
+// and recomputes the lecture's `first_video` pointer from the trusted rows.
+// The client can never select credentials: the library id is registry-resolved
+// and its key/template stay server-side.
+export const associateBunnyVideoToLibrary = onCall({
+  ...SECURE_CALL_OPTS,
+  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STREAM_API_KEY],
+}, async (request) => {
+  const actor = await requireContentManager(request);
+  const resourceId = getString(request.data?.resourceId);
+  const lectureId = getString(request.data?.lectureId);
+  const libraryId = getString(request.data?.libraryId);
+  const videoId = getString(request.data?.videoId);
+  const replaceVideo = request.data?.replaceVideo === true;
+  if (!resourceId || !lectureId || !libraryId || !videoId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "resourceId, lectureId, libraryId and videoId are required.",
+    );
+  }
+  if (
+    request.data?.replaceVideo !== undefined &&
+    typeof request.data?.replaceVideo !== "boolean"
+  ) {
+    throw new HttpsError("invalid-argument", "replaceVideo must be a boolean.");
+  }
+
+  const resourceRef = db.collection("lecture_resources").doc(resourceId);
+  const lectureRef = db.collection("lectures").doc(lectureId);
+  const [resourceSnap, lectureSnap] = await Promise.all([
+    resourceRef.get(),
+    lectureRef.get(),
+  ]);
+  if (!resourceSnap.exists) {
+    throw new HttpsError("not-found", "Lecture resource not found.");
+  }
+  if (!lectureSnap.exists) {
+    throw new HttpsError("not-found", "Lecture not found.");
+  }
+  const storedResource = dataOf(resourceSnap.data());
+  if (storedResource.is_deleted === true) {
+    throw new HttpsError("failed-precondition", "Lecture resource is deleted.");
+  }
+  const storedLecture = dataOf(lectureSnap.data());
+  if (storedLecture.is_deleted === true) {
+    throw new HttpsError("failed-precondition", "Lecture is deleted.");
+  }
+
+  // Mission 17: structural checks first (unchanged reason codes), then ONLY
+  // this library's Stream API key through the catalog + Secret Manager. The
+  // resolved snapshot is reused for the in-transaction re-plan so the write
+  // path never depends on a global credential.
+  const associationInput = {
+    resourceType: storedResource.resource_type,
+    resourceLectureId: storedResource.lecture_id,
+    lectureId,
+    resourceSubjectId: storedResource.subject_id,
+    lectureSubjectId: storedLecture.subject_id,
+    storedVideoId: storedResource.bunny_video_id,
+    requestedVideoId: videoId,
+    storedLibraryId: libraryId,
+    replaceVideo,
+  };
+  const baseEnv = bunnyLibraryEnvSnapshot();
+  const shape = planBunnyAssociationShape(associationInput, baseEnv);
+  if (!shape.ok) {
+    const code =
+      shape.reason === "video_id_mismatch" ||
+      shape.reason === "lecture_mismatch" ||
+      shape.reason === "subject_mismatch" ?
+        "failed-precondition" :
+        "invalid-argument";
+    throw new HttpsError(
+      code,
+      `Bunny library association rejected (${shape.reason}).`,
+    );
+  }
+  const definition = resolveBunnyLibraryDefinition(shape.libraryId, baseEnv);
+  const streamCredentials = await resolveBunnyStreamApiCredentials({
+    libraryId: shape.libraryId,
+    deps: bunnyLibrarySecretDeps(),
+  });
+  if (!streamCredentials.ok) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Bunny library association rejected " +
+        `(${bunnyCredentialFailureReason(streamCredentials.reason)}).`,
+    );
+  }
+  const associationEnv = buildBunnyLibraryEnvSnapshot({
+    env: baseEnv,
+    libraryId: shape.libraryId,
+    definition,
+    credentials: {
+      streamApiKey: streamCredentials.runtime.apiKey,
+      apiLibraryId: streamCredentials.runtime.apiLibraryId,
+    },
+  });
+  const planned = planBunnyAssociationWrite(
+    associationInput,
+    associationEnv,
+    definition,
+  );
+  if (!planned.ok) {
+    const code =
+      planned.reason === "video_id_mismatch" ||
+      planned.reason === "lecture_mismatch" ||
+      planned.reason === "subject_mismatch" ?
+        "failed-precondition" :
+        "invalid-argument";
+    throw new HttpsError(
+      code,
+      `Bunny library association rejected (${planned.reason}).`,
+    );
+  }
+
+  // Receipt: proves this exact association was verified by the server. A
+  // receipt for another resource, lecture, library or video — or an expired
+  // one — is rejected here; the client can never forge it. During the N5
+  // transition both the dedicated receipt key and the CDN token key verify.
+  if (
+    !verifyBunnyAssociationReceiptWithRotation({
+      receipt: request.data?.receipt,
+      resourceId,
+      lectureId,
+      libraryId: planned.libraryId,
+      videoId: planned.videoId,
+    })
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "A valid verification receipt for this resource is required.",
+    );
+  }
+
+  const result = await db.runTransaction(async (transaction) => {
+    // Re-read inside the transaction so a concurrent edit cannot slip an
+    // unverified or different Video ID past the checks above.
+    const freshResourceSnap = await transaction.get(resourceRef);
+    const freshLectureSnap = await transaction.get(lectureRef);
+    if (!freshResourceSnap.exists || !freshLectureSnap.exists) {
+      throw new HttpsError("not-found", "Lecture resource or lecture disappeared.");
+    }
+    const freshResource = dataOf(freshResourceSnap.data());
+    const freshLecture = dataOf(freshLectureSnap.data());
+    if (freshResource.is_deleted === true || freshLecture.is_deleted === true) {
+      throw new HttpsError("failed-precondition", "Resource or lecture is deleted.");
+    }
+    const freshPlan = planBunnyAssociationWrite(
+      {
+        resourceType: freshResource.resource_type,
+        resourceLectureId: freshResource.lecture_id,
+        lectureId,
+        resourceSubjectId: freshResource.subject_id,
+        lectureSubjectId: freshLecture.subject_id,
+        storedVideoId: freshResource.bunny_video_id,
+        requestedVideoId: videoId,
+        storedLibraryId: libraryId,
+        replaceVideo,
+      },
+      associationEnv,
+      definition,
+    );
+    if (!freshPlan.ok) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Bunny library association rejected (${freshPlan.reason}).`,
+      );
+    }
+
+    const previousLibraryId =
+      typeof freshResource.bunny_library_id === "string" ?
+        freshResource.bunny_library_id :
+        null;
+    const previousVideoId =
+      typeof freshResource.bunny_video_id === "string" ?
+        freshResource.bunny_video_id :
+        null;
+    const already =
+      previousLibraryId === freshPlan.libraryId &&
+      previousVideoId === freshPlan.videoId;
+
+    const resourcesSnap = await transaction.get(
+      db.collection("lecture_resources").where("lecture_id", "==", lectureId),
+    );
+    const rows: FirstVideoResourceRow[] = resourcesSnap.docs.map((doc) => {
+      const data = dataOf(doc.data());
+      if (doc.id !== resourceId) return {id: doc.id, data};
+      return {
+        id: doc.id,
+        data: {
+          ...data,
+          ...bunnyAssociationWriteFields(
+            freshPlan.libraryId,
+            freshPlan.videoId,
+          ),
+        },
+      };
+    });
+
+    // Idempotent: a repeated identical request rewrites the same values and
+    // re-derives the pointer instead of failing or duplicating anything.
+    transaction.set(
+      resourceRef,
+      {
+        ...bunnyAssociationWriteFields(
+          freshPlan.libraryId,
+          freshPlan.videoId,
+        ),
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: actor.actorId,
+      },
+      {merge: true},
+    );
+    transaction.update(lectureRef, {
+      first_video: firstVideoFieldsFromResources(rows),
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: actor.actorId,
+    });
+
+    return {
+      status: already ? "already_associated" : "associated",
+      resourceId,
+      lectureId,
+      libraryId: freshPlan.libraryId,
+      videoId: freshPlan.videoId,
+    };
+  });
+
+  return result;
 });
 
 export const getVideoWatchWindow = onCall(SECURE_CALL_OPTS, async (request) => {
@@ -4895,7 +5692,12 @@ export const getLectureResources = onCall({
   // scheme, so both secrets must be present at runtime. The playback
   // template origin is additionally needed for the signed Bunny poster
   // fallback (selected library poster per video).
-  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STORAGE_BASE_URL, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+  secrets: [
+    SECRET_BUNNY_TOKEN_KEY,
+    SECRET_BUNNY_STORAGE_BASE_URL,
+    SECRET_BUNNY_PLAYBACK_URL_TEMPLATE,
+    SECRET_BUNNY_STREAM_API_KEY,
+  ],
 }, async (request) => {
   const userId = requireAuthenticated(request);
   const lectureId = getString(request.data?.lectureId);
@@ -4991,6 +5793,9 @@ export const getLectureResources = onCall({
       resourceType: getString(resource.resource_type) ?? "attachment",
       title: getString(resource.title) ?? getString(resource.resource_title) ?? "مورد تعليمي",
       bunnyVideoId: getString(resource.bunny_video_id),
+      // ADR-010 additive metadata: the stored library id (or undefined for
+      // legacy rows). Existing keys and their meaning are unchanged.
+      bunnyLibraryId: getString(resource.bunny_library_id),
       storagePath: getString(resource.storage_path),
       thumbnail: getString(resource.thumbnail),
       thumbnailUrl: media.thumbnailUrl,
@@ -5069,7 +5874,12 @@ export const getLectureResources = onCall({
 // nulls; the listing itself never fails because of media.
 export const getSectionDisplayMedia = onCall({
   ...SECURE_CALL_OPTS,
-  secrets: [SECRET_BUNNY_TOKEN_KEY, SECRET_BUNNY_STORAGE_BASE_URL, SECRET_BUNNY_PLAYBACK_URL_TEMPLATE],
+  secrets: [
+    SECRET_BUNNY_TOKEN_KEY,
+    SECRET_BUNNY_STORAGE_BASE_URL,
+    SECRET_BUNNY_PLAYBACK_URL_TEMPLATE,
+    SECRET_BUNNY_STREAM_API_KEY,
+  ],
 }, async (request) => {
   const userId = requireAuthenticated(request);
   const sectionId = getString(request.data?.sectionId);
@@ -7034,6 +7844,341 @@ async function requireContentManager(request: CallableRequest<unknown>): Promise
   return {actorId, actorRole: "admin", permissionBasis: "delegated:admin_content"};
 }
 
+/**
+ * ADR-010 — server-managed catalog read path for the Dashboard library picker.
+ *
+ * Authorization is the existing content-management policy (`requireContentManager`):
+ * Doctor always, delegated admin only with an active `admin_content` grant.
+ * Students and unauthenticated callers are rejected by the same helper.
+ *
+ * The response is the closed projection `{libraries: [{libraryId, displayName}]}`
+ * of libraries that pass the pure activation gate (active + token auth enabled
+ * + probe-verified). Pull zone ids, playback hosts, credential references and
+ * verification stamps never leave the server. A catalog read failure surfaces
+ * as `unavailable` and never as a fabricated empty success.
+ *
+ * This callable reads NO secret: it only needs the emergency deny-list env var
+ * (`BUNNY_ACTIVE_LIBRARY_IDS`), so it deliberately avoids
+ * `bunnyLibraryEnvSnapshot()` (which resolves the Stream API key) to keep the
+ * secret surface of a read-only endpoint at zero.
+ */
+export const listEligibleBunnyLibraries = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => {
+    await requireContentManager(request);
+
+    let libraries: EligibleBunnyLibrary[];
+    try {
+      libraries = await loadEligibleBunnyLibraries(
+        db,
+        {...process.env},
+      );
+    } catch (error) {
+      // Never echo Firestore internals (paths, project ids) to the client.
+      console.error("listEligibleBunnyLibraries catalog read failed:", error);
+      throw new HttpsError(
+        "unavailable",
+        "The Bunny library catalog is temporarily unavailable.",
+      );
+    }
+
+    return {libraries};
+  },
+);
+
+// ---------------------------------------------------------------------------
+// ADR-010 Option C — Bunny library lifecycle (Doctor only, audited).
+//
+// Registration can only create `pending_verification`; only a successful
+// verification probe can produce `active`. Deactivation always wins.
+// ---------------------------------------------------------------------------
+
+function bunnyCatalogDocRef(libraryId: string) {
+  return db.collection(BUNNY_CATALOG_COLLECTION).doc(libraryId);
+}
+
+async function writeBunnyLibraryAudit(
+  entry: Record<string, unknown>,
+): Promise<void> {
+  await db.collection("admin_audit_log").add({
+    ...entry,
+    created_at: FieldValue.serverTimestamp(),
+    timestamp: FieldValue.serverTimestamp(),
+  });
+}
+
+export const registerBunnyLibrary = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => {
+    const actorId = requireDoctor(request);
+    const plan = planBunnyLibraryRegistration({
+      libraryId: request.data?.libraryId,
+      displayName: request.data?.displayName,
+      pullZoneId: request.data?.pullZoneId,
+      playbackHost: request.data?.playbackHost,
+      source: request.data?.source,
+    });
+    if (!plan.ok) {
+      throw new HttpsError("invalid-argument", plan.reason);
+    }
+
+    const ref = bunnyCatalogDocRef(plan.libraryId);
+    try {
+      await ref.create({
+        ...plan.document,
+        created_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      // `create()` is race-safe: an existing document never gets overwritten.
+      console.error("registerBunnyLibrary write failed:", error);
+      throw new HttpsError(
+        "already-exists",
+        "bunny_library_already_registered",
+      );
+    }
+
+    await writeBunnyLibraryAudit(
+      buildBunnyLibraryAuditEntry({
+        action: "bunny_library_register",
+        actorId,
+        actorRole: "doctor",
+        permissionBasis: "doctor",
+        libraryId: plan.libraryId,
+        previousStatus: null,
+        newStatus: "pending_verification",
+        source: plan.document.source,
+      }),
+    );
+
+    return {
+      registered: true,
+      libraryId: plan.libraryId,
+      status: "pending_verification",
+    };
+  },
+);
+
+async function applyBunnyLibraryLifecycleAction(
+  request: {data?: unknown},
+  action: "deactivate" | "reactivate",
+): Promise<{libraryId: string; status: string}> {
+  const actorId = requireDoctor(request as CallableRequest<unknown>);
+  const payload = (request.data ?? {}) as Record<string, unknown>;
+  const libraryId = getString(payload.libraryId) ?? "";
+  if (!isValidBunnyLibraryId(libraryId)) {
+    throw new HttpsError("invalid-argument", "invalid_library_id");
+  }
+  const ref = bunnyCatalogDocRef(libraryId);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new HttpsError("not-found", "unknown_library");
+
+  const parsed = parseBunnyCatalogEntry(snapshot.data());
+  if (!parsed.ok) {
+    throw new HttpsError("failed-precondition", "invalid_catalog_entry");
+  }
+
+  const plan = planBunnyLibraryStatusTransition(parsed.entry.status, action);
+  if (!plan.ok) throw new HttpsError("failed-precondition", plan.reason);
+
+  await ref.update({
+    status: plan.status,
+    updated_at: FieldValue.serverTimestamp(),
+  });
+
+  await writeBunnyLibraryAudit(
+    buildBunnyLibraryAuditEntry({
+      action: action === "deactivate" ?
+        "bunny_library_deactivate" :
+        "bunny_library_reactivate",
+      actorId,
+      actorRole: "doctor",
+      permissionBasis: "doctor",
+      libraryId,
+      previousStatus: plan.previousStatus,
+      newStatus: plan.status,
+      reason: getString(payload.reason),
+    }),
+  );
+
+  return {libraryId, status: plan.status};
+}
+
+export const deactivateBunnyLibrary = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => applyBunnyLibraryLifecycleAction(request, "deactivate"),
+);
+
+export const reactivateBunnyLibrary = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => applyBunnyLibraryLifecycleAction(request, "reactivate"),
+);
+
+/**
+ * Doctor-triggered verification of ONE library.
+ *
+ * Reads only that library's own derived secrets, asks Bunny whether CDN Token
+ * Authentication is enabled, then proves it with a signed-URL probe of a real
+ * video. Any failure fails closed and is recorded as a typed code — never as a
+ * provider message and never with credential material.
+ */
+export const verifyBunnyLibrary = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => {
+    const actorId = requireDoctor(request);
+    const libraryId = getString(request.data?.libraryId) ?? "";
+    if (!isValidBunnyLibraryId(libraryId)) {
+      throw new HttpsError("invalid-argument", "invalid_library_id");
+    }
+    const ref = bunnyCatalogDocRef(libraryId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) throw new HttpsError("not-found", "unknown_library");
+
+    const parsed = parseBunnyCatalogEntry(snapshot.data());
+    if (!parsed.ok) {
+      throw new HttpsError("failed-precondition", "invalid_catalog_entry");
+    }
+    const entry = parsed.entry;
+    const names = bunnySecretNames(libraryId);
+    const accessor = bunnySecretAccessor();
+
+    let tokenAuthEnabled = false;
+    let tokenAuthVerified = false;
+    let tokenAuthMode: BunnyTokenAuthMode | null = null;
+    let errorCode: string | null = null;
+
+    try {
+      const apiKey = await accessor.readSecret(names.streamApiKey);
+      // The token key is OPTIONAL from Amendment 3 on: an unsigned library has
+      // none. A missing/denied token secret only means "cannot prove signed".
+      let tokenKey: string | null = null;
+      try {
+        tokenKey = await accessor.readSecret(names.tokenKey);
+      } catch {
+        tokenKey = null;
+      }
+
+      let signedReason: string | null = null;
+      if (tokenKey !== null) {
+        const signed = await probeBunnyLibraryPlayback({
+          libraryId,
+          playbackHost: entry.playbackHost,
+          tokenKey,
+          apiKey,
+        });
+        if (signed.ok) {
+          tokenAuthMode = "signed";
+          tokenAuthEnabled = true;
+          tokenAuthVerified = true;
+        } else {
+          signedReason = signed.reason;
+        }
+      }
+
+      if (!tokenAuthVerified) {
+        // No enforcement proven: a plain URL that returns 200 is the
+        // documented `unsigned` mode, recorded — never reported as failure.
+        const plain = await probeBunnyLibraryUnsignedPlayback({
+          libraryId,
+          playbackHost: entry.playbackHost,
+          apiKey,
+        });
+        if (plain.ok) {
+          tokenAuthMode = "unsigned";
+          tokenAuthEnabled = false;
+          tokenAuthVerified = true;
+          errorCode = null;
+        } else {
+          errorCode = signedReason ?? plain.reason;
+        }
+      }
+    } catch {
+      // Secret missing / denied / provider unreachable: one typed code.
+      errorCode = errorCode ?? "credential_missing";
+    }
+
+    const write = planBunnyLibraryVerificationWrite(entry.status, {
+      tokenAuthEnabled,
+      tokenAuthVerified,
+      tokenAuthMode,
+      errorCode,
+    });
+
+    const update: Record<string, unknown> = {
+      status: write.status,
+      token_auth_enabled: write.token_auth_enabled,
+      token_auth_verified: write.token_auth_verified,
+      token_auth_mode: write.token_auth_mode,
+      last_error_code: write.last_error_code,
+      updated_at: FieldValue.serverTimestamp(),
+    };
+    if (write.verified) update.last_verified_at = FieldValue.serverTimestamp();
+    await ref.update(update);
+
+    await writeBunnyLibraryAudit(
+      buildBunnyLibraryAuditEntry({
+        action: "bunny_library_verify",
+        actorId,
+        actorRole: "doctor",
+        permissionBasis: "doctor",
+        libraryId,
+        previousStatus: entry.status,
+        newStatus: write.status,
+        reasonCode: write.last_error_code,
+      }),
+    );
+
+    return {
+      libraryId,
+      status: write.status,
+      tokenAuthEnabled: write.token_auth_enabled,
+      tokenAuthVerified: write.token_auth_verified,
+      tokenAuthMode: write.token_auth_mode,
+      errorCode: write.last_error_code,
+    };
+  },
+);
+
+/**
+ * Doctor-only, read-only health view of the catalog.
+ *
+ * Returns no credential name, host or pull-zone id: only what an operator needs
+ * to see which libraries exist and whether they are serving.
+ */
+export const listBunnyLibraryHealth = onCall(
+  SECURE_CALL_OPTS,
+  async (request) => {
+    requireDoctor(request);
+    const snapshot = await db.collection(BUNNY_CATALOG_COLLECTION).get();
+    const libraries = snapshot.docs.map((doc) => {
+      const parsed = parseBunnyCatalogEntry(doc.data());
+      if (!parsed.ok) {
+        return {
+          libraryId: doc.id,
+          displayName: null,
+          status: "invalid",
+          tokenAuthEnabled: false,
+          tokenAuthVerified: false,
+          tokenAuthMode: null,
+          lastVerifiedAtMs: null,
+          lastErrorCode: parsed.reason,
+        };
+      }
+      return {
+        libraryId: parsed.entry.libraryId,
+        displayName: parsed.entry.displayName,
+        status: parsed.entry.status,
+        tokenAuthEnabled: parsed.entry.tokenAuthEnabled,
+        tokenAuthVerified: parsed.entry.tokenAuthVerified,
+        tokenAuthMode: parsed.entry.tokenAuthMode,
+        lastVerifiedAtMs: parsed.entry.lastVerifiedAtMs,
+        lastErrorCode: parsed.entry.lastErrorCode,
+      };
+    });
+    return {libraries};
+  },
+);
+
 export const createSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   const authorization = await requireContentManager(request);
   const name = getString(request.data?.name) ?? getString(request.data?.title);
@@ -7774,6 +8919,7 @@ export const generateBunnyResourceUrl = onCall(
     secrets: [
       SECRET_BUNNY_TOKEN_KEY,
       SECRET_BUNNY_STORAGE_BASE_URL,
+      SECRET_BUNNY_STREAM_API_KEY,
     ],
   },
   async (request) => {
@@ -8240,6 +9386,10 @@ export function firstVideoFieldsFromResources(
   return {
     resource_id: winner.id,
     bunny_video_id: getString(winnerData.bunny_video_id)!.trim(),
+    // ADR-010 additive: the fast-lane pointer must carry the library too, or
+    // the pointer would issue against the wrong library once a second
+    // library is active. Null for legacy rows (default-library fallback).
+    bunny_library_id: getString(winnerData.bunny_library_id)?.trim() ?? null,
     title: getString(winnerData.title)?.trim() ?? "",
     display_order: winnerOrder,
     // Raw poster path only (never a signed/storage URL), mirroring

@@ -2,11 +2,12 @@
 
 ## Dr. Tarek Platform
 
-Version: 1.2
-Status: Draft — pending Teacher (Platform Owner) review before "Approved"
+Version: 1.3
+Status: Draft - pending Teacher (Platform Owner) review before "Approved"
 
 ## Changelog
 
+- **1.3** (2026-11-17): ADR-010 Option C alignment. §4.3 now documents the registered-library model and the correct callable `generateBunnySignedUrl`; §6.2 records that the platform stores the library as well as the video id. Approved by the Platform Owner as Phase 2 governance item E.
 - **1.2** (2026-11-01): §5.1 Dark Mode token placeholder removed in favour of a reference to the approved Dark token table in 03 UI & UX §2.2 (ADR-009). Master Architecture §9.1 forbids duplicating token values across documents. No asset was changed.
 - **1.1** (2026-08-25): Section 4.2 updated for the ratified dual storage-provider architecture (FINAL_DECISIONS §15): per-resource `storage_provider` ("bunny" | "firebase"), `system_settings.default_storage_provider` default, image attachment types (jpg/jpeg/png) added as an approved attachment option. Videos remain Bunny-only.
 
@@ -197,14 +198,19 @@ flutter:
 
 ### 4.3 Bunny CDN Assets (Video)
 
-**Location:** Bunny CDN Video Library.
+**Location:** A registered Bunny Stream library (ADR-010 Option C). The catalog
+`bunny_libraries` records which libraries the platform may use.
 
 **Access:**
 - Videos are never accessed via raw Bunny URL.
-- App requests signed URL via `generateSignedVideoUrl` Cloud Function (see 06 Firebase Architecture Section 6.4).
-- Admin/Teacher enters only `video_id` in Dashboard; the actual file path is opaque to the platform.
+- App requests a signed URL via the `generateBunnySignedUrl` Cloud Function (see 06 Firebase Architecture Section 6.4).
+- The backend resolves the video's library server-side; the client never selects a library and never receives a library id or credential.
+- Admin/Teacher selects the library and either uploads the video or enters its `video_id`; the actual file path is opaque to the platform.
 
-**See:** 06 Firebase Architecture Section 5.2 and FINAL_DECISIONS Section 4.
+**Library association:** every video belongs to exactly one registered library. The
+library catalog is itself a platform asset record and is maintained by the Doctor.
+
+**See:** 06 Firebase Architecture Section 6.4 and FINAL_DECISIONS Section 4.
 
 ---
 
@@ -351,7 +357,10 @@ class AppShapes {
 - **Subject Thumbnails:** Overwriting a thumbnail creates a new file with timestamp suffix; old file soft-deleted after 30 days.
 - **Profile Photos:** New upload replaces old; old file retained for 90 days (audit/compliance).
 - **Lecture Resources:** Versioning handled by lecture publishing workflow; unpublished resources remain in Storage but are inaccessible via Security Rules.
-- **Videos (Bunny CDN):** Versioning handled by Bunny CDN; platform stores only `video_id`.
+- **Videos (Bunny CDN):** Versioning is handled by Bunny CDN. The platform stores the
+  video id **and the library that owns it** (`bunny_video_id`, `bunny_library_id`). A
+  video id alone is ambiguous once more than one library exists. Library identity is
+  resolved server-side and is never exposed to clients.
 
 ---
 

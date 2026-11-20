@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node rules.test.js"
+    "test": "node rules.test.js && node adr010_association_rules.test.js"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

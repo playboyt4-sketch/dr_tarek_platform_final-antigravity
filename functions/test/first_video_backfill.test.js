@@ -145,6 +145,7 @@ check("firstVideoFields carries identity only, thumbnails when authoritative", (
   assert.deepEqual(fields, {
     resource_id: "res-1",
     bunny_video_id: "bunny-1",
+    bunny_library_id: null,
     title: "V",
     display_order: 2,
     thumbnail_path: "thumbs/r.jpg",
@@ -157,6 +158,15 @@ check("firstVideoFields carries identity only, thumbnails when authoritative", (
   assert.equal(bare.thumbnail_path, null);
   assert.equal(bare.thumbnail_storage_provider, null);
   assert.ok(!("resource_url" in bare) && !("storage_path" in bare));
+  const withLibrary = backfill.firstVideoFields({
+    id: "res-3",
+    data: {
+      bunny_video_id: "bunny-3",
+      bunny_library_id: " 736742 ",
+      title: "L",
+    },
+  });
+  assert.equal(withLibrary.bunny_library_id, "736742");
 });
 
 check("sameFirstVideo compares normalized values", () => {
@@ -164,10 +174,18 @@ check("sameFirstVideo compares normalized values", () => {
   assert.equal(backfill.sameFirstVideo({resource_id: "a"}, null), false);
   assert.equal(backfill.sameFirstVideo(null, {resource_id: "a"}), false);
   const full = {
-    resource_id: "r", bunny_video_id: "b", title: "t", display_order: 1,
+    resource_id: "r", bunny_video_id: "b", bunny_library_id: "736742",
+    title: "t", display_order: 1,
     thumbnail_path: null, thumbnail_storage_provider: null,
   };
   assert.equal(backfill.sameFirstVideo({...full}, {...full}), true);
+  assert.equal(
+    backfill.sameFirstVideo(
+      {...full, bunny_library_id: "736742"},
+      {...full, bunny_library_id: "775315"},
+    ),
+    false,
+  );
   assert.equal(
     backfill.sameFirstVideo({...full, display_order: 1}, {...full, display_order: 2}),
     false,
@@ -212,7 +230,7 @@ async function seed(db) {
     });
   };
   await res("bf_v9", "bf_lec1", {display_order: 9, bunny_video_id: "bunny-9"});
-  await res("bf_v2", "bf_lec1", {display_order: 2, bunny_video_id: "bunny-2"});
+  await res("bf_v2", "bf_lec1", {display_order: 2, bunny_video_id: "bunny-2", bunny_library_id: "736742"});
   await res("bf_hidden", "bf_lec2", {display_order: 0, bunny_video_id: "bunny-h"});
   await db.collection("lecture_resources").doc("bf_hidden").update({is_visible: false});
   await res("bf_vis", "bf_lec2", {display_order: 1, bunny_video_id: "bunny-v"});
@@ -264,6 +282,7 @@ async function run() {
   };
   assert.equal((await fv("bf_lec1")).resource_id, "bf_v2");
   assert.equal((await fv("bf_lec1")).bunny_video_id, "bunny-2");
+  assert.equal((await fv("bf_lec1")).bunny_library_id, "736742");
   assert.equal((await fv("bf_lec2")).resource_id, "bf_vis");
   assert.equal((await fv("bf_lec3")).resource_id, "bf_live");
   assert.equal((await fv("bf_lec4")).resource_id, "bf_ok");

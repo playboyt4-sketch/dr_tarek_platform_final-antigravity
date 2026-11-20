@@ -421,6 +421,7 @@ class VideoPlaybackController extends ChangeNotifier {
           refTitle != null && refTitle.isNotEmpty ? refTitle : episodeTitle,
       resourceType: 'video',
       bunnyVideoId: ref.bunnyVideoId,
+      bunnyLibraryId: ref.bunnyLibraryId,
     );
     hasDocuments = false;
     final Future<PlaybackProgressRecord?>? resumeFuture =

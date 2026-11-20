@@ -265,6 +265,7 @@ class VideoSourceResolver implements VideoSourceGateway {
         title: resource.title,
         resourceType: resource.resourceType,
         bunnyVideoId: resource.bunnyVideoId,
+        bunnyLibraryId: resource.bunnyLibraryId,
         thumbnailUrl: resource.thumbnailUrl,
         storageProvider: resource.storageProvider,
         thumbnailProvider: resource.thumbnailProvider,
@@ -317,6 +318,12 @@ class VideoSourceResolver implements VideoSourceGateway {
     // lecture the student actually opened (fail-closed on mismatch).
     if (lectureId != null && lectureId.isNotEmpty) {
       payload['lectureId'] = lectureId;
+    }
+    // ADR-010: sent as a HINT only. The server validates it against the
+    // stored resource before selecting any signing credential and fails
+    // closed on disagreement, so this can never redirect playback.
+    if (resource.bunnyLibraryId != null) {
+      payload['libraryId'] = resource.bunnyLibraryId;
     }
     // Web receives the signed HLS playlist (same as mobile). On Flutter Web
     // the video_player_web_hls backend attaches hls.js to the <video>

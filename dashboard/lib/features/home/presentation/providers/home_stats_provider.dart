@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../students/data/mock_students.dart';
+import '../../../students/domain/live_student.dart';
 
 /// Live platform counters shown on the dashboard home "Analytics &
 /// Reports" section (Figma frame 457:421 — the crypto artwork there is a
@@ -25,19 +26,15 @@ class HomeStats {
 }
 
 /// Aggregated counts. Each query keeps a single filter so no composite
-/// indexes are required; pending = students − approved.
+/// indexes are required; soft-deleted and disabled rows are dropped
+/// client-side by [isLiveStudent] before counting.
 final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
   final FirebaseFirestore db = ref.watch(firebaseFirestoreProvider);
 
-  final studentsSnap = await db
+  final studentSnap = await db
       .collection('users')
       .where('role', whereIn: <String>['student', 'new_student'])
-      .count()
-      .get();
-  final approvedSnap = await db
-      .collection('users')
-      .where('approval_status', isEqualTo: 'approved')
-      .count()
+      .limit(5000)
       .get();
   final subjectsSnap = await db
       .collection('subjects')
@@ -50,13 +47,27 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
       .count()
       .get();
 
-  final students = studentsSnap.count ?? 0;
-  final approved = approvedSnap.count ?? 0;
+  // Aggregation counts cannot express `is_deleted != true &&
+  // account_status != 'disabled'` without a composite index, and the totals
+  // must never include soft-deleted or disabled records. One indexed
+  // role-filtered read plus the canonical client-side live filter is the
+  // same discipline the grade lists use.
+  int students = 0;
+  int pending = 0;
+  for (final doc in studentSnap.docs) {
+    final Map<String, dynamic> data = doc.data();
+    if (!isLiveStudent(data)) continue;
+    students++;
+    if (data['role'] == 'new_student' &&
+        data['approval_status'] == 'pending') {
+      pending++;
+    }
+  }
 
   return HomeStats(
     students: students,
     subjects: subjectsSnap.count ?? 0,
-    pendingApplications: students - approved < 0 ? 0 : students - approved,
+    pendingApplications: pending,
     staff: staffSnap.count ?? 0,
   );
 });
@@ -179,6 +190,7 @@ final homeAnalyticsProvider = FutureProvider<HomeAnalytics>((ref) async {
 
   for (final doc in approvedSnap.docs) {
     final Map<String, dynamic> data = doc.data();
+    if (!isLiveStudent(data)) continue;
     if (data['approval_status'] != 'approved') continue;
     final String? gradeKey = normalizeGradeKey(data['grade']);
     if (gradeKey == null || !canonicalGradeKeys.contains(gradeKey)) continue;
@@ -193,6 +205,7 @@ final homeAnalyticsProvider = FutureProvider<HomeAnalytics>((ref) async {
 
   final Map<String, int> pendings = <String, int>{};
   for (final doc in pendingSnap.docs) {
+    if (!isLiveStudent(doc.data())) continue;
     final String? gradeKey =
         normalizeGradeKey(doc.data()['grade']);
     if (gradeKey == null || !canonicalGradeKeys.contains(gradeKey)) continue;

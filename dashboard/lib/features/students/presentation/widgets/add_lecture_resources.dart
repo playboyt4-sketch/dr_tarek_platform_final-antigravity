@@ -2,6 +2,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../domain/bunny_library_association.dart';
+import '../../domain/bunny_library_catalog.dart';
+
 /// VIDEO-ID-ONLY: bare Bunny GUID only — URLs are rejected.
 bool isValidBunnyVideoId(String raw) {
   return RegExp(
@@ -49,6 +52,15 @@ class StagedResource {
   int displayOrder;
   final StagedResourceKind kind;
   String bunnyVideoId;
+
+  /// ADR-010: library association staged with the Video ID. No picker is
+  /// rendered yet (blocked on the approved Figma spec); new videos default
+  /// to [defaultBunnyLibraryId] and edits echo the stored value.
+  String? bunnyLibraryId;
+
+  /// ADR-010: true when the Video ID changed under an existing association
+  /// and the future picker must ask for confirmation before saving. Nonvisual.
+  bool libraryReviewRequired;
   String externalUrl;
   Uint8List? fileBytes;
   String? fileName;
@@ -59,6 +71,8 @@ class StagedResource {
     required this.displayOrder,
     required this.kind,
     this.bunnyVideoId = '',
+    this.bunnyLibraryId,
+    this.libraryReviewRequired = false,
     this.externalUrl = '',
     this.fileBytes,
     this.fileName,
@@ -318,11 +332,29 @@ Future<StagedResource?> _videoDialog(
         content: Text('الصق الـ Video ID فقط (GUID) — الروابط غير مقبولة.')));
     return null;
   }
+  // ADR-010 selection state: load the stored association (legacy rows have
+  // none), then apply the Video ID currently in the field so a changed Video
+  // ID is flagged for review instead of silently keeping a stale library.
+  final BunnyLibrarySelection base = existing == null
+      ? BunnyLibrarySelection.forNewVideo(videoId: bunnyId.text.trim())
+      : BunnyLibrarySelection.forExisting(
+          videoId: existing.bunnyVideoId,
+          storedLibraryId: existing.bunnyLibraryId,
+        );
+  final BunnyLibrarySelection selection = base.withVideoId(bunnyId.text.trim());
+  // A NEW video resolves to the configured default library; an existing row
+  // keeps its stored value (an invalid selection is never returned by the
+  // state model, so nothing unusable can be staged).
+  final String? resolvedLibraryId = existing == null
+      ? selection.selectLibrary(defaultBunnyLibraryId).libraryIdForWrite
+      : selection.libraryIdForWrite;
   return StagedResource(
     name: name.text.trim(),
     displayOrder: int.tryParse(order.text.trim()) ?? nextOrder,
     kind: StagedResourceKind.video,
     bunnyVideoId: bunnyId.text.trim(),
+    bunnyLibraryId: resolvedLibraryId,
+    libraryReviewRequired: selection.requiresReview,
   );
 }
 

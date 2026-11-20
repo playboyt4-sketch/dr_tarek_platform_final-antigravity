@@ -81,12 +81,29 @@ void main() {
     final row = rowsSnap.docs.single;
     expect(row.data()['is_visible'], isTrue);
     expect(row.data()['visibility'], isTrue);
-    final firstVideo = published['first_video'] as Map;
+    // ADR-010: the client no longer writes `bunny_video_id`/`first_video` for an
+    // unverified row, so the pointer stays null until the SERVER association
+    // lands. The row itself is published and visible (the publish-sync
+    // behaviour this test covers), but it is not yet playable.
+    expect(published['first_video'], isNull);
+    expect(row.data()['bunny_video_id'], isNull);
+
+    // Simulate the trusted server association, then republish: the client-side
+    // recompute must derive the pointer from the persisted (server-written)
+    // fields, never from staged form state.
+    await db.collection('lecture_resources').doc(row.id).update({
+      'bunny_video_id': '11111111-1111-4111-8111-111111111111',
+      'bunny_library_id': '736742',
+    });
+    await publishLecture(lectureId);
+    final firstVideo =
+        (await lectureOf(lectureId))['first_video'] as Map;
     expect(firstVideo['resource_id'], row.id);
     expect(
       firstVideo['bunny_video_id'],
       '11111111-1111-4111-8111-111111111111',
     );
+    expect(firstVideo['bunny_library_id'], '736742');
   });
 
   test('Publish Now flips pre-existing hidden rows too', () async {

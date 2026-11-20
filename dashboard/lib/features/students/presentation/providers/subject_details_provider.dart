@@ -10,6 +10,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart'
     show DecisionFailure;
+import '../../data/bunny_association_gateway.dart';
+import '../../domain/bunny_library_association.dart';
 
 /// Data layer for the Dashboard Subject Details page.
 ///
@@ -150,6 +152,10 @@ class LectureEditResource {
   final String title;
   final int displayOrder;
   final String? bunnyVideoId;
+
+  /// ADR-010: stored library association (null = legacy row, resolved
+  /// through the server's default-library fallback).
+  final String? bunnyLibraryId;
   final String? externalUrl;
   final String? storagePath;
 
@@ -164,6 +170,7 @@ class LectureEditResource {
     required this.title,
     required this.displayOrder,
     this.bunnyVideoId,
+    this.bunnyLibraryId,
     this.externalUrl,
     this.storagePath,
     required this.isVisible,
@@ -183,6 +190,11 @@ class FirstVideoCandidate {
   final bool isVisible;
   final bool isDeleted;
   final String? bunnyVideoId;
+
+  /// ADR-010: the verified library of the winning row. The denormalized
+  /// `first_video` pointer must carry it or the fast lane would resolve a
+  /// different library than issuance does. Null only for a legacy row.
+  final String? bunnyLibraryId;
   final int displayOrder;
 
   const FirstVideoCandidate({
@@ -192,6 +204,7 @@ class FirstVideoCandidate {
     required this.isVisible,
     required this.isDeleted,
     this.bunnyVideoId,
+    this.bunnyLibraryId,
     required this.displayOrder,
   });
 }
@@ -233,6 +246,7 @@ Map<String, Object?> firstVideoFields(FirstVideoCandidate winner) {
   return <String, Object?>{
     'resource_id': winner.id,
     'bunny_video_id': winner.bunnyVideoId!.trim(),
+    'bunny_library_id': winner.bunnyLibraryId,
     'title': winner.title,
     'display_order': winner.displayOrder,
     // Reserved poster keys (raw paths only, once thumbnail content exists).
@@ -265,6 +279,7 @@ List<FirstVideoCandidate> collectFirstVideoCandidates({
       isVisible: stored.isVisible,
       isDeleted: false,
       bunnyVideoId: overlay?.bunnyVideoId ?? stored.bunnyVideoId,
+      bunnyLibraryId: overlay?.bunnyLibraryId ?? stored.bunnyLibraryId,
       displayOrder: overlay?.displayOrder ?? stored.displayOrder,
     ));
   }
@@ -276,6 +291,7 @@ List<FirstVideoCandidate> collectFirstVideoCandidates({
       isVisible: createdVisible,
       isDeleted: false,
       bunnyVideoId: created.bunnyVideoId,
+      bunnyLibraryId: created.bunnyLibraryId,
       displayOrder: created.displayOrder,
     ));
   });
@@ -320,6 +336,10 @@ class UpdatedLectureResource {
   final String title;
   final int displayOrder;
   final String? bunnyVideoId;
+
+  /// ADR-010: null = keep the stored association (unrelated edits). The
+  /// Dashboard has no library picker yet, so this echoes the stored value.
+  final String? bunnyLibraryId;
   final String? externalUrl;
   final Uint8List? fileBytes;
   final String? fileName;
@@ -330,6 +350,7 @@ class UpdatedLectureResource {
     required this.title,
     required this.displayOrder,
     this.bunnyVideoId,
+    this.bunnyLibraryId,
     this.externalUrl,
     this.fileBytes,
     this.fileName,
@@ -347,6 +368,10 @@ class NewLectureResource {
   final String title;
   final int displayOrder;
   final String? bunnyVideoId;
+
+  /// ADR-010: library association for a new video resource (null for every
+  /// non-video type).
+  final String? bunnyLibraryId;
   final String? externalUrl;
   final Uint8List? fileBytes;
   final String? fileName;
@@ -357,6 +382,7 @@ class NewLectureResource {
     required this.title,
     required this.displayOrder,
     this.bunnyVideoId,
+    this.bunnyLibraryId,
     this.externalUrl,
     this.fileBytes,
     this.fileName,
@@ -600,11 +626,27 @@ class SubjectDetailsController {
   final FirebaseFirestore _db;
   final FirebaseFunctions? _functions;
 
+  /// ADR-010 server gateway (optional so Firestore-only tests stay offline).
+  final BunnyAssociationGateway? _associationGateway;
+
   /// [_functions] is optional so Firestore-only unit tests can keep
   /// building `SubjectDetailsController(db)` with a fake database;
   /// only [deleteSubject] needs Functions and falls back to the
   /// default instance when none was injected.
-  const SubjectDetailsController(this._db, [this._functions]);
+  /// ADR-010: [associationGateway] performs the server-side verification and
+  /// persistence of `bunny_library_id`. It defaults to the real Callable
+  /// gateway when Functions were injected; Firestore-only unit tests that
+  /// construct `SubjectDetailsController(db)` leave it null, in which case a
+  /// created video row simply stays pending (never playable) and no network
+  /// call is attempted.
+  const SubjectDetailsController(
+    this._db, [
+    this._functions,
+    this._associationGateway,
+  ]);
+
+  BunnyAssociationGateway? get _association => _associationGateway ??
+      (_functions == null ? null : CallableBunnyAssociationGateway(_functions));
 
   /// Resolves the audit actor: explicit caller override wins, otherwise
   /// the signed-in dashboard uid, otherwise the legacy fallback.
@@ -809,7 +851,10 @@ class SubjectDetailsController {
         'resource_type': resource.type,
         'title': resource.title,
         'display_order': resource.displayOrder,
-        'bunny_video_id': resource.bunnyVideoId,
+        // ADR-010: the video id and the library association are written by the
+        // SERVER together, after verification (never here). The row therefore
+        // stays pending — and unplayable — until that callable confirms it.
+        'bunny_video_id': null,
         'storage_path': storagePath,
         'storage_provider':
             resource.fileBytes != null ? 'firebase' : null,
@@ -864,7 +909,67 @@ class SubjectDetailsController {
           stagedWinner == null ? null : firstVideoFields(stagedWinner),
     });
     await batch.commit();
+    // ADR-010: verify and persist every staged video association through the
+    // server. A failure surfaces to the author and the row stays pending
+    // (unplayable); it is never silently downgraded to a legacy resource.
+    await _associateStagedVideos(
+      lectureId: lectureRef.id,
+      staged: stagedById,
+    );
     return lectureRef.id;
+  }
+
+  /// Verifies + persists the library association of freshly staged video rows
+  /// via the server gateway. Idempotent: re-running after a partial failure
+  /// re-verifies the same (library, video) pair and rewrites the same values.
+  Future<void> _associateStagedVideos({
+    required String lectureId,
+    required Map<String, NewLectureResource> staged,
+  }) async {
+    final BunnyAssociationGateway? gateway = _association;
+    if (gateway == null) return;
+    for (final MapEntry<String, NewLectureResource> entry in staged.entries) {
+      final NewLectureResource resource = entry.value;
+      if (resource.type != 'video') continue;
+      final String? videoId = resource.bunnyVideoId?.trim();
+      if (videoId == null || videoId.isEmpty) continue;
+      final String libraryId = bunnyLibraryIdForCreate(
+            resourceType: resource.type,
+            selectedLibraryId: resource.bunnyLibraryId,
+          ) ??
+          defaultBunnyLibraryId;
+      await gateway.associate(
+        resourceId: entry.key,
+        lectureId: lectureId,
+        libraryId: libraryId,
+        videoId: videoId,
+      );
+    }
+  }
+
+  /// Verifies + persists in-place video edits (rebinding an existing row to a
+  /// (possibly new) Video ID). `replaceVideo` is explicit because the server
+  /// refuses to change a stored Video ID otherwise.
+  Future<void> _associateUpdatedVideos({
+    required String lectureId,
+    required List<UpdatedLectureResource> updated,
+  }) async {
+    final BunnyAssociationGateway? gateway = _association;
+    if (gateway == null) return;
+    for (final UpdatedLectureResource resource in updated) {
+      final String? videoId = resource.bunnyVideoId?.trim();
+      if (videoId == null || videoId.isEmpty) continue;
+      final String libraryId =
+          bunnyLibraryIdForUpdate(selectedLibraryId: resource.bunnyLibraryId) ??
+              defaultBunnyLibraryId;
+      await gateway.associate(
+        resourceId: resource.id,
+        lectureId: lectureId,
+        libraryId: libraryId,
+        videoId: videoId,
+        replaceVideo: true,
+      );
+    }
   }
 
   /// Editable snapshot of one lecture for the Edit form (the same page
@@ -893,6 +998,7 @@ class SubjectDetailsController {
         title: ((data['title'] as String?) ?? '').trim(),
         displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
         bunnyVideoId: data['bunny_video_id'] as String?,
+        bunnyLibraryId: normalizeBunnyLibraryId(data['bunny_library_id']),
         externalUrl: data['resource_url'] as String?,
         storagePath: data['storage_path'] as String?,
         isVisible: data['is_visible'] == true,
@@ -1047,7 +1153,10 @@ class SubjectDetailsController {
         'resource_type': resource.type,
         'title': resource.title,
         'display_order': resource.displayOrder,
-        'bunny_video_id': resource.bunnyVideoId,
+        // ADR-010: the video id and the library association are written by the
+        // SERVER together, after verification (never here). The row therefore
+        // stays pending — and unplayable — until that callable confirms it.
+        'bunny_video_id': null,
         'storage_path': storagePath,
         'storage_provider':
             resource.fileBytes != null ? 'firebase' : null,
@@ -1083,10 +1192,11 @@ class SubjectDetailsController {
         'updated_at': FieldValue.serverTimestamp(),
         'updated_by': resolvedActor,
       };
-      // Null = keep the stored value; non-null = doctor edited it.
-      if (resource.bunnyVideoId != null) {
-        updateFields['bunny_video_id'] = resource.bunnyVideoId;
-      }
+      // ADR-010: `bunny_video_id` and `bunny_library_id` are server-owned. An
+      // edited Video ID is therefore NOT written here: the server re-verifies
+      // the association and writes both fields atomically (see
+      // `_associateUpdatedVideos`). Unrelated edits leave them untouched.
+      // (Firestore Rules also deny any client write of the association.)
       if (resource.externalUrl != null) {
         updateFields['resource_url'] = resource.externalUrl;
       }
@@ -1139,6 +1249,7 @@ class SubjectDetailsController {
         title: ((data['title'] as String?) ?? '').trim(),
         displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
         bunnyVideoId: data['bunny_video_id'] as String?,
+        bunnyLibraryId: normalizeBunnyLibraryId(data['bunny_library_id']),
         externalUrl: data['resource_url'] as String?,
         storagePath: data['storage_path'] as String?,
         // Publishing makes every non-deleted row visible in this batch;
@@ -1186,6 +1297,17 @@ class SubjectDetailsController {
       );
     }
     await batch.commit();
+    // ADR-010: server-verified association for new video rows and for video
+    // edits, after the batch (a pending row is unplayable, so a failure here
+    // can never expose unverified content).
+    await _associateStagedVideos(
+      lectureId: lectureId,
+      staged: stagedById,
+    );
+    await _associateUpdatedVideos(
+      lectureId: lectureId,
+      updated: updatedResources,
+    );
   }
 
   /// Target section for a new lecture: first tab-visible section by
