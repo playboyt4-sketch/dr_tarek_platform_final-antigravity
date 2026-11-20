@@ -70,17 +70,14 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
   FirebaseFunctions get _functions =>
       _functionsOverride ?? FirebaseFunctions.instance;
 
-  /// Server default Bunny library (non-secret display value). New video
-  /// resources are associated with it unless the row already has one.
+  /// Server default Bunny library (non-secret display value).
   ///
-  /// Overridable per build so a non-production environment names its own
-  /// library instead of inheriting production `736742`:
+  /// Overridable per build via dart-define:
   ///   flutter build apk --dart-define=BUNNY_DEFAULT_LIBRARY_ID=780700
-  /// The server still verifies the association and remains the only
-  /// authority that resolves credentials.
+  /// When not set, the client relies on server discovery and dynamic catalog
+  /// instead of hardcoding a silent fallback.
   static const String _defaultBunnyLibraryId = String.fromEnvironment(
     'BUNNY_DEFAULT_LIBRARY_ID',
-    defaultValue: '736742',
   );
 
   AdminContentRemoteDataSourceImpl({
@@ -110,8 +107,35 @@ class AdminContentRemoteDataSourceImpl implements AdminContentDataSource {
     if (normalizedVideoId == null || normalizedVideoId.isEmpty) return;
     if (resourceType != null && resourceType != 'video') return;
     final String? stored = storedLibraryId?.trim();
-    final String libraryId =
-        (stored != null && stored.isNotEmpty) ? stored : _defaultBunnyLibraryId;
+    String? libraryId = (stored != null && stored.isNotEmpty)
+        ? stored
+        : (_defaultBunnyLibraryId.isNotEmpty ? _defaultBunnyLibraryId : null);
+
+    if (libraryId == null || libraryId.isEmpty) {
+      // Auto-discover the owning library via discoverBunnyVideoLibrary
+      try {
+        final HttpsCallableResult<dynamic> discovery =
+            await _functions.httpsCallable('discoverBunnyVideoLibrary').call(
+          <String, dynamic>{'videoId': normalizedVideoId},
+        );
+        final Object? discRaw = discovery.data;
+        final Map<String, dynamic> discPayload = discRaw is Map
+            ? Map<String, dynamic>.from(discRaw)
+            : <String, dynamic>{};
+        if (discPayload['status'] == 'found' &&
+            discPayload['libraryId'] != null) {
+          libraryId = discPayload['libraryId'].toString();
+        } else {
+          throw Exception(
+            'Could not resolve Bunny library for video $normalizedVideoId (${discPayload['status'] ?? 'unknown'}).',
+          );
+        }
+      } catch (e) {
+        throw Exception(
+          'Bunny library auto-discovery failed for video $normalizedVideoId: $e',
+        );
+      }
+    }
     try {
       final HttpsCallableResult<dynamic> validation =
           await _functions.httpsCallable('validateBunnyVideoAssociation').call(

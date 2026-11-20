@@ -407,11 +407,26 @@ class VideoSourceResolver implements VideoSourceGateway {
 
 class VideoSourceException implements Exception {
   final String message;
+  final bool isRetryable;
 
-  const VideoSourceException(this.message);
+  const VideoSourceException(this.message, {this.isRetryable = false});
 
   @override
   String toString() => message;
+}
+
+/// Video is waiting for verification by the server.
+class VideoVerificationPendingException extends VideoSourceException {
+  const VideoVerificationPendingException([
+    super.message = 'الفيديو قيد التحقق حالياً. يرجى إعادة المحاولة بعد قليل.',
+  ]) : super(isRetryable: true);
+}
+
+/// Video is not associated with any active Bunny library (library_not_resolved).
+class VideoLibraryNotResolvedException extends VideoSourceException {
+  const VideoLibraryNotResolvedException([
+    super.message = 'الفيديو غير مرتبط بمكتبة تشغيل بعد. يرجى التواصل مع إدارة المنصة.',
+  ]) : super(isRetryable: true);
 }
 
 /// Terminal session failure: the server no longer recognizes this device as
@@ -642,6 +657,25 @@ VideoSourceException classifyVideoSourceError(
       'جهازك الحالي غير مصرح له بمشاهدة هذا المحتوى — تواصل مع الإدارة لتفعيل الجهاز.',
     );
   }
+
+  // ADR-010: library_not_resolved and verification_pending handling
+  final String trimmedMessage = message?.trim() ?? '';
+  final String? reason = (details is Map) ? details['reason']?.toString() : null;
+
+  if (reason == 'library_not_resolved' ||
+      trimmedMessage == 'library_not_resolved' ||
+      trimmedMessage.contains('unassociated') ||
+      (code == 'failed-precondition' &&
+          (reason == 'library_not_resolved' || trimmedMessage.contains('library')))) {
+    return const VideoLibraryNotResolvedException();
+  }
+  if (reason == 'verification_pending' ||
+      trimmedMessage == 'verification_pending' ||
+      trimmedMessage.contains('verification_pending') ||
+      (code == 'failed-precondition' && trimmedMessage.contains('pending'))) {
+    return const VideoVerificationPendingException();
+  }
+
   return VideoSourceException(_staticMessageFor(code));
 }
 
