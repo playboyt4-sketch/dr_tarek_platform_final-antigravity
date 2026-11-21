@@ -702,9 +702,10 @@ export function createBunnySecretAccessor(
           if (data === undefined || data === null) {
             throw new BunnySecretAccessError("not_found");
           }
-          value = typeof data === "string" ?
+          const rawStr = typeof data === "string" ?
             data :
             Buffer.from(data).toString("utf8");
+          value = rawStr.trim();
         } catch (error) {
           if (error instanceof BunnySecretAccessError) throw error;
           throw mapSecretManagerError(error);
