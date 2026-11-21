@@ -8421,7 +8421,7 @@ export const migrateBunnyLibraryAssociations = onCall(
       const currentLibraryId = getString(data.bunny_library_id);
 
       // D6 Excluded Staging fixture
-      if (resourceId === "I36lvn3FGRPGCX3YKVLw" || videoId === "47561140-5966-4e0f-8851-83c78ce5bb92") {
+      if (resourceId === "I36lvn3FGRPGCX3YKVLw") {
         reports.push({
           resourceId,
           lectureId,

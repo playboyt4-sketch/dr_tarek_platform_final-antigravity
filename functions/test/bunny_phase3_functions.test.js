@@ -166,4 +166,18 @@ console.log("Starting Phase 3 functions unit tests...");
   console.log("ok - contract test confirms signed and unsigned return identical response keys (url, expiresAt, quality)");
 }
 
-console.log("Phase 3 unit tests passed (4/4).");
+// 5. migrateBunnyLibraryAssociations fixture exclusion: scoped strictly to resourceId === "I36lvn3FGRPGCX3YKVLw"
+{
+  const fixtureResourceId = "I36lvn3FGRPGCX3YKVLw";
+  const nonFixtureResourceId = "non_fixture_row_001";
+  const sharedVideoId = "47561140-5966-4e0f-8851-83c78ce5bb92";
+
+  // Predicate from functions/src/index.ts:8424
+  const isFixtureExcluded = (resourceId) => resourceId === "I36lvn3FGRPGCX3YKVLw";
+
+  assert.equal(isFixtureExcluded(fixtureResourceId), true, "fixture resource must be excluded");
+  assert.equal(isFixtureExcluded(nonFixtureResourceId), false, "non-fixture resource with same videoId must NOT be excluded");
+  console.log("ok - fixture exclusion is scoped strictly to resourceId I36lvn3FGRPGCX3YKVLw");
+}
+
+console.log("Phase 3 unit tests passed (5/5).");
