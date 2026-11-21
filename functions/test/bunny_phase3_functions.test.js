@@ -180,4 +180,39 @@ console.log("Starting Phase 3 functions unit tests...");
   console.log("ok - fixture exclusion is scoped strictly to resourceId I36lvn3FGRPGCX3YKVLw");
 }
 
-console.log("Phase 3 unit tests passed (5/5).");
+// 6. Legacy default fallback equality test:
+// When BUNNY_LEGACY_LIBRARY_FALLBACK=true and storedLibraryId is null (and catalog document is null),
+// resolution returns the default library 736742 with historical env vars and source='legacy_default'.
+{
+  const env = {
+    BUNNY_LEGACY_LIBRARY_FALLBACK: "true",
+    BUNNY_PLAYBACK_URL_TEMPLATE: "https://vz-c6abe953-876.b-cdn.net/{videoId}/playlist.m3u8",
+    BUNNY_TOKEN_KEY: "mock_legacy_token_key",
+    BUNNY_STREAM_API_KEY: "mock_legacy_api_key",
+    BUNNY_STREAM_LIBRARY_ID: "736742",
+  };
+
+  // Step A: Resource resolution
+  const res = resolveBunnyLibraryForResource({storedLibraryId: null}, env);
+  assert.equal(res.ok, true, "fallback must succeed when fallback is enabled");
+  assert.equal(res.libraryId, "736742");
+  assert.equal(res.source, "legacy_default");
+
+  // Step B: Plan resolution without catalog row (document === null)
+  const planRes = planBunnyLibraryCredentialResolution({
+    libraryId: res.libraryId,
+    document: null,
+    env,
+  });
+  assert.equal(planRes.ok, true, "plan should succeed for legacy default without catalog document");
+  assert.equal(planRes.plan.source, "legacy_default");
+  assert.equal(planRes.plan.libraryId, "736742");
+  assert.equal(planRes.plan.definition.isDefault, true);
+  assert.equal(planRes.plan.definition.playbackUrlTemplateVar, "BUNNY_PLAYBACK_URL_TEMPLATE");
+  assert.equal(planRes.plan.definition.tokenKeyVar, "BUNNY_TOKEN_KEY");
+  assert.equal(planRes.plan.playbackUrlTemplate, env.BUNNY_PLAYBACK_URL_TEMPLATE);
+
+  console.log("ok - legacy fallback returns default library 736742 with historical env/template/token matching legacy behavior");
+}
+
+console.log("Phase 3 unit tests passed (6/6).");
