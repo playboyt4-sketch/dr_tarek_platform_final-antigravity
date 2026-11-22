@@ -39,6 +39,18 @@ void main() {
       expect(error.message, contains('الفيديو قيد التحقق حالياً'));
     });
 
+    test('maps ambiguous failed-precondition to VideoResourceAmbiguousException with Arabic message and isRetryable false', () {
+      final error = classifyVideoSourceError(
+        'failed-precondition',
+        'Video resource is ambiguous; lecture identity cannot be resolved.',
+        null,
+      );
+
+      expect(error, isA<VideoResourceAmbiguousException>());
+      expect(error.isRetryable, isFalse);
+      expect(error.message, contains('ملتبس أو مرتبط بأكثر من محاضرة'));
+    });
+
     test('retains generic messages for standard errors', () {
       final denied = classifyVideoSourceError('permission-denied', 'no access', null);
       expect(denied, isA<VideoSourceException>());

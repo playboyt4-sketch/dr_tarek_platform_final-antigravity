@@ -430,6 +430,14 @@ class VideoLibraryNotResolvedException extends VideoSourceException {
   ]) : super(isRetryable: false);
 }
 
+/// Video is associated with multiple conflicting lectures or resources (ambiguous).
+/// Never retried automatically: retrying will not resolve an ambiguous video.
+class VideoResourceAmbiguousException extends VideoSourceException {
+  const VideoResourceAmbiguousException([
+    super.message = 'معرّف الفيديو ملتبس أو مرتبط بأكثر من محاضرة. يرجى التواصل مع إدارة المنصة.',
+  ]) : super(isRetryable: false);
+}
+
 /// Terminal session failure: the server no longer recognizes this device as
 /// the session owner (takeover, expiry, revocation). Never retried
 /// automatically — continuation requires explicit user intent (a new begin,
@@ -675,6 +683,12 @@ VideoSourceException classifyVideoSourceError(
       trimmedMessage.contains('verification_pending') ||
       (code == 'failed-precondition' && trimmedMessage.contains('pending'))) {
     return const VideoVerificationPendingException();
+  }
+  if (reason == 'ambiguous' ||
+      trimmedMessage == 'ambiguous' ||
+      trimmedMessage.contains('ambiguous') ||
+      (code == 'failed-precondition' && trimmedMessage.contains('ambiguous'))) {
+    return const VideoResourceAmbiguousException();
   }
 
   return VideoSourceException(_staticMessageFor(code));
