@@ -19,6 +19,7 @@ import 'core/errors/failure.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/routing/app_router.dart';
 import 'core/routing/notification_deep_link.dart';
+import 'core/security/screen_guard.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/web/video_hls_backend_stub.dart'
     if (dart.library.js_interop) 'core/web/video_hls_backend_web.dart';
@@ -69,6 +70,10 @@ Future<void> main() async {
   await runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+
+      // Enforce screen capture protection (FLAG_SECURE on Android, secure
+      // view layer + recording listener on iOS). Guarded internally for Web/Desktop.
+      await ScreenGuard.init();
 
       // Web-only: install the HLS-capable video backend before any
       // VideoPlayerController is created. No-op on mobile/desktop.

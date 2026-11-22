@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/localization/locale_controller.dart';
 import '../core/routing/app_router.dart';
+import '../core/security/screen_guard.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/theme_controller.dart';
 import '../l10n/generated/app_localizations.dart';
@@ -41,7 +42,62 @@ class DrTarekPlatformApp extends ConsumerWidget {
         textDirection: locale.languageCode == 'ar'
             ? TextDirection.rtl
             : TextDirection.ltr,
-        child: child ?? const SizedBox.shrink(),
+        child: ValueListenableBuilder<bool>(
+          valueListenable: ScreenGuard.isRecording,
+          builder: (context, isRecording, _) {
+            final appChild = child ?? const SizedBox.shrink();
+            if (!isRecording) return appChild;
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                appChild,
+                Positioned.fill(
+                  child: AbsorbPointer(
+                    absorbing: true,
+                    child: Container(
+                      color: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.videocam_off_rounded,
+                              size: 64,
+                              color: Colors.white,
+                            ),
+                            SizedBox(height: 20),
+                            Text(
+                              'تسجيل الشاشة غير مسموح',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                            SizedBox(height: 10),
+                            Text(
+                              'يرجى إيقاف تسجيل أو مشاركة الشاشة للمتابعة',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
 
       routerConfig: appRouter,

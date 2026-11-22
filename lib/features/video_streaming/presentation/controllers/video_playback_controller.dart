@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../core/constants/bunny_playback_headers.dart';
+import '../../../../core/security/screen_guard.dart';
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
 import '../../data/repositories/playback_repository.dart';
 import '../../data/services/video_source_resolver.dart';
@@ -218,7 +219,16 @@ class VideoPlaybackController extends ChangeNotifier {
        episodeTitle = episode.title,
        episodeThumbnailUrl = episode.thumbnailUrl,
        skipIntroStart = episode.skipIntroStart,
-       skipIntroEnd = episode.skipIntroEnd;
+       skipIntroEnd = episode.skipIntroEnd {
+    ScreenGuard.isRecording.addListener(_handleScreenRecordingChanged);
+  }
+
+  void _handleScreenRecordingChanged() {
+    if (_disposed) return;
+    if (ScreenGuard.isRecording.value) {
+      unawaited(pause());
+    }
+  }
 
   VideoPlayerController? get engine => _engine;
   VideoResource? get resource => _resource;
@@ -1081,6 +1091,8 @@ class VideoPlaybackController extends ChangeNotifier {
   }
 
   Future<void> play() async {
+    // Screen recording protection: refuse to start or resume playback while recording/capture is active.
+    if (ScreenGuard.isRecording.value) return;
     if (_sessionInvalidated) {
       // Explicit user intent after a server invalidation: one begin
       // attempt, decided by the server alone. Failure stays stopped.
@@ -1517,6 +1529,7 @@ class VideoPlaybackController extends ChangeNotifier {
   @override
   void dispose() {
     if (_disposed) return;
+    ScreenGuard.isRecording.removeListener(_handleScreenRecordingChanged);
     unawaited(_persistProgress(forceCloud: true));
     _dropSession();
     _disposed = true;

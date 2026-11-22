@@ -39,10 +39,12 @@ import Flutter
     guard blindView == nil, let window = self.window else { return }
     let shield = UIView(frame: window.bounds)
     shield.backgroundColor = .black
+    shield.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     let label = UILabel()
-    label.text = "Screen recording is prohibited / تسجيل الشاشة غير مصرح به"
+    label.text = "تسجيل الشاشة غير مسموح"
     label.textColor = .white
     label.textAlignment = .center
+    label.font = UIFont.systemFont(ofSize: 18, weight: .bold)
     label.translatesAutoresizingMaskIntoConstraints = false
     shield.addSubview(label)
     NSLayoutConstraint.activate([
