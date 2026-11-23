@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 
 /// Admin notifications composer screen.
@@ -88,7 +89,7 @@ class _AdminNotificationsComposerScreenState
           query = query.where('grade', isEqualTo: _selectedGrade);
         }
         if (_selectedGroupId != null) {
-          query = query.where('group_id', isEqualTo: _selectedGroupId);
+          query = query.where('custom_group_id', isEqualTo: _selectedGroupId);
         }
         final snap = await query.get();
         targetUserIds = snap.docs.map((doc) => doc.id).toList();
@@ -112,26 +113,30 @@ class _AdminNotificationsComposerScreenState
         throw Exception('لم يتم العثور على أي طالب يطابق معايير الاستهداف.');
       }
 
-      final batch = firestore.batch();
-      for (final uid in targetUserIds) {
-        final notifRef = firestore.collection('notifications').doc();
-        batch.set(notifRef, {
-          'user_id': uid,
-          'title': title,
-          'body': body,
-          'type': _notificationType,
-          'notification_type': _notificationType,
-          'status': 'queued',
-          'priority': _isCritical ? 'critical' : 'normal',
-          'media_type': _mediaType,
-          if (_mediaType != 'none' && _mediaUrlController.text.isNotEmpty)
-            'media_url': _mediaUrlController.text.trim(),
-          'created_at': FieldValue.serverTimestamp(),
-          'created_by': currentUserId,
-        });
+      const batchSize = 450;
+      for (var i = 0; i < targetUserIds.length; i += batchSize) {
+        final end = (i + batchSize < targetUserIds.length) ? i + batchSize : targetUserIds.length;
+        final chunk = targetUserIds.sublist(i, end);
+        final batch = firestore.batch();
+        for (final uid in chunk) {
+          final notifRef = firestore.collection('notifications').doc();
+          batch.set(notifRef, {
+            'user_id': uid,
+            'title': title,
+            'body': body,
+            'type': _notificationType,
+            'notification_type': _notificationType,
+            'status': 'queued',
+            'priority': _isCritical ? 'critical' : 'normal',
+            'media_type': _mediaType,
+            if (_mediaType != 'none' && _mediaUrlController.text.isNotEmpty)
+              'media_url': _mediaUrlController.text.trim(),
+            'created_at': FieldValue.serverTimestamp(),
+            'created_by': currentUserId,
+          });
+        }
+        await batch.commit();
       }
-
-      await batch.commit();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -141,8 +146,11 @@ class _AdminNotificationsComposerScreenState
       }
     } catch (e) {
       if (mounted) {
+        final message = (e is Exception && e.toString().startsWith('Exception: '))
+            ? e.toString().substring('Exception: '.length)
+            : friendlyFunctionErrorMessage(e, 'فشل إرسال الإشعار. يرجى المحاولة مرة أخرى.');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل إرسال الإشعار: $e')),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {

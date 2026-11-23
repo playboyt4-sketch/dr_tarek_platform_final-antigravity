@@ -326,130 +326,135 @@ class _AdminCardState extends ConsumerState<_AdminCard> {
     bool isLoading = false;
     String? errorMessage;
 
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(l10n.ownerDeleteAccountDialogTitle),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l10n.ownerDeleteAccountDialogWarning,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  l10n.ownerDeleteAccountDialogDescription(widget.admin.id),
-                ),
-                const SizedBox(height: 24),
-                TextField(
-                  controller: passwordController,
-                  obscureText: obscurePassword,
-                  decoration: InputDecoration(
-                    labelText: l10n.ownerDeleteAccountPasswordLabel,
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        obscurePassword ? Icons.visibility_off : Icons.visibility,
-                      ),
-                      onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
-                    ),
-                  ),
-                  enabled: !isLoading,
-                ),
-                if (errorMessage != null) ...[
-                  const SizedBox(height: 12),
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            title: Text(l10n.ownerDeleteAccountDialogTitle),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    errorMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 13,
-                    ),
+                    l10n.ownerDeleteAccountDialogWarning,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
-              child: Text(l10n.actionCancel),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-              ),
-              onPressed: isLoading || passwordController.text.isEmpty
-                  ? null
-                  : () async {
-                      setDialogState(() {
-                        isLoading = true;
-                        errorMessage = null;
-                      });
-                      try {
-                        await ref
-                            .read(deleteAccountByOwnerUseCaseProvider)
-                            .execute(
-                          targetUid: widget.admin.id,
-                          password: passwordController.text,
-                        );
-                        if (!ctx.mounted) return;
-                        if (dialogContext.mounted) {
-                          Navigator.of(dialogContext).pop();
-                        }
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
-                          );
-                          // The admin list will auto-refresh via StreamBuilder
-                        }
-                      } on Failure catch (e) {
-                        String friendlyMessage;
-                        if (e.code == FailureCode.wrongCredentials) {
-                          friendlyMessage = l10n.errorWrongCredentials;
-                        } else if (e.code == FailureCode.permissionDenied) {
-                          friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
-                        } else if (e.code == FailureCode.notFound) {
-                          friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
-                        } else if (e.code == FailureCode.tooManyRequests) {
-                          friendlyMessage = e.debugDetail?.contains('minute') == true
-                              ? e.debugDetail!
-                              : l10n.errorTooManyRequests;
-                        } else {
-                          friendlyMessage = l10n.errorGeneric;
-                        }
-                        setDialogState(() {
-                          isLoading = false;
-                          errorMessage = friendlyMessage;
-                        });
-                      } catch (e) {
-                        setDialogState(() {
-                          isLoading = false;
-                          errorMessage = l10n.errorGeneric;
-                        });
-                      }
-                    },
-              child: isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  const SizedBox(height: 16),
+                  Text(
+                    l10n.ownerDeleteAccountDialogDescription(widget.admin.id),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      labelText: l10n.ownerDeleteAccountPasswordLabel,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
                       ),
-                    )
-                  : Text(l10n.ownerDeleteAccountConfirmButton),
+                    ),
+                    enabled: !isLoading,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
+                child: Text(l10n.actionCancel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: isLoading || passwordController.text.isEmpty
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          isLoading = true;
+                          errorMessage = null;
+                        });
+                        try {
+                          await ref
+                              .read(deleteAccountByOwnerUseCaseProvider)
+                              .execute(
+                            targetUid: widget.admin.id,
+                            password: passwordController.text,
+                          );
+                          if (!ctx.mounted) return;
+                          if (dialogContext.mounted) {
+                            Navigator.of(dialogContext).pop();
+                          }
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
+                            );
+                            // The admin list will auto-refresh via StreamBuilder
+                          }
+                        } on Failure catch (e) {
+                          String friendlyMessage;
+                          if (e.code == FailureCode.wrongCredentials) {
+                            friendlyMessage = l10n.errorWrongCredentials;
+                          } else if (e.code == FailureCode.permissionDenied) {
+                            friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
+                          } else if (e.code == FailureCode.notFound) {
+                            friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
+                          } else if (e.code == FailureCode.tooManyRequests) {
+                            friendlyMessage = e.debugDetail?.contains('minute') == true
+                                ? e.debugDetail!
+                                : l10n.errorTooManyRequests;
+                          } else {
+                            friendlyMessage = l10n.errorGeneric;
+                          }
+                          setDialogState(() {
+                            isLoading = false;
+                            errorMessage = friendlyMessage;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isLoading = false;
+                            errorMessage = l10n.errorGeneric;
+                          });
+                        }
+                      },
+                child: isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : Text(l10n.ownerDeleteAccountConfirmButton),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      passwordController.dispose();
+    }
   }
 }

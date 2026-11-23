@@ -29,10 +29,12 @@ class VideoLecturePanel extends StatelessWidget {
     // flow left-to-right. Pinned explicitly (app locale is RTL).
     return Directionality(
       textDirection: TextDirection.ltr,
-      child: Container(
+      child: Material(
         color: Colors.black,
-        padding: const EdgeInsets.all(30),
-        child: Column(
+        child: Container(
+          color: Colors.black,
+          padding: const EdgeInsets.all(30),
+          child: Column(
           children: [
             _buildHeader(),
             if (seasonLabel.isNotEmpty) ...[
@@ -106,8 +108,9 @@ class VideoLecturePanel extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   String _windowCountdown(DateTime expiresAt) {
     final remaining = expiresAt.difference(DateTime.now());

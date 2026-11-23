@@ -132,4 +132,8 @@ void main() {
 
     controller.dispose();
   });
+
+  test('ScreenGuard.reapplyAfterFirstFrame registers without throwing', () {
+    expect(() => ScreenGuard.reapplyAfterFirstFrame(), returnsNormally);
+  });
 }

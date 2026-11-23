@@ -219,6 +219,33 @@ async function seed() {
       is_deleted: false,
       enabled: true,
     });
+    // Disabled assignment (enabled: false, is_deleted: false) fixture
+    await db.doc('users/student-disabled').set({
+      id: 'student-disabled',
+      full_name: 'Student Disabled',
+      role: 'student',
+      approval_status: 'approved',
+      account_status: 'active',
+      is_deleted: false,
+    });
+    await db.doc('subject_access_assignments/student-disabled_subject-1').set({
+      student_id: 'student-disabled',
+      subject_id: 'subject-1',
+      is_deleted: false,
+      enabled: false,
+      entitlements: ['notes.create', 'bookmarks.create'],
+      subscription_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+    await db.doc('notes/note-disabled').set({
+      student_id: 'student-disabled',
+      subject_id: 'subject-1',
+      body: 'Disabled note seeded',
+    });
+    await db.doc('bookmarks/bookmark-disabled').set({
+      student_id: 'student-disabled',
+      subject_id: 'subject-1',
+      lecture_id: 'grant-lecture',
+    });
     await db.doc('security_events/seeded-event').set({
       user_id: 'student-safe',
       event_type: 'screenshot',
@@ -393,6 +420,32 @@ async function run() {
     await assertSucceeds(
       dbFor('student-allowed', {role: 'student', approved: true})
         .collection('lecture_resources').doc('grant-res-allowed').get(),
+    );
+    // Disabled assignment check: student with enabled == false and is_deleted == false
+    // must be denied access to lecture_resources, notes, and bookmarks.
+    const disabledStudentDb = dbFor('student-disabled', {role: 'student', approved: true});
+    await assertFails(
+      disabledStudentDb.collection('lecture_resources').doc('grant-res-allowed').get(),
+    );
+    await assertFails(
+      disabledStudentDb.collection('notes').doc('note-disabled').get(),
+    );
+    await assertFails(
+      disabledStudentDb.collection('notes').add({
+        student_id: 'student-disabled',
+        subject_id: 'subject-1',
+        body: 'New note should fail',
+      }),
+    );
+    await assertFails(
+      disabledStudentDb.collection('bookmarks').doc('bookmark-disabled').get(),
+    );
+    await assertFails(
+      disabledStudentDb.collection('bookmarks').add({
+        student_id: 'student-disabled',
+        subject_id: 'subject-1',
+        lecture_id: 'grant-lecture',
+      }),
     );
     // 10. Doctor / authorized Admins manage grants through the
     // centralized permission model (admin_students or admin_content).

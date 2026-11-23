@@ -8,10 +8,7 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Strictly prevent screen capture, screen recording, and task-switcher previews
-        // for protected educational video and PDF content.
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // for protected educational video and PDF content on the OS level.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 }

@@ -16,7 +16,7 @@ class AuthPhoneField extends StatelessWidget {
       controller: controller,
       keyboardType: TextInputType.phone,
       textDirection: TextDirection.ltr,
-      autofillHints: const [AutofillHints.telephoneNumber],
+      autofillHints: const [AutofillHints.username, AutofillHints.telephoneNumber],
       validator: (value) {
         final normalized = value?.trim() ?? '';
         if (normalized.isEmpty) return l10n.errorValidation;

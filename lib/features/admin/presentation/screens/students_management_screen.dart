@@ -176,163 +176,30 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
     }
   }
 
-  void _showStaffPasswordResetDialog() {
+  Future<void> _showStaffPasswordResetDialog() async {
     final passwordController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('إعادة تعيين كلمة مرور الطالب'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'أدخل كلمة مرور مؤقتة جديدة للطالب (على الأقل 8 أحرف، حرف كبير، حرف صغير، رقم، ورمز خاص). سيُطلب من الطالب تغييرها فور تسجيل الدخول.',
-              style: TextStyle(fontSize: 13, color: AppColors.muted),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: passwordController,
-              decoration: const InputDecoration(
-                labelText: 'كلمة المرور المؤقتة الجديدة',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final newPass = passwordController.text.trim();
-              if (newPass.length < 8) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('كلمة المرور يجب أن تكون 8 أحرف على الأقل.')),
-                );
-                return;
-              }
-              Navigator.of(ctx).pop();
-
-              // Create or find pending reset request ID or invoke password reset
-              final pendingSnap = await FirebaseFirestore.instance
-                  .collection('password_reset_requests')
-                  .where('student_id', isEqualTo: widget.studentId)
-                  .where('status', isEqualTo: 'pending')
-                  .limit(1)
-                  .get();
-
-              String requestId;
-              if (pendingSnap.docs.isNotEmpty) {
-                requestId = pendingSnap.docs.first.id;
-              } else {
-                final reqRef = FirebaseFirestore.instance.collection('password_reset_requests').doc();
-                await reqRef.set({
-                  'student_id': widget.studentId,
-                  'status': 'pending',
-                  'created_at': FieldValue.serverTimestamp(),
-                });
-                requestId = reqRef.id;
-              }
-
-              await _call(
-                'password_reset',
-                'onPasswordResetApproved',
-                {'requestId': requestId, 'newPassword': newPass},
-                'تمت إعادة تعيين كلمة المرور بنجاح وتسجيل الإجراء بالأرشيف الأمني.',
-              );
-            },
-            child: const Text('تأكيد وإعادة التعيين'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showLogPaymentDialog() {
-    final amountController = TextEditingController();
-    final notesController = TextEditingController();
-    final collectorController = TextEditingController();
-    String? selectedSubjectId;
-    String selectedPaymentMethod = 'cash';
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تسجيل دفعة جديدة للطالب'),
-          content: SingleChildScrollView(
-          child: Column(
+    try {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('إعادة تعيين كلمة مرور الطالب'),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: FirebaseFirestore.instance.collection('subjects').where('is_deleted', isEqualTo: false).snapshots(),
-                builder: (context, snapshot) {
-                  final subjects = snapshot.data?.docs ?? [];
-                  return DropdownButtonFormField<String>(
-                    initialValue: selectedSubjectId,
-                    decoration: const InputDecoration(
-                      labelText: 'المادة (اختياري)',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final s in subjects)
-                        DropdownMenuItem(
-                          value: s.id,
-                          child: Text((s.data()['title'] ?? s.data()['name'] ?? s.id).toString()),
-                        ),
-                    ],
-                    onChanged: (val) => setDialogState(() => selectedSubjectId = val),
-                  );
-                },
+              const Text(
+                'أدخل كلمة مرور مؤقتة جديدة للطالب (على الأقل 8 أحرف، حرف كبير، حرف صغير، رقم، ورمز خاص). سيُطلب من الطالب تغييرها فور تسجيل الدخول.',
+                style: TextStyle(fontSize: 13, color: AppColors.muted),
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
+                controller: passwordController,
                 decoration: const InputDecoration(
-                  labelText: 'المبلغ المدفوع (ج.م)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: selectedPaymentMethod,
-                decoration: const InputDecoration(
-                  labelText: 'طريقة الدفع',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'cash', child: Text('نقدي (cash)')),
-                  DropdownMenuItem(value: 'e_wallet', child: Text('محفظة إلكترونية (e_wallet)')),
-                  DropdownMenuItem(value: 'instapay', child: Text('انستاباي (instapay)')),
-                  DropdownMenuItem(value: 'bank', child: Text('تحويل بنكي (bank)')),
-                ],
-                onChanged: (val) {
-                  if (val != null) setDialogState(() => selectedPaymentMethod = val);
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: collectorController,
-                decoration: const InputDecoration(
-                  labelText: 'اسم المحصّل',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: notesController,
-                decoration: const InputDecoration(
-                  labelText: 'ملاحظات (اختياري)',
+                  labelText: 'كلمة المرور المؤقتة الجديدة',
                   border: OutlineInputBorder(),
                 ),
               ),
             ],
-          ),
           ),
           actions: [
             TextButton(
@@ -341,192 +208,340 @@ class _StudentDetailScreenState extends ConsumerState<StudentDetailScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                final amount = double.tryParse(amountController.text.trim());
-                final collectorName = collectorController.text.trim();
-                if (amount == null || amount <= 0) {
+                final newPass = passwordController.text.trim();
+                if (newPass.length < 8) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى تحديد مبلغ صحيح.')),
-                  );
-                  return;
-                }
-                if (collectorName.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى إدخال اسم المحصّل.')),
+                    const SnackBar(content: Text('كلمة المرور يجب أن تكون 8 أحرف على الأقل.')),
                   );
                   return;
                 }
                 Navigator.of(ctx).pop();
-                // Approved backend contract of onPaymentLogged: studentId,
-                // amount, receiptNumber, paymentMethod, collectorName,
-                // paymentDate (+ optional subjectId/notes). The receipt
-                // number is generated here for the manual external payment.
-                final receiptNumber =
-                    'R-${DateTime.now().millisecondsSinceEpoch}';
-await _call(
-                  'log_payment',
-                  'onPaymentLogged',
-                  {
-                    'studentId': widget.studentId,
-                    'subjectId': ?selectedSubjectId,
-                    'amount': amount,
-                    'receiptNumber': receiptNumber,
-                    'paymentMethod': selectedPaymentMethod,
-                    'collectorName': collectorName,
-                    'paymentDate': DateTime.now().toIso8601String(),
-                    if (notesController.text.trim().isNotEmpty)
-                      'notes': notesController.text.trim(),
-                  },
-                  'تم تسجيل الدفعة وتوليد الفاتورة بنجاح.',
+
+                // Create or find pending reset request ID or invoke password reset
+                final pendingSnap = await FirebaseFirestore.instance
+                    .collection('password_reset_requests')
+                    .where('student_id', isEqualTo: widget.studentId)
+                    .where('status', isEqualTo: 'pending')
+                    .limit(1)
+                    .get();
+
+                String requestId;
+                if (pendingSnap.docs.isNotEmpty) {
+                  requestId = pendingSnap.docs.first.id;
+                } else {
+                  final reqRef = FirebaseFirestore.instance.collection('password_reset_requests').doc();
+                  await reqRef.set({
+                    'student_id': widget.studentId,
+                    'status': 'pending',
+                    'created_at': FieldValue.serverTimestamp(),
+                  });
+                  requestId = reqRef.id;
+                }
+
+                await _call(
+                  'password_reset',
+                  'onPasswordResetApproved',
+                  {'requestId': requestId, 'newPassword': newPass},
+                  'تمت إعادة تعيين كلمة المرور بنجاح وتسجيل الإجراء بالأرشيف الأمني.',
                 );
               },
-              child: const Text('تسجيل الدفعة'),
+              child: const Text('تأكيد وإعادة التعيين'),
             ),
           ],
         ),
-      ),
-    );
+      );
+    } finally {
+      passwordController.dispose();
+    }
   }
 
-  void _showDeleteAccountDialog() {
+  Future<void> _showLogPaymentDialog() async {
+    final amountController = TextEditingController();
+    final notesController = TextEditingController();
+    final collectorController = TextEditingController();
+    String? selectedSubjectId;
+    String selectedPaymentMethod = 'cash';
+
+    try {
+      await showDialog(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('تسجيل دفعة جديدة للطالب'),
+            content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: FirebaseFirestore.instance.collection('subjects').where('is_deleted', isEqualTo: false).snapshots(),
+                  builder: (context, snapshot) {
+                    final subjects = snapshot.data?.docs ?? [];
+                    return DropdownButtonFormField<String>(
+                      initialValue: selectedSubjectId,
+                      decoration: const InputDecoration(
+                        labelText: 'المادة (اختياري)',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final s in subjects)
+                          DropdownMenuItem(
+                            value: s.id,
+                            child: Text((s.data()['title'] ?? s.data()['name'] ?? s.id).toString()),
+                          ),
+                      ],
+                      onChanged: (val) => setDialogState(() => selectedSubjectId = val),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'المبلغ المدفوع (ج.م)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedPaymentMethod,
+                  decoration: const InputDecoration(
+                    labelText: 'طريقة الدفع',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'cash', child: Text('نقدي (cash)')),
+                    DropdownMenuItem(value: 'e_wallet', child: Text('محفظة إلكترونية (e_wallet)')),
+                    DropdownMenuItem(value: 'instapay', child: Text('انستاباي (instapay)')),
+                    DropdownMenuItem(value: 'bank', child: Text('تحويل بنكي (bank)')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => selectedPaymentMethod = val);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: collectorController,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم المحصّل',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات (اختياري)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final amount = double.tryParse(amountController.text.trim());
+                  final collectorName = collectorController.text.trim();
+                  if (amount == null || amount <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى تحديد مبلغ صحيح.')),
+                    );
+                    return;
+                  }
+                  if (collectorName.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إدخال اسم المحصّل.')),
+                    );
+                    return;
+                  }
+                  Navigator.of(ctx).pop();
+                  // Approved backend contract of onPaymentLogged: studentId,
+                  // amount, receiptNumber, paymentMethod, collectorName,
+                  // paymentDate (+ optional subjectId/notes). The receipt
+                  // number is generated here for the manual external payment.
+                  final receiptNumber =
+                      'R-${DateTime.now().millisecondsSinceEpoch}';
+await _call(
+                    'log_payment',
+                    'onPaymentLogged',
+                    {
+                      'studentId': widget.studentId,
+                      'subjectId': ?selectedSubjectId,
+                      'amount': amount,
+                      'receiptNumber': receiptNumber,
+                      'paymentMethod': selectedPaymentMethod,
+                      'collectorName': collectorName,
+                      'paymentDate': DateTime.now().toIso8601String(),
+                      if (notesController.text.trim().isNotEmpty)
+                        'notes': notesController.text.trim(),
+                    },
+                    'تم تسجيل الدفعة وتوليد الفاتورة بنجاح.',
+                  );
+                },
+                child: const Text('تسجيل الدفعة'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      amountController.dispose();
+      notesController.dispose();
+      collectorController.dispose();
+    }
+  }
+
+  Future<void> _showDeleteAccountDialog() async {
     final l10n = AppLocalizations.of(context);
     final passwordController = TextEditingController();
     bool obscurePassword = true;
     bool isLoading = false;
     String? errorMessage;
 
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(l10n.ownerDeleteAccountDialogTitle),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l10n.ownerDeleteAccountDialogWarning,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  l10n.ownerDeleteAccountDialogDescription(widget.studentName),
-                ),
-                const SizedBox(height: 24),
-                TextField(
-                  controller: passwordController,
-                  obscureText: obscurePassword,
-                  decoration: InputDecoration(
-                    labelText: l10n.ownerDeleteAccountPasswordLabel,
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        obscurePassword ? Icons.visibility_off : Icons.visibility,
-                      ),
-                      onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
-                    ),
-                  ),
-                  enabled: !isLoading,
-                ),
-                if (errorMessage != null) ...[
-                  const SizedBox(height: 12),
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            title: Text(l10n.ownerDeleteAccountDialogTitle),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    errorMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 13,
-                    ),
+                    l10n.ownerDeleteAccountDialogWarning,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
-              child: Text(l10n.actionCancel),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-              ),
-              onPressed: isLoading || passwordController.text.isEmpty
-                  ? null
-                  : () async {
-                      setDialogState(() {
-                        isLoading = true;
-                        errorMessage = null;
-                      });
-                      try {
-                        await ref
-                            .read(deleteAccountByOwnerUseCaseProvider)
-                            .execute(
-                          targetUid: widget.studentId,
-                          password: passwordController.text,
-                        );
-                        if (!ctx.mounted) return;
-                        if (dialogContext.mounted) {
-                          Navigator.of(dialogContext).pop();
-                        }
-                        if (!mounted) return;
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
-                        );
-                        // The student list will auto-refresh via StreamBuilder
-                      } on Failure catch (e) {
-                        String friendlyMessage;
-                        if (e.code == FailureCode.wrongCredentials) {
-                          friendlyMessage = l10n.errorWrongCredentials;
-                        } else if (e.code == FailureCode.permissionDenied) {
-                          // Check debugDetail for more specific message
-                          if (e.debugDetail?.contains('teacher') == true) {
-                            friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
-                          } else if (e.debugDetail?.contains('owner') == true ||
-                              e.debugDetail?.contains('self') == true) {
-                            friendlyMessage = l10n.ownerDeleteAccountInvalidTargetMessage;
-                          } else {
-                            friendlyMessage = l10n.ownerDeleteAccountNotTeacherMessage;
-                          }
-                        } else if (e.code == FailureCode.notFound) {
-                          friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
-                        } else if (e.code == FailureCode.tooManyRequests) {
-                          friendlyMessage = e.debugDetail?.contains('minute') == true
-                              ? e.debugDetail!
-                              : l10n.errorTooManyRequests;
-                        } else {
-                          friendlyMessage = l10n.errorGeneric;
-                        }
-                        setDialogState(() {
-                          isLoading = false;
-                          errorMessage = friendlyMessage;
-                        });
-                      } catch (e) {
-                        setDialogState(() {
-                          isLoading = false;
-                          errorMessage = l10n.errorGeneric;
-                        });
-                      }
-                    },
-              child: isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  const SizedBox(height: 16),
+                  Text(
+                    l10n.ownerDeleteAccountDialogDescription(widget.studentName),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      labelText: l10n.ownerDeleteAccountPasswordLabel,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
                       ),
-                    )
-                  : Text(l10n.ownerDeleteAccountConfirmButton),
+                    ),
+                    enabled: !isLoading,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: isLoading ? null : () => Navigator.of(dialogContext).pop(),
+                child: Text(l10n.actionCancel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: isLoading || passwordController.text.isEmpty
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          isLoading = true;
+                          errorMessage = null;
+                        });
+                        try {
+                          await ref
+                              .read(deleteAccountByOwnerUseCaseProvider)
+                              .execute(
+                            targetUid: widget.studentId,
+                            password: passwordController.text,
+                          );
+                          if (!ctx.mounted) return;
+                          if (dialogContext.mounted) {
+                            Navigator.of(dialogContext).pop();
+                          }
+                          if (!mounted) return;
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(l10n.ownerDeleteAccountSuccessMessage)),
+                          );
+                          // The student list will auto-refresh via StreamBuilder
+                        } on Failure catch (e) {
+                          String friendlyMessage;
+                          if (e.code == FailureCode.wrongCredentials) {
+                            friendlyMessage = l10n.errorWrongCredentials;
+                          } else if (e.code == FailureCode.permissionDenied) {
+                            // Check debugDetail for more specific message
+                            if (e.debugDetail?.contains('teacher') == true) {
+                              friendlyMessage = l10n.ownerDeleteAccountTeacherTargetMessage;
+                            } else if (e.debugDetail?.contains('owner') == true ||
+                                e.debugDetail?.contains('self') == true) {
+                              friendlyMessage = l10n.ownerDeleteAccountInvalidTargetMessage;
+                            } else {
+                              friendlyMessage = l10n.ownerDeleteAccountNotTeacherMessage;
+                            }
+                          } else if (e.code == FailureCode.notFound) {
+                            friendlyMessage = l10n.ownerDeleteAccountNotFoundMessage;
+                          } else if (e.code == FailureCode.tooManyRequests) {
+                            friendlyMessage = e.debugDetail?.contains('minute') == true
+                                ? e.debugDetail!
+                                : l10n.errorTooManyRequests;
+                          } else {
+                            friendlyMessage = l10n.errorGeneric;
+                          }
+                          setDialogState(() {
+                            isLoading = false;
+                            errorMessage = friendlyMessage;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isLoading = false;
+                            errorMessage = l10n.errorGeneric;
+                          });
+                        }
+                      },
+                child: isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : Text(l10n.ownerDeleteAccountConfirmButton),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      passwordController.dispose();
+    }
   }
 
 
@@ -576,7 +591,10 @@ await _call(
           final phone = (userData['phone_number'] as String?) ?? '';
           final displayHandle = (userData['display_handle'] as String?) ?? '';
           final grade = (userData['grade'] as String?) ?? '';
-          final groupId = (userData['group_id'] as String?) ?? '';
+          final groupName = (userData['custom_group_name'] as String?) ??
+              (userData['custom_group_id'] as String?) ??
+              (userData['group_id'] as String?) ??
+              '';
           final studentType = (userData['student_type'] as String?) ?? widget.studentType;
           final approval = (userData['approval_status'] as String?) ?? '';
           final boundDeviceId = (userData['device_id'] as String?) ?? '';
@@ -620,8 +638,8 @@ await _call(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('الفرقة المقيد بها: ${StudentsManagementScreen._gradeLabel(grade)}', style: const TextStyle(fontSize: 13)),
-                          if (groupId.isNotEmpty)
-                            Text('المجموعة: $groupId', style: const TextStyle(fontSize: 13, color: AppColors.primary)),
+                          if (groupName.isNotEmpty)
+                            Text('المجموعة: $groupName', style: const TextStyle(fontSize: 13, color: AppColors.primary)),
                         ],
                       ),
                     ],

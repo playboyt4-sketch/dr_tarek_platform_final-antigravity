@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -115,6 +116,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (!mounted || rememberMe == _rememberMe) return;
       setState(() => _rememberMe = rememberMe);
     });
+    loadRememberedPhone().then((phone) {
+      if (!mounted || phone == null || phone.isEmpty) return;
+      if (_phoneController.text.isEmpty) {
+        _phoneController.text = phone;
+      }
+    });
   }
 
   /// Terminal non-error session message (pending/rejected/disabled/…).
@@ -133,6 +140,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (value == _rememberMe) return;
     setState(() => _rememberMe = value);
     saveRememberMeChoice(value);
+    if (!value) {
+      saveRememberedPhone(rememberMe: false);
+    }
   }
 
   String _homeRouteForRole(String role) {
@@ -213,6 +223,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // Authenticated → role home. The GoRouter session redirect guards the
     // same invariant for deep links / restored URLs.
     if (session is SessionAuthenticated) {
+      await saveRememberedPhone(
+        rememberMe: _rememberMe,
+        phone: _phoneController.text.trim(),
+      );
+      if (!mounted) return;
+      TextInput.finishAutofillContext(shouldSave: true);
       await _flushPendingPhoto(session.user);
       if (!mounted) return;
       context.goNamed(_homeRouteForRole(session.user.role));
@@ -234,6 +250,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         final retry = await ref.read(sessionProvider.future);
         if (!mounted) return;
         if (retry is SessionAuthenticated) {
+          await saveRememberedPhone(
+            rememberMe: _rememberMe,
+            phone: _phoneController.text.trim(),
+          );
+          if (!mounted) return;
+          TextInput.finishAutofillContext(shouldSave: true);
           context.goNamed(_homeRouteForRole(retry.user.role));
           return;
         }
@@ -312,26 +334,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ? friendlyErrorMessage(context, sessionState.error)
             : _terminalMessage;
 
-    final viewportHeight = MediaQuery.of(context).size.height -
-        MediaQuery.of(context).padding.vertical;
     final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
       backgroundColor: semantic.canvasWarm,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: viewportHeight),
-            child: Directionality(
-              // Force LTR — English-only screen, mirrors sibling steps.
-              textDirection: TextDirection.ltr,
-              child: SizedBox(
-                width: context.rs(_LoginDesign.canvasWidth),
-                height: context.rsV(_LoginDesign.canvasHeight),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Directionality(
+                  // Force LTR — English-only screen, mirrors sibling steps.
+                  textDirection: TextDirection.ltr,
+                  child: SizedBox(
+                    width: context.rs(_LoginDesign.canvasWidth),
+                    height: context.rsV(_LoginDesign.canvasHeight),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
                     // --- 1. Illustration panel (Figma 12,50 369x320 r35).
                     // BoxFit.cover crops cleanly — never BoxFit.fill.
                     Positioned(
@@ -396,25 +418,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Positioned.fill(
                       child: Form(
                         key: _formKey,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            // Phone (Figma 23,486 w347).
-                            // V1 convention: Egyptian mobile without country
-                            // code; no `+20` transformation.
-                            Positioned(
-                              left: context.rs(_LoginDesign.fieldX),
-                              top: context.rsV(_LoginDesign.phoneY),
-                              child: SizedBox(
-                                width: context.rs(_LoginDesign.fieldWidth),
-                                child: TextFormField(
-                                  controller: _phoneController,
-                                  keyboardType: TextInputType.phone,
-                                  textDirection: TextDirection.ltr,
-                                  textInputAction: TextInputAction.next,
-                                  autofillHints: const [
-                                    AutofillHints.telephoneNumber
-                                  ],
+                        child: AutofillGroup(
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              // Phone (Figma 23,486 w347).
+                              // V1 convention: Egyptian mobile without country
+                              // code; no `+20` transformation.
+                              Positioned(
+                                left: context.rs(_LoginDesign.fieldX),
+                                top: context.rsV(_LoginDesign.phoneY),
+                                child: SizedBox(
+                                  width: context.rs(_LoginDesign.fieldWidth),
+                                  child: TextFormField(
+                                    controller: _phoneController,
+                                    keyboardType: TextInputType.phone,
+                                    textDirection: TextDirection.ltr,
+                                    textInputAction: TextInputAction.next,
+                                    autofillHints: const [
+                                      AutofillHints.username,
+                                      AutofillHints.telephoneNumber,
+                                    ],
                                   validator: (value) {
                                     final normalized =
                                         normalizeEgyptianPhone(value ?? '');
@@ -457,6 +481,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 child: TextFormField(
                                   controller: _passwordController,
                                   obscureText: _obscurePassword,
+                                  autofillHints: const [
+                                    AutofillHints.password,
+                                  ],
                                   textInputAction: TextInputAction.done,
                                   onFieldSubmitted: (_) =>
                                       isLoading ? null : _login(),
@@ -621,6 +648,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ),
                     ),
+                  ),
 
                     // --- 6. Primary CTA (Figma 24,754 w345, Style3 solid).
                     // Label is "Login" per product copy (Figma export says
@@ -668,8 +696,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
   }
 }

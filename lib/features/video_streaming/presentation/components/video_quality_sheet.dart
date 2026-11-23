@@ -42,10 +42,12 @@ class VideoQualitySheet extends StatelessWidget {
       300.0,
       MediaQuery.sizeOf(context).width * 0.84,
     );
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onClose,
-      child: Container(
+    return Material(
+      type: MaterialType.transparency,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onClose,
+        child: Container(
         color: _overlayColor,
         alignment: Alignment.center,
         child: GestureDetector(
@@ -84,8 +86,9 @@ class VideoQualitySheet extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   List<Widget> _buildQualityOptions(BuildContext context) {
     // Allowed-only, ascending (144p first) — mirrors the reference order.

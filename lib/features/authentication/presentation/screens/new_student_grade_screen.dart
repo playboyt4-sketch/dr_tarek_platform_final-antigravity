@@ -169,27 +169,26 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
     // Stack lives INSIDE the SafeArea, so Figma's y-coords (measured from
     // the canvas top, status-bar chrome included) land correctly without
     // any manual top/bottom padding to tune.
-    final viewportHeight = MediaQuery.of(context).size.height -
-        MediaQuery.of(context).padding.vertical;
-
     final options = _gradeOptions();
     final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
       backgroundColor: semantic.canvasWarm,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: viewportHeight),
-            child: Directionality(
-              // Force LTR - this is an English-only screen.
-              textDirection: TextDirection.ltr,
-              child: SizedBox(
-                width: context.rs(_GradeDesign.canvasWidth),
-                height: context.rsV(_GradeDesign.canvasHeight),
-                child: Stack(
-                  clipBehavior: Clip.none,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Directionality(
+                  // Force LTR - this is an English-only screen.
+                  textDirection: TextDirection.ltr,
+                  child: SizedBox(
+                    width: context.rs(_GradeDesign.canvasWidth),
+                    height: context.rsV(_GradeDesign.canvasHeight),
+                    child: Stack(
+                      clipBehavior: Clip.none,
                   children: [
                     // --- 1. Illustration panel (Figma 12,50 369x324 r35).
                     // BoxFit.cover crops cleanly to the box — never
@@ -288,9 +287,11 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
   }
 }
 

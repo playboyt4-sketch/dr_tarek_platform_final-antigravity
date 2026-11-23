@@ -118,6 +118,9 @@ class AuthController extends AsyncNotifier<AuthUser?> {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) async {
     state = const AsyncLoading();
 
@@ -130,6 +133,9 @@ class AuthController extends AsyncNotifier<AuthUser?> {
         customGroupId: customGroupId,
         customGroupName: customGroupName,
         password: password,
+        fcmToken: fcmToken,
+        deviceId: deviceId,
+        platform: platform,
       ),
     );
   }

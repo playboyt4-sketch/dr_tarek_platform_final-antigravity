@@ -14,6 +14,9 @@ class RegisterUseCase {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) {
     return repository.register(
       fullName: fullName,
@@ -23,6 +26,9 @@ class RegisterUseCase {
       customGroupId: customGroupId,
       customGroupName: customGroupName,
       password: password,
+      fcmToken: fcmToken,
+      deviceId: deviceId,
+      platform: platform,
     );
   }
 }

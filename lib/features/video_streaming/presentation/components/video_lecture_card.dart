@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/bunny_playback_headers.dart';
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
 
 class VideoLectureCard extends StatelessWidget {
@@ -42,6 +43,8 @@ class VideoLectureCard extends StatelessWidget {
             if (lecture.thumbnailUrl != null)
               Image.network(
                 lecture.thumbnailUrl!,
+                headers: bunnyPlaybackHttpHeaders,
+                cacheWidth: 600,
                 fit: BoxFit.cover,
                 // P2: low-opacity block ONLY while the bytes are in flight;
                 // error keeps the permanent dark fallback.

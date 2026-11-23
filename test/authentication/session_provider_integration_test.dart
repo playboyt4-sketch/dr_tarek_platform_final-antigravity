@@ -263,6 +263,9 @@ class FakeAuthRepository implements AuthRepository {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) {
     throw UnimplementedError();
   }

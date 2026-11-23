@@ -23,6 +23,9 @@ class RegistrationRemoteDataSource {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) async {
     final callable = functions.httpsCallable('registerNewStudent');
 
@@ -35,6 +38,9 @@ class RegistrationRemoteDataSource {
         'customGroupId': customGroupId,
         'customGroupName': customGroupName,
         'password': password,
+        'fcmToken': fcmToken,
+        'deviceId': deviceId,
+        'platform': platform,
       });
 
       final data = Map<String, dynamic>.from(result.data as Map);

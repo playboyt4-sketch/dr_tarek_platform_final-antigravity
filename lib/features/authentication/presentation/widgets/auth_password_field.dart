@@ -20,6 +20,7 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
     return TextFormField(
       controller: widget.controller,
       obscureText: _obscure,
+      autofillHints: const [AutofillHints.password],
       autovalidateMode: AutovalidateMode.onUserInteraction,
       validator: (value) =>
           (value == null || value.isEmpty) ? l10n.errorValidation : null,

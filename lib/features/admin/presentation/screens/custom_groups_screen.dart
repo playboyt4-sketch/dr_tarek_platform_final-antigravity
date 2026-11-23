@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
 
@@ -120,7 +121,7 @@ class CustomGroupsScreen extends StatelessWidget {
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشلت العملية: $error')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر إضافة المجموعة. يرجى المحاولة لاحقًا.'))),
         );
       }
     }
@@ -149,7 +150,7 @@ class _GroupCardState extends State<_GroupCard> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر التحديث: $error')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'تعذر تحديث حالة المجموعة.'))),
         );
       }
     } finally {

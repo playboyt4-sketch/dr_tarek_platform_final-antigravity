@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../core/constants/bunny_playback_headers.dart';
 import '../controllers/video_playback_controller.dart';
 
 class VideoSurface extends StatelessWidget {
@@ -32,6 +33,7 @@ class VideoSurface extends StatelessWidget {
             )
           : Image.network(
               image,
+              headers: bunnyPlaybackHttpHeaders,
               fit: BoxFit.cover,
               color: Colors.black45,
               colorBlendMode: BlendMode.darken,
@@ -77,15 +79,33 @@ class VideoSurface extends StatelessWidget {
     // in a landscape route, so it letterboxes (contain) instead — full
     // content stays visible, no heads cut.
     final isPortraitSource = reportedSize.height > reportedSize.width;
+    if (isPortraitSource) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: reportedSize.width,
+              height: reportedSize.height,
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
+
     return ColoredBox(
       color: Colors.black,
-      child: Center(
-        child: FittedBox(
-          fit: isPortraitSource ? BoxFit.contain : BoxFit.cover,
-          child: SizedBox(
-            width: reportedSize.width,
-            height: reportedSize.height,
-            child: child,
+      child: SizedBox.expand(
+        child: ClipRect(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: reportedSize.width,
+              height: reportedSize.height,
+              child: child,
+            ),
           ),
         ),
       ),

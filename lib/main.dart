@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:cloud_functions/cloud_functions.dart';
@@ -7,10 +8,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, debugPrint, kDebugMode, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app/app.dart';
@@ -36,6 +39,21 @@ Future<void> _purgeExpiredOfflineArtifacts() async {
         .purgeAllExpiredOfflineResources();
   } catch (_) {
     // Never block startup on the cleanup sweep.
+  }
+
+  if (!kIsWeb) {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      if (await tempDir.exists()) {
+        for (final f in tempDir.listSync()) {
+          if (f is File && f.path.contains('temp_') && f.path.endsWith('.pdf')) {
+            try {
+              f.deleteSync();
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
   }
 }
 
@@ -74,6 +92,7 @@ Future<void> main() async {
       // Enforce screen capture protection (FLAG_SECURE on Android, secure
       // view layer + recording listener on iOS). Guarded internally for Web/Desktop.
       await ScreenGuard.init();
+      ScreenGuard.reapplyAfterFirstFrame();
 
       // Web-only: install the HLS-capable video backend before any
       // VideoPlayerController is created. No-op on mobile/desktop.
@@ -93,7 +112,10 @@ Future<void> main() async {
       } catch (error) {
         // Never white-screen: show the boot failure explicitly so the
         // user (and support) sees the cause instead of a blank page.
-        runApp(_BootErrorApp(message: 'تعذر تهيئة الاتصال بالخدمة: $error'));
+        debugPrint('Boot failure: $error');
+        runApp(const _BootErrorApp(
+          message: 'تعذر تهيئة الاتصال بالخدمة. يرجى التحقق من الاتصال بالإنترنت وإعادة المحاولة.',
+        ));
         return;
       }
 
@@ -174,6 +196,16 @@ Future<void> main() async {
       // alive for the process lifetime. Best-effort: must never block or
       // break boot (e.g. web without VAPID/permission).
       try {
+        if (!kIsWeb) {
+          FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+          if (defaultTargetPlatform == TargetPlatform.iOS) {
+            await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+              alert: true,
+              badge: true,
+              sound: true,
+            );
+          }
+        }
         FcmPushService(
           messaging: FirebaseMessaging.instance,
           functions: FirebaseFunctions.instance,

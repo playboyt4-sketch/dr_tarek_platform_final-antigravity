@@ -33,6 +33,9 @@ abstract class AuthRepository {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   });
 
   Future<AuthUser?> getCurrentUser();

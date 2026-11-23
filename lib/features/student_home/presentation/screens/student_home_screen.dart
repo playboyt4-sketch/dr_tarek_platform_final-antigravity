@@ -195,6 +195,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
           ? semantic.canvas
           : _gradeBackground(widget.user.grade),
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
             SizedBox(height: context.rsV(_StudentHomeDesign.avatarTop)),
@@ -277,7 +278,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
                   Positioned(
                     left: 0,
                     right: 0,
-                    bottom: context.rsV(24),
+                    bottom:
+                        context.rsV(24) + MediaQuery.paddingOf(context).bottom,
                     child: Center(
                       child: _BottomPill(
                         currentTab: _currentTab,

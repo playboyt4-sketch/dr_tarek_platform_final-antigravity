@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/errors/friendly_error_message.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -38,7 +39,7 @@ class AcademicPeriodsScreen extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('تعذر تحميل الفترات الدراسية.\n$error', textAlign: TextAlign.center),
+                Text(friendlyFunctionErrorMessage(error, 'تعذر تحميل الفترات الدراسية. يرجى المحاولة لاحقًا.'), textAlign: TextAlign.center),
                 const SizedBox(height: 12),
                 TextButton(
                   onPressed: () => ref.invalidate(academicPeriodsProvider),
@@ -177,7 +178,7 @@ class _AcademicPeriodsBody extends ConsumerWidget {
 
   void _showError(BuildContext context, Object error) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('فشلت العملية: $error')),
+      SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'فشلت العملية. يرجى المحاولة لاحقًا.'))),
     );
   }
 }
@@ -257,7 +258,7 @@ class _PeriodCard extends ConsumerWidget {
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشلت العملية: $error')),
+          SnackBar(content: Text(friendlyFunctionErrorMessage(error, 'فشلت العملية. يرجى المحاولة لاحقًا.'))),
         );
       }
     }

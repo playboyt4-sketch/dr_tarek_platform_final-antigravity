@@ -163,26 +163,25 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
     // lives INSIDE the SafeArea, so Figma's y-coords (measured from the
     // canvas top, status-bar chrome included) land correctly without any
     // manual top/bottom padding to tune.
-    final viewportHeight = MediaQuery.of(context).size.height -
-        MediaQuery.of(context).padding.vertical;
-
     final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
       backgroundColor: semantic.canvasWarm,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: viewportHeight),
-            child: Directionality(
-              // Force LTR — English-only screen (see file-level OPEN ITEM).
-              textDirection: TextDirection.ltr,
-              child: SizedBox(
-                width: context.rs(_NameDesign.canvasWidth),
-                height: context.rsV(_NameDesign.canvasHeight),
-                child: Stack(
-                  clipBehavior: Clip.none,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Directionality(
+                  // Force LTR — English-only screen (see file-level OPEN ITEM).
+                  textDirection: TextDirection.ltr,
+                  child: SizedBox(
+                    width: context.rs(_NameDesign.canvasWidth),
+                    height: context.rsV(_NameDesign.canvasHeight),
+                    child: Stack(
+                      clipBehavior: Clip.none,
                   children: [
                     // --- 1. Illustration panel (Figma 12,50 369x344 r35).
                     // BoxFit.cover crops cleanly to the box — never
@@ -381,9 +380,11 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
   }
 }
 

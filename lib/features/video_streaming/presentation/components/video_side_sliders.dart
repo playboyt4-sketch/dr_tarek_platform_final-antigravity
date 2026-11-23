@@ -45,6 +45,7 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
   bool _isVolumeSupported = true;
   bool _isBrightnessSupported = true;
   StreamSubscription<double>? _volumeSub;
+  StreamSubscription<double>? _brightnessSub;
 
   @override
   void initState() {
@@ -59,6 +60,7 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
   @override
   void dispose() {
     _volumeSub?.cancel();
+    _brightnessSub?.cancel();
     if (widget.isVolume) {
       VolumeController.instance.removeListener();
     }
@@ -67,6 +69,7 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
 
   Future<void> _initVolume() async {
     try {
+      VolumeController.instance.showSystemUI = false;
       final volume = await VolumeController.instance.getVolume();
       if (!mounted) return;
       setState(() => _volume = volume);
@@ -84,18 +87,31 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
 
   Future<void> _initBrightness() async {
     try {
-      _brightness = await ScreenBrightness().application;
-      ScreenBrightness().onApplicationScreenBrightnessChanged.listen((
+      double current = await ScreenBrightness.instance.application;
+      if (current < 0.0 || current.isNaN) {
+        try {
+          current = await ScreenBrightness.instance.system;
+        } catch (_) {
+          current = 0.5;
+        }
+      }
+      if (current < 0.0 || current.isNaN) {
+        current = 0.5;
+      }
+      _brightness = current.clamp(0.0, 1.0);
+      _brightnessSub = ScreenBrightness.instance.onApplicationScreenBrightnessChanged.listen((
         brightness,
       ) {
         if (mounted) {
+          final valid = (brightness < 0.0 || brightness.isNaN) ? 0.5 : brightness.clamp(0.0, 1.0);
           setState(() {
-            _brightness = brightness;
+            _brightness = valid;
           });
         }
       });
     } catch (_) {
       _isBrightnessSupported = false;
+      _brightness = 0.5;
     }
     if (mounted) setState(() {});
   }
@@ -122,7 +138,7 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
     setState(() => _brightness = clamped);
     if (_isBrightnessSupported) {
       try {
-        await ScreenBrightness().setApplicationScreenBrightness(clamped);
+        await ScreenBrightness.instance.setApplicationScreenBrightness(clamped);
         return;
       } catch (_) {
         if (mounted) setState(() => _isBrightnessSupported = false);
@@ -147,42 +163,62 @@ class _VideoEdgeSliderState extends State<VideoEdgeSlider> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final trackHeight = (constraints.maxHeight * 0.42).clamp(64.0, 150.0);
-        return Center(
+        return SizedBox.expand(
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onVerticalDragUpdate: (details) {
               // Negative delta means sliding up (increase)
-              final delta = -details.primaryDelta! / 120.0;
-              onChanged(value + delta);
+              final delta = -details.primaryDelta! / trackHeight;
+              onChanged((value + delta).clamp(0.0, 1.0));
             },
-            child: Padding(
-              padding: const EdgeInsets.all(10.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: Colors.white, size: 20),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: 4,
-                    height: trackHeight,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: Stack(
-                      alignment: Alignment.bottomCenter,
-                      children: [
-                        Container(
-                          width: 4,
-                          height: trackHeight * value,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(2),
+            onTapUp: (details) {
+              final box = context.findRenderObject() as RenderBox?;
+              if (box != null && box.hasSize) {
+                final localY = details.localPosition.dy;
+                final centerY = box.size.height / 2;
+                final trackTop = centerY - (trackHeight / 2);
+                final trackBottom = centerY + (trackHeight / 2);
+                if (localY <= trackTop) {
+                  onChanged(1.0);
+                } else if (localY >= trackBottom) {
+                  onChanged(0.0);
+                } else {
+                  final ratio = 1.0 - ((localY - trackTop) / trackHeight);
+                  onChanged(ratio.clamp(0.0, 1.0));
+                }
+              }
+            },
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: Colors.white, size: 20),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 4,
+                      height: trackHeight,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.bottomCenter,
+                        children: [
+                          Container(
+                            width: 4,
+                            height: trackHeight * value,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

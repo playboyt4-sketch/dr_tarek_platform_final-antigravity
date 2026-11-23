@@ -30,6 +30,9 @@ class _FakeAuthRepository implements AuthRepository {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) async {
     registerCalls++;
     lastRegisterArgs = {
@@ -37,6 +40,9 @@ class _FakeAuthRepository implements AuthRepository {
       'phoneNumber': phoneNumber,
       'grade': grade,
       'password': password,
+      'fcmToken': fcmToken,
+      'deviceId': deviceId,
+      'platform': platform,
     };
     if (registerError != null) throw registerError!;
     return AuthUser(

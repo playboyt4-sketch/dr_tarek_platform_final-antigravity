@@ -180,9 +180,9 @@ class FcmPushService {
     _openedAppSub = FirebaseMessaging.onMessageOpenedApp
         .listen((m) => _logTap(m, source: 'background'));
     messaging.setForegroundNotificationPresentationOptions(
-      alert: false,
+      alert: true,
       badge: true,
-      sound: false,
+      sound: true,
     );
   }
 

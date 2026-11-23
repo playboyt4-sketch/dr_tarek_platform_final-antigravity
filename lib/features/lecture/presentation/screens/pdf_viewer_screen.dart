@@ -445,16 +445,17 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
     );
   }
 
-  void _showNotesCreator(BuildContext context) {
+  Future<void> _showNotesCreator(BuildContext context) async {
     final noteController = TextEditingController();
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) {
         return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -551,7 +552,10 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
         );
       },
     );
+  } finally {
+    noteController.dispose();
   }
+}
 
   void _switchViewMode() {
     setState(() {
@@ -786,13 +790,13 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
                         ],
                       ),
                     ),
-                    errorWidget: (error) => Center(
+                    errorWidget: (_) => const Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.error_outline, size: 48, color: AppColors.error),
-                          const SizedBox(height: 12),
-                          Text('فشل عرض الملف: $error', textAlign: TextAlign.center),
+                          Icon(Icons.error_outline, size: 48, color: AppColors.error),
+                          SizedBox(height: 12),
+                          Text('فشل عرض الملف. يرجى المحاولة مرة أخرى.', textAlign: TextAlign.center),
                         ],
                       ),
                     ),

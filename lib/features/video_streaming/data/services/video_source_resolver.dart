@@ -1,11 +1,8 @@
-import 'dart:io';
-
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:uuid/uuid.dart';
 
+import '../../../../core/device/device_identity_store.dart';
 import '../../../membership/domain/repositories/membership_repository.dart';
 import '../../../membership/domain/entities/membership_entities.dart';
 import '../../domain/entities/playback_entities.dart';
@@ -198,42 +195,12 @@ Future<String> resolveLocalDeviceId({
   if (override != null) return override();
   final memoized = _memoizedVideoDeviceId;
   if (memoized != null && memoized.isNotEmpty) return memoized;
-  const deviceIdKey = 'video_device_id';
-  final storage = secureStorage ?? const FlutterSecureStorage();
-  final existing = await storage.read(key: deviceIdKey);
-  if (existing != null && existing.isNotEmpty) {
-    _memoizedVideoDeviceId = existing;
-    return existing;
-  }
-
-  String? hardwareId;
-  // dart:io Platform is unavailable on web — guard it so web callers fall
-  // through to a generated install id instead of throwing UnsupportedError
-  // (which surfaced as a generic player-init failure on web builds).
-  if (!kIsWeb) {
-    try {
-      final plugin = DeviceInfoPlugin();
-      if (Platform.isAndroid) {
-        hardwareId = (await plugin.androidInfo).id;
-      } else if (Platform.isIOS) {
-        hardwareId = (await plugin.iosInfo).identifierForVendor;
-      }
-    } catch (_) {}
-  }
-
-  String created;
-  if (hardwareId != null && hardwareId.isNotEmpty) {
-    // Deterministically generate a UUIDv5, then force the version nibble to '4'
-    // so it passes strict backend UUIDv4 regex checks.
-    final v5 = const Uuid().v5(Namespace.url.value, hardwareId);
-    created = v5.replaceRange(14, 15, '4');
-  } else {
-    created = const Uuid().v4();
-  }
-
-  await storage.write(key: deviceIdKey, value: created);
-  _memoizedVideoDeviceId = created;
-  return created;
+  final store = DeviceIdentityStore(
+    storage: secureStorage ?? const FlutterSecureStorage(),
+  );
+  final deviceId = await store.getOrCreate();
+  _memoizedVideoDeviceId = deviceId;
+  return deviceId;
 }
 
 class VideoSourceResolver implements VideoSourceGateway {

@@ -421,7 +421,7 @@ class _StudentApprovalDialogState extends State<_StudentApprovalDialog> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        errorMessage = 'تعذر تحميل المواد: $error';
+        errorMessage = friendlyFunctionErrorMessage(error, 'تعذر تحميل المواد. يرجى المحاولة لاحقًا.');
         loadingSubjects = false;
       });
     }
@@ -547,7 +547,7 @@ class _StudentApprovalDialogState extends State<_StudentApprovalDialog> {
       if (!mounted) return;
       setState(() {
         submitting = false;
-        errorMessage = 'تعذر اعتماد الطالب: $error';
+        errorMessage = friendlyFunctionErrorMessage(error, 'تعذر اعتماد الطالب.');
       });
     }
   }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -170,7 +171,10 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       // Single-route error state: full-screen black, no AppBar widget.
       // The overlay chevron is the only back affordance (single pop to
       // the subject page); retry stays in-route, never pushes.
-      final message = 'تعذر تهيئة التخزين المحلي: ${preferences.error}';
+      if (kDebugMode) {
+        debugPrint('preferences error: ${preferences.error}');
+      }
+      const message = 'تعذر تهيئة التخزين المحلي. يرجى المحاولة مرة أخرى.';
       return Scaffold(
         backgroundColor: Colors.black,
         body: Stack(
@@ -216,11 +220,19 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       // + title + quality pill) is the only chrome. The overlay back
       // chevron pops this route exactly once, landing directly on the
       // subject page — no intermediate route, no fullscreen-exit hop.
-      builder: (context, _) => Scaffold(
-        backgroundColor: Colors.black,
-        body: VideoPlayerLayout(
-          controller: _controller!,
-          sectionButtonLabel: _sectionButtonLabel(),
+      builder: (context, _) {
+        final authUser = ref.watch(authProvider).value;
+        final phone = authUser?.phoneNumber.trim();
+        final watermarkText = (phone != null && phone.isNotEmpty)
+            ? phone
+            : _controller!.userId;
+
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: VideoPlayerLayout(
+            controller: _controller!,
+            watermarkText: watermarkText,
+            sectionButtonLabel: _sectionButtonLabel(),
           onBack: () {
             Navigator.pop(context);
           },
@@ -315,8 +327,9 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
               _scheduleHideControls();
             },
           ),
-        ),
-      );
+        );
+      },
+    );
   }
 
   /// Persists a bookmark for the current lecture at the current position.
@@ -386,9 +399,12 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       // rgba(0,0,0,0.8) overlay and handles outside-tap close, so the
       // dialog barrier must not add a second dim layer.
       barrierColor: Colors.transparent,
-      pageBuilder: (context, animation, secondaryAnimation) => VideoQualitySheet(
-        controller: _controller!,
-        onClose: () => Navigator.of(context).pop(),
+      pageBuilder: (context, animation, secondaryAnimation) => Material(
+        type: MaterialType.transparency,
+        child: VideoQualitySheet(
+          controller: _controller!,
+          onClose: () => Navigator.of(context).pop(),
+        ),
       ),
     );
   }
@@ -399,11 +415,14 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       barrierDismissible: true,
       barrierLabel: 'Lectures',
       barrierColor: Colors.black,
-      pageBuilder: (context, animation, secondaryAnimation) => VideoLecturePanel(
-        controller: _controller!,
-        panelTitle: _sectionButtonLabel(),
-        seasonLabel: _activeSeasonTitle(),
-        onClose: () => Navigator.of(context).pop(),
+      pageBuilder: (context, animation, secondaryAnimation) => Material(
+        color: Colors.black,
+        child: VideoLecturePanel(
+          controller: _controller!,
+          panelTitle: _sectionButtonLabel(),
+          seasonLabel: _activeSeasonTitle(),
+          onClose: () => Navigator.of(context).pop(),
+        ),
       ),
     );
   }

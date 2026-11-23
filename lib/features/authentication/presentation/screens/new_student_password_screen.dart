@@ -7,6 +7,7 @@ import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../profile/data/services/pending_profile_photo_store.dart';
+import '../../data/services/registration_device_info_resolver.dart';
 import '../providers/auth_provider.dart';
 import '../providers/registration_form_provider.dart';
 import 'new_student_end_screen.dart';
@@ -193,12 +194,23 @@ class _NewStudentPasswordScreenState
         path: profilePhoto,
       );
     }
+
+    RegistrationDeviceInfo? pushInfo;
+    try {
+      pushInfo = await RegistrationDeviceInfo.resolve();
+    } catch (_) {
+      // Best-effort: push token resolution must never block registration
+    }
+
     await ref.read(authProvider.notifier).register(
           fullName: fullName.trim(),
           phoneNumber: phoneNumber.trim(),
           profilePhoto: null,
           grade: grade,
           password: password,
+          fcmToken: pushInfo?.fcmToken,
+          deviceId: pushInfo?.deviceId,
+          platform: pushInfo?.platform,
         );
     if (!mounted) return;
     setState(() => _submitting = false);
@@ -228,25 +240,25 @@ class _NewStudentPasswordScreenState
     // Stack lives INSIDE the SafeArea, so Figma's y-coords (measured from
     // the canvas top) land correctly without any manual top/bottom padding
     // to tune.
-    final viewportHeight = MediaQuery.of(context).size.height -
-        MediaQuery.of(context).padding.vertical;
     final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
       backgroundColor: semantic.canvas,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: viewportHeight),
-            child: Directionality(
-              // Force LTR — same as the Welcome/Name sibling steps.
-              textDirection: TextDirection.ltr,
-              child: SizedBox(
-                width: context.rs(_PasswordDesign.canvasWidth),
-                height: context.rsV(_PasswordDesign.canvasHeight),
-                child: Stack(
-                  clipBehavior: Clip.none,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Directionality(
+                  // Force LTR — same as the Welcome/Name sibling steps.
+                  textDirection: TextDirection.ltr,
+                  child: SizedBox(
+                    width: context.rs(_PasswordDesign.canvasWidth),
+                    height: context.rsV(_PasswordDesign.canvasHeight),
+                    child: Stack(
+                      clipBehavior: Clip.none,
                   children: [
                     // --- 1. Illustration panel (Figma 12,50 369x325 r35).
                     // BoxFit.cover crops cleanly to the box — never
@@ -586,9 +598,11 @@ class _NewStudentPasswordScreenState
               ),
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
   }
 
   void _toggleObscurePassword() {

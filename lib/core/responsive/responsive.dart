@@ -134,25 +134,28 @@ class ResponsiveScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final effectiveMaxWidth = maxWidth ?? context.contentMaxWidth;
     final effectivePadding = padding ?? EdgeInsets.symmetric(horizontal: context.pagePadding);
-    final viewportHeight = MediaQuery.of(context).size.height - MediaQuery.of(context).padding.vertical;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: viewportHeight),
-            child: Center(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: effectiveMaxWidth),
-                child: Padding(
-                  padding: effectivePadding,
-                  child: child,
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: effectiveMaxWidth),
+                    child: Padding(
+                      padding: effectivePadding,
+                      child: child,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );

@@ -11,6 +11,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../profile/data/services/pending_profile_photo_store.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../../core/widgets/password_strength_meter.dart';
+import '../../data/services/registration_device_info_resolver.dart';
 import '../providers/auth_provider.dart';
 
 class StudentRegistrationWizard extends ConsumerStatefulWidget {
@@ -174,6 +175,13 @@ class _StudentRegistrationWizardState
       return;
     }
 
+    RegistrationDeviceInfo? pushInfo;
+    try {
+      pushInfo = await RegistrationDeviceInfo.resolve();
+    } catch (_) {
+      // Best-effort
+    }
+
     await ref
         .read(authProvider.notifier)
         .register(
@@ -183,6 +191,9 @@ class _StudentRegistrationWizardState
           customGroupId: _selectedCustomGroupId,
           customGroupName: _selectedCustomGroupName,
           password: _passwordController.text,
+          fcmToken: pushInfo?.fcmToken,
+          deviceId: pushInfo?.deviceId,
+          platform: pushInfo?.platform,
         );
 
     if (!mounted) return;

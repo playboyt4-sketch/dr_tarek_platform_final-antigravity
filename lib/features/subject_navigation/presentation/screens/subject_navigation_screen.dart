@@ -1277,6 +1277,8 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
         if (posterUrl != null && posterUrl.isNotEmpty)
           Image.network(
             posterUrl,
+            headers: bunnyPlaybackHttpHeaders,
+            cacheWidth: 600,
             fit: BoxFit.cover,
             errorBuilder: (context, _, _) => const SizedBox.shrink(),
             loadingBuilder:
@@ -1320,6 +1322,8 @@ class _NetworkThumb extends StatelessWidget {
   Widget build(BuildContext context) {
     return Image.network(
       url,
+      headers: bunnyPlaybackHttpHeaders,
+      cacheWidth: 600,
       fit: BoxFit.cover,
       errorBuilder: (context, error, _) {
         debugPrint(

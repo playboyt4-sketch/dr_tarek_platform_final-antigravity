@@ -227,6 +227,9 @@ class VideoPlaybackController extends ChangeNotifier {
     if (_disposed) return;
     if (ScreenGuard.isRecording.value) {
       unawaited(pause());
+      unawaited(_engine?.setVolume(0));
+    } else {
+      unawaited(_engine?.setVolume(1));
     }
   }
 
@@ -375,7 +378,7 @@ class VideoPlaybackController extends ChangeNotifier {
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'Could not initialize the video player. [stage=$stage ${error.runtimeType}: $error]';
+            : 'Could not initialize the video player. Please retry.';
         _notify();
       }
     } finally {
@@ -1408,10 +1411,13 @@ class VideoPlaybackController extends ChangeNotifier {
       );
     } catch (error) {
       if (!_disposed && operation == _operationId) {
+        debugPrint(
+          '[VIDEO-DIAG] player restart FAILED errorType=${error.runtimeType} error=$error',
+        );
         playbackStatus = PlayerPlaybackStatus.error;
         errorMessage = error is VideoSourceException
             ? error.message
-            : 'Could not restart the video. [${error.runtimeType}: $error]';
+            : 'Could not restart the video. Please retry.';
         _notify();
       }
     }

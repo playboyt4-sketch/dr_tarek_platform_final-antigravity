@@ -193,7 +193,7 @@ class SubjectsManagementScreen extends StatelessWidget {
                           }
                         } catch (e) {
                           if (dialogContext.mounted) {
-                            ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('فشل اختيار الصورة: $e')));
+                            ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('تعذر اختيار الصورة. يرجى المحاولة مرة أخرى.')));
                           }
                         }
                       },
@@ -305,7 +305,7 @@ class SubjectsManagementScreen extends StatelessWidget {
                     setDialogState(() => isSaving = false);
                     if (dialogContext.mounted) {
                       ScaffoldMessenger.of(dialogContext).showSnackBar(
-                        SnackBar(content: Text('حدث خطأ غير متوقع: $e')),
+                        SnackBar(content: Text(friendlyFunctionErrorMessage(e, 'حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.'))),
                       );
                     }
                   }

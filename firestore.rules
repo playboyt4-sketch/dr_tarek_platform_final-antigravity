@@ -104,8 +104,10 @@ service cloud.firestore {
     }
 
     function hasSubjectAccess(userId, subjectId) {
+      let assignment = get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId));
       return exists(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId))
-        && get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId)).data.is_deleted == false;
+        && assignment.data.enabled == true
+        && assignment.data.is_deleted == false;
     }
 
     // Subscription-expiry drift fix: subscriptions.end_date is the official
@@ -121,6 +123,7 @@ service cloud.firestore {
       let assignment = get(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId));
       let expiry = assignment.data.get('subscription_expires_at', request.time);
       return exists(/databases/$(database)/documents/subject_access_assignments/$(userId + '_' + subjectId))
+        && assignment.data.enabled == true
         && assignment.data.is_deleted == false
         && (expiry == null || expiry > request.time)
         && entitlementName in assignment.data.entitlements;

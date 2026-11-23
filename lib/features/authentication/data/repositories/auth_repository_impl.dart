@@ -1,3 +1,4 @@
+import '../../../../core/errors/failure.dart';
 import '../../domain/entities/auth_user.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/custom_token_remote_datasource.dart';
@@ -32,13 +33,19 @@ class AuthRepositoryImpl implements AuthRepository {
     final user = credential.user;
 
     if (user == null) {
-      throw StateError('Authenticated user was not returned.');
+      throw const Failure(
+        FailureCode.server,
+        debugDetail: 'Authenticated user was not returned.',
+      );
     }
 
     final profile = await userProfileDataSource.getUserById(user.uid);
 
     if (profile == null) {
-      throw StateError('User profile was not found.');
+      throw const Failure(
+        FailureCode.server,
+        debugDetail: 'User profile was not found.',
+      );
     }
 
     return profile;
@@ -67,12 +74,18 @@ class AuthRepositoryImpl implements AuthRepository {
 
     final user = credential.user;
     if (user == null) {
-      throw StateError('Authenticated user was not returned.');
+      throw const Failure(
+        FailureCode.server,
+        debugDetail: 'Authenticated user was not returned.',
+      );
     }
 
     final profile = await userProfileDataSource.getUserById(user.uid);
     if (profile == null) {
-      throw StateError('User profile was not found.');
+      throw const Failure(
+        FailureCode.server,
+        debugDetail: 'User profile was not found.',
+      );
     }
     return profile;
   }
@@ -94,6 +107,9 @@ class AuthRepositoryImpl implements AuthRepository {
     String? customGroupId,
     String? customGroupName,
     required String password,
+    String? fcmToken,
+    String? deviceId,
+    String? platform,
   }) async {
     final userId = await registrationDataSource.register(
       fullName: fullName,
@@ -103,6 +119,9 @@ class AuthRepositoryImpl implements AuthRepository {
       customGroupId: customGroupId,
       customGroupName: customGroupName,
       password: password,
+      fcmToken: fcmToken,
+      deviceId: deviceId,
+      platform: platform,
     );
 
     return AuthUserModel(

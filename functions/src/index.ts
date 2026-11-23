@@ -1840,15 +1840,16 @@ function resolveBestEffortBunnyLibraryId(
 // custom thumbnails). Same scheme/validity as playback signing, resolved
 // through the SAME per-library resolver so display media and playback can
 // never diverge (ADR-010). Only this library's token key is read.
-async function buildBunnyFileUrl(
+export async function buildBunnyFileUrl(
   videoId: string,
   fileName: string,
   expiresInSeconds = 3600,
   libraryId: string = DEFAULT_BUNNY_LIBRARY_ID,
+  deps: BunnySecretResolverDeps = bunnyLibrarySecretDeps(),
 ): Promise<string> {
   const credentials = await resolveBunnyPlaybackCredentials({
     libraryId,
-    deps: bunnyLibrarySecretDeps(),
+    deps,
   });
   if (!credentials.ok) {
     throw new HttpsError(
@@ -1865,6 +1866,9 @@ async function buildBunnyFileUrl(
     .replace("{quality}", "720p")
     .replace("{res}", "720p");
   const origin = new URL(probe).origin;
+  if (credentials.runtime.tokenAuthMode === "unsigned") {
+    return `${origin}/${videoId}/${fileName}`;
+  }
   const secret = credentials.runtime.tokenKey;
   const expires = Math.floor(Date.now() / 1000) + expiresInSeconds;
   const scope = `/${videoId}/`;
@@ -2156,14 +2160,24 @@ async function resolveSubscriptionPeriodBinding(): Promise<{
 export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   const fullName = getString(request.data?.fullName);
   const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
-  const grade = getString(request.data?.grade);
+  const rawGrade = getString(request.data?.grade);
   const password = getString(request.data?.password);
   const profilePhoto = getString(request.data?.profilePhoto);
   const customGroupId = getString(request.data?.customGroupId);
   const customGroupName = getString(request.data?.customGroupName);
+  const fcmToken = getString(request.data?.fcmToken);
+  const deviceId = getString(request.data?.deviceId);
+  const platform = getString(request.data?.platform);
 
-  if (!fullName || !phone || !grade || !password) {
+  if (!fullName || !phone || !rawGrade || !password) {
     throw new HttpsError("invalid-argument", "Full name, Egyptian phone number, grade and password are required.");
+  }
+  const grade = normalizeStudentGrade(rawGrade);
+  if (!grade) {
+    throw new HttpsError(
+      "invalid-argument",
+      "grade must be one of: grade_one, grade_two, grade_three, grade_four.",
+    );
   }
   if (fullName.length > 100) {
     throw new HttpsError("invalid-argument", "Full name must be 100 characters or fewer.");
@@ -2257,6 +2271,20 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
         created_at: now,
         updated_at: now,
       });
+      if (fcmToken) {
+        const deviceRef = db.collection("devices").doc();
+        transaction.set(deviceRef, {
+          user_id: authUser!.uid,
+          device_id: deviceId ?? "pre_login_registration",
+          platform: platform ?? "unknown",
+          fcm_token: fcmToken,
+          is_deleted: false,
+          created_at: now,
+          updated_at: now,
+          created_by: "system",
+          updated_by: "system",
+        });
+      }
       transaction.set(phoneLockRef, {
         key: "phone_ownership_lock",
         updated_at: now,
@@ -2288,6 +2316,12 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
       await auth.deleteUser(authUser.uid).catch(() => undefined);
       await db.collection("users").doc(authUser.uid).delete().catch(() => undefined);
       await db.collection("user_secrets").doc(authUser.uid).delete().catch(() => undefined);
+      const devDocs = await db.collection("devices").where("user_id", "==", authUser.uid).get().catch(() => null);
+      if (devDocs) {
+        for (const doc of devDocs.docs) {
+          await doc.ref.delete().catch(() => undefined);
+        }
+      }
     }
     if (error instanceof HttpsError) throw error;
     throw new HttpsError("internal", "Registration could not be completed.");
@@ -2513,21 +2547,26 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   // wrong password yields the generic response for every account state.
   // Correct-password behavior (messages, lockout enforcement, clearing)
   // is unchanged.
-  const secretSnap = await db.collection("user_secrets").doc(userDoc.id).get();
+  const secretRef = db.collection("user_secrets").doc(userDoc.id);
+  const secretSnap = await secretRef.get();
   const secretData = secretSnap.exists ? dataOf(secretSnap.data()) : {};
 
   const passwordHash = getString(secretData.password_hash) ?? getString(user.password_hash);
   if (!passwordHash || !(await verifyPassword(password, passwordHash))) {
-    const failedAttempts = (typeof secretData.failed_login_attempts === "number" ? secretData.failed_login_attempts : 0) + 1;
-    const lockMinutes = calculateLockMinutes(failedAttempts);
-    const updateData: any = {
-      failed_login_attempts: failedAttempts,
-      updated_at: FieldValue.serverTimestamp(),
-    };
-    if (lockMinutes > 0) {
-      updateData.locked_until = Timestamp.fromDate(new Date(Date.now() + lockMinutes * 60000));
-    }
-    await db.collection("user_secrets").doc(userDoc.id).set(updateData, {merge: true});
+    await db.runTransaction(async (transaction) => {
+      const freshSnap = await transaction.get(secretRef);
+      const freshData = freshSnap.exists ? dataOf(freshSnap.data()) : {};
+      const failedAttempts = (typeof freshData.failed_login_attempts === "number" ? freshData.failed_login_attempts : 0) + 1;
+      const lockMinutes = calculateLockMinutes(failedAttempts);
+      const updateData: Record<string, unknown> = {
+        failed_login_attempts: failedAttempts,
+        updated_at: FieldValue.serverTimestamp(),
+      };
+      if (lockMinutes > 0) {
+        updateData.locked_until = Timestamp.fromDate(new Date(Date.now() + lockMinutes * 60000));
+      }
+      transaction.set(secretRef, updateData, {merge: true});
+    });
 
     await writeAnalyticsEvent(userDoc.id, "Failed Login", userDoc.id, {reason: "invalid_credentials"}, request);
     if (loginIp) {
@@ -2550,7 +2589,7 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
 
   // Clear failures on success
   if (secretData.failed_login_attempts > 0 || secretData.locked_until != null) {
-    await db.collection("user_secrets").doc(userDoc.id).set({
+    await secretRef.set({
       failed_login_attempts: FieldValue.delete(),
       locked_until: FieldValue.delete(),
       updated_at: FieldValue.serverTimestamp(),
@@ -2561,7 +2600,7 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
   if (!secretSnap.exists && getString(user.password_hash)) {
     const now = FieldValue.serverTimestamp();
     const migrationBatch = db.batch();
-    migrationBatch.set(db.collection("user_secrets").doc(userDoc.id), {
+    migrationBatch.set(secretRef, {
       user_id: userDoc.id,
       password_hash: passwordHash,
       created_at: now,
@@ -3485,10 +3524,11 @@ export const convertStudentType = onCall(SECURE_CALL_OPTS, async (request) => {
       return {changed: false, currentStudentType, targetStudentType, conflicts: []};
     }
 
-    const subscriptionsSnap = await db.collection("subscriptions")
-      .where("student_id", "==", studentId)
-      .where("status", "==", "active")
-      .get();
+    const subscriptionsSnap = await transaction.get(
+      db.collection("subscriptions")
+        .where("student_id", "==", studentId)
+        .where("status", "==", "active")
+    );
     const conflicts: Array<Record<string, unknown>> = [];
     for (const subscriptionDoc of subscriptionsSnap.docs) {
       const subscription = dataOf(subscriptionDoc.data());
@@ -4875,8 +4915,12 @@ export const generateBunnySignedUrl = onCall({
       plan: subjectPlan,
     },
   });
+  const isGuestAccess =
+    tier.tier === "guest" ||
+    isGuestPlan(subjectPlanId, subjectPlan) ||
+    issuerStudentType === GUEST_STUDENT_TYPE;
   let guestPreviewSeconds: number | null = null;
-  if (tier.tier === "guest") {
+  if (isGuestAccess) {
     const guestFields = readGuestPreviewFields(lecture);
     const planDefault = findPlanFeature(planFeatures, "video.preview_duration");
     guestPreviewSeconds = resolveGuestPreviewSeconds({
@@ -4895,7 +4939,7 @@ export const generateBunnySignedUrl = onCall({
   // resumes from the persisted position. Single-allowance Subjects and
   // Guest requests never touch session state.
   let playbackSession: BeginOutcome | null = null;
-  if (tier.tier === "full" && tier.allowance >= 2) {
+  if (!isGuestAccess && tier.tier === "full" && tier.allowance >= 2) {
     const content = await resolveSessionContent(userId, resolvedSubjectId, {
       lectureId,
       videoId,
@@ -5065,7 +5109,7 @@ export const generateBunnySignedUrl = onCall({
   await writeAnalyticsEvent(userId, "Open Video", videoId, {
     subject_id: resolvedSubjectId,
     quality: selectedQuality,
-    tier: tier.tier,
+    tier: isGuestAccess ? "guest" : tier.tier,
     preview_limit_seconds: guestPreviewSeconds,
   });
   // Full responses keep their exact existing shape. Guest responses add
@@ -5075,7 +5119,7 @@ export const generateBunnySignedUrl = onCall({
   // and tiers are unchanged). Assembled atomically: both keys together
   // on Guest, neither on Full — never one without the other.
   const guestVerdict = buildGuestIssuanceVerdict({
-    tier: tier.tier,
+    tier: isGuestAccess ? "guest" : "full",
     subjectPlanId,
     subjectPlan,
     guestPreviewSeconds,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/video_playback_controller.dart';
@@ -19,6 +21,9 @@ class VideoPlayerLayout extends StatelessWidget {
   /// Saves a bookmark at the current playback position (null hides the action).
   final VoidCallback? onBookmarkTap;
 
+  /// Watermark text to display (defaults to controller.userId if omitted).
+  final String? watermarkText;
+
   /// Section-aware toolbar label (Lectures / Revisions / Finals / Online).
   final String sectionButtonLabel;
 
@@ -32,6 +37,7 @@ class VideoPlayerLayout extends StatelessWidget {
     required this.onToggleControls,
     this.onUpgradeTap,
     this.onBookmarkTap,
+    this.watermarkText,
     this.sectionButtonLabel = 'Lectures',
     super.key,
   });
@@ -50,39 +56,12 @@ class VideoPlayerLayout extends StatelessWidget {
         children: [
           VideoSurface(controller: controller),
 
-          // Watermark: stable identity handle from the Subject-scoped
-          // controller (never read from FirebaseAuth here — Presentation
-          // must not touch the Auth SDK directly, and the layout has to
-          // build with no Firebase app, e.g. in widget tests).
-          Positioned(
-            right: 16,
-            bottom: 42,
-            child: IgnorePointer(
-              child: Opacity(
-                opacity: 0.34,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      controller.userId,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          // Watermark: phone number or stable identity handle, moving
+          // between 4 screen corners every 18 seconds.
+          _MovingWatermark(
+            text: (watermarkText != null && watermarkText!.trim().isNotEmpty)
+                ? watermarkText!.trim()
+                : controller.userId,
           ),
 
           // Skip Intro
@@ -110,6 +89,103 @@ class VideoPlayerLayout extends StatelessWidget {
             sectionButtonLabel: sectionButtonLabel,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MovingWatermark extends StatefulWidget {
+  final String text;
+
+  const _MovingWatermark({required this.text});
+
+  @override
+  State<_MovingWatermark> createState() => _MovingWatermarkState();
+}
+
+class _MovingWatermarkState extends State<_MovingWatermark> {
+  Timer? _timer;
+  int _positionIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 18), (_) {
+      if (mounted) {
+        setState(() {
+          _positionIndex = (_positionIndex + 1) % 4;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 4 corners:
+    // 0: bottom-right (bottom: 42, right: 16)
+    // 1: top-left (top: 64, left: 16)
+    // 2: bottom-left (bottom: 42, left: 16)
+    // 3: top-right (top: 64, right: 16)
+    double? top;
+    double? bottom;
+    double? left;
+    double? right;
+
+    switch (_positionIndex) {
+      case 0:
+        bottom = 42;
+        right = 16;
+        break;
+      case 1:
+        top = 64;
+        left = 16;
+        break;
+      case 2:
+        bottom = 42;
+        left = 16;
+        break;
+      case 3:
+        top = 64;
+        right = 16;
+        break;
+    }
+
+    return Positioned(
+      top: top,
+      bottom: bottom,
+      left: left,
+      right: right,
+      child: IgnorePointer(
+        child: Opacity(
+          opacity: 0.30,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
+              child: Text(
+                widget.text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

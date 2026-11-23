@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 import 'dart:io';
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -11,11 +10,12 @@ import '../datasources/protected_offline_storage.dart';
 /// Service responsible for managing encrypted offline learning resources (Videos and PDFs).
 /// Enforces:
 /// 1. Files are stored exclusively in the private app sandbox.
-/// 2. Files are encrypted with AES-256 using a securely generated key stored in KeyStore/KeyChain.
+/// 2. Files are encrypted with AES-GCM 256-bit using a securely generated key stored in KeyStore/KeyChain.
 /// 3. Immediate local wipe when subscription entitlement expires or is revoked via FCM.
 class OfflineDrmService {
   final FlutterSecureStorage _secureStorage;
   final SharedPreferences _prefs;
+  static final AesGcm _aesGcm = AesGcm.with256bits();
 
   static const String _keyPrefix = 'drm_key_';
   static const String _expiryPrefix = 'drm_expiry_';
@@ -36,7 +36,7 @@ class OfflineDrmService {
     return vault;
   }
 
-  /// Encrypts raw downloaded bytes using AES-256 and saves to app sandbox
+  /// Encrypts raw downloaded bytes using AES-GCM 256-bit and saves to app sandbox
   Future<File> saveEncryptedResource({
     required String resourceId,
     required String subjectId,
@@ -46,16 +46,21 @@ class OfflineDrmService {
     final vault = await _getVaultDirectory();
     final filePath = p.join(vault.path, '${subjectId}_$resourceId.bin');
 
-    // Generate or retrieve unique AES key for this resource
-    final keyBytes = sha256.convert(utf8.encode('$resourceId-vault-secret-${expiresAt.toIso8601String()}')).bytes;
+    // Generate random 256-bit AES key for this resource
+    final secretKey = await _aesGcm.newSecretKey();
+    final keyBytes = await secretKey.extractBytes();
     final keyHex = keyBytes.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
 
     // Store key and expiration securely
     await _secureStorage.write(key: '$_keyPrefix$resourceId', value: keyHex);
     await _prefs.setString('$_expiryPrefix$resourceId', expiresAt.toIso8601String());
 
-    // Perform encryption (XOR / AES-CTR pattern for streaming safety)
-    final encrypted = _transformBytes(rawBytes, keyBytes);
+    // Perform AES-GCM 256-bit authenticated encryption
+    final secretBox = await _aesGcm.encrypt(
+      rawBytes,
+      secretKey: secretKey,
+    );
+    final encrypted = secretBox.concatenation();
     final file = File(filePath);
     await file.writeAsBytes(encrypted, flush: true);
 
@@ -79,6 +84,7 @@ class OfflineDrmService {
     if (keyHex == null) return null;
 
     final keyBytes = _hexToBytes(keyHex);
+    final secretKey = SecretKey(keyBytes);
 
     // 3. Read encrypted file
     final vault = await _getVaultDirectory();
@@ -94,8 +100,22 @@ class OfflineDrmService {
     if (targetFile == null || !await targetFile.exists()) return null;
 
     final encryptedBytes = await targetFile.readAsBytes();
-    final decrypted = _transformBytes(encryptedBytes, keyBytes);
-    return Uint8List.fromList(decrypted);
+
+    // 4. Decrypt via AES-GCM 256-bit
+    try {
+      final secretBox = SecretBox.fromConcatenation(
+        encryptedBytes,
+        nonceLength: _aesGcm.nonceLength,
+        macLength: _aesGcm.macAlgorithm.macLength,
+      );
+      final decrypted = await _aesGcm.decrypt(
+        secretBox,
+        secretKey: secretKey,
+      );
+      return Uint8List.fromList(decrypted);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Purges a single offline resource and its key immediately
@@ -149,13 +169,6 @@ class OfflineDrmService {
     }
   }
 
-  List<int> _transformBytes(List<int> input, List<int> key) {
-    final output = Uint8List(input.length);
-    for (int i = 0; i < input.length; i++) {
-      output[i] = input[i] ^ key[i % key.length];
-    }
-    return output;
-  }
 
   List<int> _hexToBytes(String hex) {
     final result = <int>[];
