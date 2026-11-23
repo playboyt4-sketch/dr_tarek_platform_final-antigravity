@@ -18,9 +18,10 @@
 #   * Manual trigger only. No `triggering:` block is defined, so a git push can
 #     never publish, sign, or distribute a build automatically.
 #   * The signed IPA is an App Store distribution build. Uploading to App Store
-#     Connect publishes to TestFlight, submits the build to TestFlight beta
-#     review, and assigns the external group "Dr Tarek External Testers"; the
-#     app is never submitted to App Store release review.
+#     Connect publishes the build to TestFlight. The production workflow submits
+#     it to TestFlight beta review and assigns the external group
+#     "Dr Tarek External Testers"; the staging workflow uploads for internal
+#     testers only. The app is never submitted to App Store release review.
 #   * No secrets are stored in this repository. Signing credentials come from
 #     Codemagic secure environment variables / Code signing identities only.
 #
@@ -105,11 +106,10 @@ workflows:
   #    expected and is why it is a separate, manually-selected workflow. It does
   #    NOT submit the app to App Store release review.
   #
-  #    Publishing behaviour: `submit_to_testflight: true` uploads the IPA and
-  #    submits the processed build to TestFlight *beta* review (required before
-  #    external testers can install it). `beta_groups` then grants the named
-  #    external group access once Apple finishes review. Both actions run in
-  #    Codemagic's post-processing step, after the macOS build has finished.
+  #    Publishing behaviour: the IPA is uploaded to App Store Connect and becomes
+  #    available to *internal* testers once Apple finishes processing. No beta
+  #    review submission and no external group assignment are requested here;
+  #    external distribution stays on the production workflow only.
   # ---------------------------------------------------------------------------
   ios-staging-testflight:
     name: iOS Staging - signed IPA + TestFlight
@@ -161,8 +161,15 @@ workflows:
       - name: Build signed IPA for staging (App Store distribution)
         script: |
           set -e
+          # Monotonic build number: UTC epoch seconds (10 digits). Each build
+          # started later therefore has a strictly larger CFBundleVersion than
+          # any earlier epoch-based upload (e.g. 1794300799 from 2026-11-10),
+          # so Apple never rejects it as a duplicate or a lower build number.
+          BUILD_NUMBER_ARG="$(date -u +%s)"
+          echo "Staging TestFlight build number: $BUILD_NUMBER_ARG"
           flutter build ipa --release \
             --dart-define=ENV=staging \
+            --build-number="$BUILD_NUMBER_ARG" \
             --export-options-plist=$HOME/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
@@ -175,13 +182,9 @@ workflows:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        # Upload the IPA, then submit the processed build to TestFlight beta
-        # review. This is what makes a build installable by external testers.
-        submit_to_testflight: true
-        # External TestFlight group that receives the build after beta review.
-        # Name must match App Store Connect exactly.
-        beta_groups:
-          - Dr Tarek External Testers
+        # Upload only: the build lands in TestFlight for internal testers after
+        # Apple finishes processing. No beta review submission, no external
+        # beta_groups. External distribution is production-workflow only.
 
   # ---------------------------------------------------------------------------
   # 3) Production TestFlight for REAL students (owner-approved 2026-10-31).
