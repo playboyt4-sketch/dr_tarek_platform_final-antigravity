@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -303,10 +304,12 @@ Future<void> _fileResourceFlow(
   final titleController = TextEditingController();
   final orderController = TextEditingController(
       text: '${_nextOrderFor(ref, lectureId)}');
+  final urlController = TextEditingController();
   final defaultProvider =
       await ref.read(defaultStorageProviderProvider.future);
   String selectedProvider = defaultProvider;
   File? picked;
+  bool isUploading = false;
 
   if (!context.mounted) return;
   final confirmed = await showDialog<bool>(
@@ -314,46 +317,104 @@ Future<void> _fileResourceFlow(
     builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
       return AlertDialog(
         title: Text(dialogTitle),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          AppInput(controller: titleController, hint: nameHint),
-          const SizedBox(height: 8),
-          TextField(
-            controller: orderController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Display Order'),
-          ),
-          const SizedBox(height: 12),
-          // Dual-provider selector (FINAL_DECISIONS §15): platform
-          // default pre-selected, overridable per file.
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment<String>(value: 'firebase', label: Text('Firebase')),
-              ButtonSegment<String>(value: 'bunny', label: Text('Bunny')),
-            ],
-            selected: {selectedProvider},
-            onSelectionChanged: (selection) =>
-                setState(() => selectedProvider = selection.first),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.upload_file_outlined),
-            label: Text(picked == null ? uploadLabel : picked!.path.split(Platform.pathSeparator).last),
-            onPressed: () async {
-              final platformFile = await FilePicker.pickFile(
-                type: FileType.custom,
-                allowedExtensions: extensions,
-              );
-              final path = platformFile?.path;
-              if (path == null) return;
-              setState(() {
-                picked = File(path);
-                if (titleController.text.trim().isEmpty) {
-                  titleController.text = platformFile?.name ?? '';
-                }
-              });
-            },
-          ),
-        ]),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AppInput(controller: titleController, hint: nameHint),
+            const SizedBox(height: 8),
+            TextField(
+              controller: orderController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Display Order'),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: AppInput(
+                    controller: urlController,
+                    hint: isPdf ? 'رابط ملف الـ PDF (أو ارفعه من الزر)' : 'رابط الملف (اختياري)',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    icon: isUploading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file),
+                    label: Text(isUploading ? 'جارٍ الرفع...' : 'رفع ملف PDF'),
+                    onPressed: isUploading
+                        ? null
+                        : () async {
+                            final platformFile = await FilePicker.pickFile(
+                              type: FileType.custom,
+                              allowedExtensions: extensions,
+                            );
+                            final path = platformFile?.path;
+                            if (path == null) return;
+                            setState(() {
+                              picked = File(path);
+                              isUploading = true;
+                              if (titleController.text.trim().isEmpty) {
+                                titleController.text = platformFile?.name ?? '';
+                              }
+                            });
+                            try {
+                              final safeName = platformFile!.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+                              final storagePath = 'lectures/pdfs/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+                              final storageRef = FirebaseStorage.instance.ref().child(storagePath);
+                              await storageRef.putFile(File(path), SettableMetadata(contentType: 'application/pdf'));
+                              final downloadUrl = await storageRef.getDownloadURL();
+                              setState(() {
+                                urlController.text = downloadUrl;
+                              });
+                            } catch (_) {
+                              // Local file is preserved in picked for standard pipeline
+                            } finally {
+                              setState(() => isUploading = false);
+                            }
+                          },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Dual-provider selector (FINAL_DECISIONS §15): platform
+            // default pre-selected, overridable per file.
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment<String>(value: 'firebase', label: Text('Firebase')),
+                ButtonSegment<String>(value: 'bunny', label: Text('Bunny')),
+              ],
+              selected: {selectedProvider},
+              onSelectionChanged: (selection) =>
+                  setState(() => selectedProvider = selection.first),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.upload_file_outlined),
+              label: Text(picked == null ? uploadLabel : picked!.path.split(Platform.pathSeparator).last),
+              onPressed: () async {
+                final platformFile = await FilePicker.pickFile(
+                  type: FileType.custom,
+                  allowedExtensions: extensions,
+                );
+                final path = platformFile?.path;
+                if (path == null) return;
+                setState(() {
+                  picked = File(path);
+                  if (titleController.text.trim().isEmpty) {
+                    titleController.text = platformFile?.name ?? '';
+                  }
+                });
+              },
+            ),
+          ]),
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -367,13 +428,37 @@ Future<void> _fileResourceFlow(
   );
   if (confirmed != true || !context.mounted) return;
   final file = picked;
-  if (file == null) {
+  final directUrl = urlController.text.trim();
+  if (file == null && directUrl.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please choose a file first.')));
+        const SnackBar(content: Text('Please choose a file or enter a link first.')));
     return;
   }
+
   final order =
       _parseOrder(orderController.text, _nextOrderFor(ref, lectureId));
+
+  if (file == null && directUrl.isNotEmpty) {
+    if (!isValidHttpUrl(directUrl)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid URL — it must start with https:// and include a domain.')));
+      return;
+    }
+    await _mutateResource(
+      context,
+      () => ref.read(addExternalLinkResourceUseCaseProvider).execute(
+            lectureId: lectureId,
+            title: titleController.text.trim().isEmpty ? 'PDF' : titleController.text.trim(),
+            displayOrder: order,
+            externalUrl: Uri.parse(directUrl),
+          ),
+      fallback: 'Could not save the link.',
+      successMessage: 'PDF link saved.',
+    );
+    return;
+  }
+
+  if (file == null) return;
   double progress = 0;
 
   if (!context.mounted) return;

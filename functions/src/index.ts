@@ -1357,6 +1357,7 @@ async function writeAnalyticsEvent(
 async function getDeviceTokens(userId: string, onlyDeviceIds?: Set<string>) {
   const devicesSnap = await db.collection("devices").where("user_id", "==", userId).get();
   const devices: Array<{id: string; token: string}> = [];
+  const seenTokens = new Set<string>();
 
   for (const doc of devicesSnap.docs) {
     if (onlyDeviceIds && !onlyDeviceIds.has(doc.id)) continue;
@@ -1369,7 +1370,20 @@ async function getDeviceTokens(userId: string, onlyDeviceIds?: Set<string>) {
       typeof data.fcm_token !== "string" ||
       data.fcm_token.trim().length === 0
     ) continue;
-    devices.push({id: doc.id, token: data.fcm_token});
+    const token = data.fcm_token.trim();
+    if (!seenTokens.has(token)) {
+      seenTokens.add(token);
+      devices.push({id: doc.id, token});
+    }
+  }
+
+  // Fallback: check users/{userId}.fcm_token if no token found on devices
+  if (devices.length === 0) {
+    const userSnap = await db.collection("users").doc(userId).get();
+    const userToken = getString(userSnap.data()?.fcm_token);
+    if (userToken && userToken.trim().length > 0) {
+      devices.push({id: `user_${userId}`, token: userToken.trim()});
+    }
   }
 
   return devices;
@@ -4329,15 +4343,27 @@ async function sendNotificationNow(
       priority: critical || notificationData.priority === "high" ? "high" : "normal",
       notification: {
         tag: groupingKey,
+        sound: "default",
+        channelId: "dr_tarek_general",
         ...(imageUrl ? {imageUrl} : {}),
       },
     },
     apns: {
-      headers: {"apns-collapse-id": groupingKey},
+      headers: {
+        "apns-collapse-id": groupingKey,
+        "apns-push-type": "alert",
+        "apns-priority": "10",
+      },
       payload: {
         aps: {
           "thread-id": groupingKey,
           "mutable-content": 1,
+          sound: "default",
+          badge: 1,
+          alert: {
+            title: getString(notificationData.title) ?? "Dr. Tarek Platform",
+            body: getString(notificationData.body) ?? "",
+          },
           ...(critical ? {"content-available": 1} : {}),
         },
       },
@@ -7498,10 +7524,53 @@ export const onDeviceTokenRefresh = onCall(SECURE_CALL_OPTS, async (request) => 
   const fcmToken = getString(request.data?.fcmToken);
   if (!deviceId || !fcmToken) throw new HttpsError("invalid-argument", "deviceId and fcmToken are required.");
 
-  const deviceSnap = await db.collection("devices").where("user_id", "==", userId).where("device_id", "==", deviceId).limit(1).get();
-  if (deviceSnap.empty) throw new HttpsError("permission-denied", "Device is not registered for this user.");
+  // Also sync fcm_token on the user record directly
+  await db.collection("users").doc(userId).set({
+    fcm_token: fcmToken,
+    updated_at: FieldValue.serverTimestamp(),
+  }, {merge: true}).catch(() => undefined);
 
-  await deviceSnap.docs[0].ref.update({fcm_token: fcmToken, last_login: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), updated_by: "system"});
+  const deviceSnap = await db.collection("devices").where("user_id", "==", userId).where("device_id", "==", deviceId).limit(1).get();
+  if (deviceSnap.empty) {
+    // If exact device_id not found, check any non-deleted device for this user
+    const userDevices = await db.collection("devices")
+      .where("user_id", "==", userId)
+      .where("is_deleted", "==", false)
+      .limit(1)
+      .get();
+    if (!userDevices.empty) {
+      await userDevices.docs[0].ref.update({
+        fcm_token: fcmToken,
+        device_id: deviceId,
+        last_login: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+        updated_by: "system",
+      });
+      return {updated: true};
+    }
+
+    // Otherwise create device document so push notification is guaranteed to deliver
+    await db.collection("devices").add({
+      user_id: userId,
+      device_id: deviceId,
+      fcm_token: fcmToken,
+      platform: "unknown",
+      last_login: FieldValue.serverTimestamp(),
+      created_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+      created_by: "system",
+      updated_by: "system",
+      is_deleted: false,
+    });
+    return {updated: true};
+  }
+
+  await deviceSnap.docs[0].ref.update({
+    fcm_token: fcmToken,
+    last_login: FieldValue.serverTimestamp(),
+    updated_at: FieldValue.serverTimestamp(),
+    updated_by: "system",
+  });
   return {updated: true};
 });
 

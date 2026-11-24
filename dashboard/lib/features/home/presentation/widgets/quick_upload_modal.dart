@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -148,6 +150,62 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
           errorMessage: e.toString(),
         );
       });
+    }
+  }
+
+  bool _uploadingPdf = false;
+
+  Future<void> _uploadPdfFile() async {
+    if (_uploadingPdf || _saving) return;
+    try {
+      final PlatformFile? file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+      );
+      if (file == null) return;
+      setState(() => _uploadingPdf = true);
+
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تعذر قراءة ملف الـ PDF المختار.')),
+          );
+        }
+        return;
+      }
+
+      final safeName = file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+      final storagePath = 'lectures/pdfs/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+      final storageRef = FirebaseStorage.instance.ref().child(storagePath);
+
+      await storageRef.putData(
+        bytes,
+        SettableMetadata(contentType: 'application/pdf'),
+      );
+      final downloadUrl = await storageRef.getDownloadURL();
+
+      if (mounted) {
+        setState(() {
+          _pdfController.text = downloadUrl;
+          if (_titleController.text.trim().isEmpty) {
+            _titleController.text = file.name.replaceAll('.pdf', '').replaceAll('_', ' ');
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم رفع ملف الـ PDF بنجاح وملء الرابط تلقائياً.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل رفع ملف الـ PDF: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingPdf = false);
+      }
     }
   }
 
@@ -404,12 +462,39 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
               ),
         ],
         const SizedBox(height: 12),
-        TextField(
-          controller: _pdfController,
-          enabled: !_saving,
-          decoration:
-              const InputDecoration(labelText: 'PDF path or link (optional)'),
-          textInputAction: TextInputAction.done,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                controller: _pdfController,
+                enabled: !_saving && !_uploadingPdf,
+                decoration: const InputDecoration(
+                  labelText: 'رابط ملف الـ PDF (أو ارفعه من الزر)',
+                  hintText: 'https://... أو مسار الملف',
+                ),
+                textInputAction: TextInputAction.done,
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: _saving || _uploadingPdf ? null : _uploadPdfFile,
+                icon: _uploadingPdf
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.upload_file),
+                label: Text(_uploadingPdf ? 'جارٍ الرفع...' : 'رفع ملف PDF'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Row(

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -2759,18 +2760,21 @@ class _AddPdfDialog extends StatefulWidget {
   /// Staged file name when reopened from a staged row's Edit pill.
   /// The staged bytes are kept unless the doctor picks a new file.
   final String? initialFileName;
+  final String initialUrl;
 
   const _AddPdfDialog({
     this.initialName = '',
     this.initialOrder = '',
     this.initialFileName,
+    this.initialUrl = '',
   });
 
   /// True when reopened from a staged row's Edit pill (prefilled).
   bool get isEdit =>
       initialName.isNotEmpty ||
       initialOrder.isNotEmpty ||
-      initialFileName != null;
+      initialFileName != null ||
+      initialUrl.isNotEmpty;
 
   @override
   State<_AddPdfDialog> createState() => _AddPdfDialogState();
@@ -2779,12 +2783,14 @@ class _AddPdfDialog extends StatefulWidget {
 class _AddPdfDialogState extends State<_AddPdfDialog> {
   late final TextEditingController _name;
   late final TextEditingController _order;
+  late final TextEditingController _url;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.initialName);
     _order = TextEditingController(text: widget.initialOrder);
+    _url = TextEditingController(text: widget.initialUrl);
   }
 
   /// Native-picked PDF (file_picker v12 API). Bytes are loaded via
@@ -2818,6 +2824,7 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
   void dispose() {
     _name.dispose();
     _order.dispose();
+    _url.dispose();
     super.dispose();
   }
 
@@ -2858,11 +2865,25 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
       final int byteCount = await file.length();
       final Uint8List bytes = await file.readAsBytes();
       if (!mounted) return;
+
+      // Auto-upload to Firebase Storage so the URL field is populated
+      String? uploadedUrl;
+      try {
+        final safeName = file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+        final storagePath = 'lectures/pdfs/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+        final storageRef = FirebaseStorage.instance.ref().child(storagePath);
+        await storageRef.putData(bytes, SettableMetadata(contentType: 'application/pdf'));
+        uploadedUrl = await storageRef.getDownloadURL();
+      } catch (_) {}
+
       setState(() {
         _pickedPdfFile = file;
         _pickedPdfBytes = bytes;
         _pickedPdfSize = byteCount;
         _picking = false;
+        if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+          _url.text = uploadedUrl;
+        }
         if (_name.text.trim().isEmpty) {
           final String suggestion = _sanitizedBaseName(file.name);
           if (suggestion.isNotEmpty) _name.text = suggestion;
@@ -2888,17 +2909,18 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
   }
 
   void _handleSave() {
-    if (!_hasFile) {
-      setState(() => _fileError = 'Please select a PDF file first');
+    if (!_hasFile && _url.text.trim().isEmpty) {
+      setState(() => _fileError = 'Please select a PDF file or enter a PDF URL first');
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a PDF file first')),
+        const SnackBar(content: Text('Please select a PDF file or enter a PDF URL first')),
       );
       return;
     }
     Navigator.of(context).pop(<String, Object?>{
       'title': _name.text.trim().isEmpty ? 'PDF' : _name.text.trim(),
       'order': _order.text.trim().isEmpty ? '01' : _order.text.trim(),
-      'fileName': _displayFileName,
+      'fileName': _displayFileName.isNotEmpty ? _displayFileName : 'PDF Document',
+      'url': _url.text.trim(),
       // Null bytes = staged file unchanged (edit kept the picked file).
       'fileBytes': _pickedPdfBytes,
       'contentType': 'application/pdf',
@@ -2915,7 +2937,7 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
         color: Colors.transparent,
         child: Container(
           width: 640,
-          height: 360,
+          height: 420,
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: Colors.white,
@@ -2968,6 +2990,11 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
                           controller: _order,
                           hint: '01',
                           keyboardType: TextInputType.number),
+                      const SizedBox(height: 8),
+                      _pdfFieldRow(
+                          label: 'PDF Link / URL',
+                          controller: _url,
+                          hint: 'https://... (أو ارفع ملف للتحميل التلقائي)'),
                       const SizedBox(height: 12),
                       // Row 3: aligned grid — label 168 + gap 4 + action 388
                       // = 560, same left/right edges as the rows above.
@@ -3120,7 +3147,7 @@ class _AddPdfDialogState extends State<_AddPdfDialog> {
                 ),
               ),
               Positioned(
-                top: 308,
+                top: 368,
                 left: 258,
                 child: InkWell(
                   onTap: _handleSave,
@@ -3400,7 +3427,7 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
         color: Colors.transparent,
         child: Container(
           width: 640,
-          height: 360,
+          height: 420,
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: Colors.white,
@@ -3605,7 +3632,7 @@ class _AddAttachmentDialogState extends State<_AddAttachmentDialog> {
                 ),
               ),
               Positioned(
-                top: 308,
+                top: 368,
                 left: 258,
                 child: InkWell(
                   onTap: _handleSave,

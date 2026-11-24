@@ -12,6 +12,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../student_dashboard/domain/entities/dashboard_subject.dart';
 import '../../domain/entities/subject_learning_entities.dart';
 import '../providers/subject_navigation_providers.dart';
+import '../widgets/lecture_download_button.dart';
 import '../../../video_streaming/presentation/screens/video_streaming_screen.dart';
 
 /// Double-tap guard: rapid repeated taps on a lecture/cover must not stack
@@ -914,6 +915,7 @@ class _LecturesBody extends ConsumerWidget {
               ),
               child: _LectureCard(
                 lecture: lecture,
+                subjectId: subjectId,
                 onOpen: lecture.isLocked
                     ? null
                     : () {
@@ -947,9 +949,14 @@ class _LecturesBody extends ConsumerWidget {
 /// duration) pinned to the bottom 41px.
 class _LectureCard extends StatelessWidget {
   final LectureSummary lecture;
+  final String subjectId;
   final VoidCallback? onOpen;
 
-  const _LectureCard({required this.lecture, this.onOpen});
+  const _LectureCard({
+    required this.lecture,
+    required this.subjectId,
+    this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1034,10 +1041,9 @@ class _LectureCard extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            Icon(
-                              Icons.file_download_outlined,
-                              size: context.rs(23),
-                              color: Colors.black,
+                            LectureDownloadButton(
+                              lecture: lecture,
+                              subjectId: subjectId,
                             ),
                             SizedBox(
                               width: context.rs(

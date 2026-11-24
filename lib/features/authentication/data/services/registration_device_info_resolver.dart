@@ -20,14 +20,36 @@ class RegistrationDeviceInfo {
     this.platform,
   });
 
+  static Future<RegistrationDeviceInfo>? _cachedFuture;
+  static RegistrationDeviceInfo? _cachedResult;
+
+  static RegistrationDeviceInfo? get cached => _cachedResult;
+
+  /// Starts resolving in the background early during wizard steps.
+  static void preWarm({
+    FirebaseMessaging? messaging,
+    DeviceIdentityStore? deviceIdentityStore,
+  }) {
+    _cachedFuture ??= resolve(
+      messaging: messaging,
+      deviceIdentityStore: deviceIdentityStore,
+    );
+  }
+
   /// Best-effort resolution of the device identity and FCM token.
   /// Never throws: fails open so registration is never blocked.
   static Future<RegistrationDeviceInfo> resolve({
     FirebaseMessaging? messaging,
     DeviceIdentityStore? deviceIdentityStore,
   }) async {
+    if (_cachedResult != null) return _cachedResult!;
+    if (_cachedFuture != null && messaging == null && deviceIdentityStore == null) {
+      return _cachedFuture!;
+    }
+
     if (kIsWeb) {
-      return const RegistrationDeviceInfo(platform: 'web');
+      _cachedResult = const RegistrationDeviceInfo(platform: 'web');
+      return _cachedResult!;
     }
 
     try {
@@ -78,10 +100,12 @@ class RegistrationDeviceInfo {
       debugPrint('[RegistrationDeviceInfo] DeviceId resolution skipped: $e');
     }
 
-    return RegistrationDeviceInfo(
+    final result = RegistrationDeviceInfo(
       fcmToken: token,
       deviceId: devId,
       platform: plat,
     );
+    _cachedResult = result;
+    return result;
   }
 }

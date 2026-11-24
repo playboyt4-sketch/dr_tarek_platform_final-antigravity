@@ -7,6 +7,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/primary_button.dart';
+import '../../data/services/registration_device_info_resolver.dart';
 import '../widgets/brand_signature_logo.dart';
 import 'new_student_name_screen.dart';
 
@@ -99,6 +100,7 @@ class NewStudentWelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    RegistrationDeviceInfo.preWarm();
     // Horizontal design scale (identical to Figma at the 393 reference).
     final scale = context.textScale;
     final semantic = AppSemanticColors.of(context);

@@ -12,6 +12,11 @@ import Flutter
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self
+    }
+    application.registerForRemoteNotifications()
+
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
     window?.makeKeyAndVisible()
@@ -21,6 +26,19 @@ import Flutter
     screenCaptureChanged()
 
     return result
+  }
+
+  @available(iOS 10.0, *)
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if #available(iOS 14.0, *) {
+      completionHandler([.banner, .badge, .sound, .list])
+    } else {
+      completionHandler([.alert, .badge, .sound])
+    }
   }
 
   private func setupScreenGuardChannel() {

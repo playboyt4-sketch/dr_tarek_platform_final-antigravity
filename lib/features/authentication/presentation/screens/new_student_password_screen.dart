@@ -198,10 +198,11 @@ class _NewStudentPasswordScreenState
 
     RegistrationDeviceInfo? pushInfo;
     try {
-      pushInfo = await RegistrationDeviceInfo.resolve().timeout(
-        const Duration(milliseconds: 1200),
-        onTimeout: () => const RegistrationDeviceInfo(),
-      );
+      pushInfo = RegistrationDeviceInfo.cached ??
+          await RegistrationDeviceInfo.resolve().timeout(
+            const Duration(seconds: 4),
+            onTimeout: () => const RegistrationDeviceInfo(),
+          );
     } catch (_) {
       // Best-effort: push token resolution must never block registration
     }

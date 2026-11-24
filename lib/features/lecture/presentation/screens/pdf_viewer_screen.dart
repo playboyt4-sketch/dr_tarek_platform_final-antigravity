@@ -638,9 +638,14 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
         actions: [
           if (_downloadChecked && _canDownload)
             IconButton(
-              icon: const Icon(Icons.download_outlined, color: Colors.black87),
-              tooltip: 'تحميل PDF',
-              onPressed: _download,
+              icon: Icon(
+                _isOfflineEnabled ? Icons.check_circle : Icons.download_outlined,
+                color: _isOfflineEnabled ? const Color(0xFF10B981) : Colors.black87,
+              ),
+              tooltip: _isOfflineEnabled ? 'تم التحميل أوفلاين' : 'تحميل PDF للمذاكرة بدون إنترنت',
+              onPressed: _isOfflineEnabled
+                  ? () => _showToast('الملف محفوظ بالفعل للمذاكرة بدون إنترنت.')
+                  : _download,
             ),
           IconButton(
             icon: const Icon(Icons.menu, color: Colors.black87),
