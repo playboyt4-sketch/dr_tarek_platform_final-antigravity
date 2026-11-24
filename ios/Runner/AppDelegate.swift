@@ -15,7 +15,6 @@ import Flutter
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
     window?.makeKeyAndVisible()
-    window?.makeSecure()
 
     setupScreenGuardChannel()
     setupCaptureObservers()
@@ -25,22 +24,20 @@ import Flutter
   }
 
   private func setupScreenGuardChannel() {
-    let controller = (window?.rootViewController as? FlutterViewController) ?? (getKeyWindow()?.rootViewController as? FlutterViewController)
-    if let flutterViewController = controller {
-      screenGuardChannel = FlutterMethodChannel(
-        name: "com.drtarek.platform/screen_guard",
-        binaryMessenger: flutterViewController.binaryMessenger
-      )
-      screenGuardChannel?.setMethodCallHandler { [weak self] (call, result) in
-        if call.method == "isRecording" {
-          if #available(iOS 11.0, *) {
-            result(UIScreen.main.isCaptured)
-          } else {
-            result(false)
-          }
+    guard let controller = window?.rootViewController as? FlutterViewController else { return }
+    screenGuardChannel = FlutterMethodChannel(
+      name: "com.drtarek.platform/screen_guard",
+      binaryMessenger: controller.binaryMessenger
+    )
+    screenGuardChannel?.setMethodCallHandler { [weak self] (call, result) in
+      if call.method == "isRecording" {
+        if #available(iOS 11.0, *) {
+          result(UIScreen.main.isCaptured)
         } else {
-          result(FlutterMethodNotImplemented)
+          result(false)
         }
+      } else {
+        result(FlutterMethodNotImplemented)
       }
     }
   }
@@ -70,15 +67,17 @@ import Flutter
       } else {
         removeSecurityShield()
       }
+      if screenGuardChannel == nil {
+        setupScreenGuardChannel()
+      }
       screenGuardChannel?.invokeMethod("onRecordingChanged", arguments: isCaptured)
     }
   }
 
   private func showSecurityShield() {
     guard blindView == nil else { return }
-    let targetWindow = self.window ?? getKeyWindow()
-    guard let window = targetWindow else { return }
-    let shield = UIView(frame: window.bounds)
+    guard let targetWindow = window else { return }
+    let shield = UIView(frame: targetWindow.bounds)
     shield.backgroundColor = .black
     shield.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     let label = UILabel()
@@ -92,41 +91,12 @@ import Flutter
       label.centerXAnchor.constraint(equalTo: shield.centerXAnchor),
       label.centerYAnchor.constraint(equalTo: shield.centerYAnchor)
     ])
-    window.addSubview(shield)
+    targetWindow.addSubview(shield)
     self.blindView = shield
   }
 
   private func removeSecurityShield() {
     blindView?.removeFromSuperview()
     blindView = nil
-  }
-
-  private func getKeyWindow() -> UIWindow? {
-    if #available(iOS 13.0, *) {
-      return UIApplication.shared.connectedScenes
-        .compactMap { $0 as? UIWindowScene }
-        .flatMap { $0.windows }
-        .first { $0.isKeyWindow } ?? UIApplication.shared.windows.first { $0.isKeyWindow } ?? self.window
-    } else {
-      return self.window
-    }
-  }
-}
-
-extension UIWindow {
-  func makeSecure() {
-    if self.viewWithTag(998877) != nil { return }
-    let field = UITextField()
-    field.tag = 998877
-    field.isSecureTextEntry = true
-    field.isUserInteractionEnabled = false
-    self.addSubview(field)
-    field.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      field.centerXAnchor.constraint(equalTo: self.centerXAnchor),
-      field.centerYAnchor.constraint(equalTo: self.centerYAnchor)
-    ])
-    self.layer.superlayer?.addSublayer(field.layer)
-    field.layer.sublayers?.first?.addSublayer(self.layer)
   }
 }

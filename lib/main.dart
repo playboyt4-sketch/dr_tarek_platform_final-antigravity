@@ -91,8 +91,12 @@ Future<void> main() async {
 
       // Enforce screen capture protection (FLAG_SECURE on Android, secure
       // view layer + recording listener on iOS). Guarded internally for Web/Desktop.
-      await ScreenGuard.init();
-      ScreenGuard.reapplyAfterFirstFrame();
+      try {
+        await ScreenGuard.init();
+        ScreenGuard.reapplyAfterFirstFrame();
+      } catch (e) {
+        debugPrint('[ScreenGuard] boot error: $e');
+      }
 
       // Web-only: install the HLS-capable video backend before any
       // VideoPlayerController is created. No-op on mobile/desktop.

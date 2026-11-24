@@ -11,6 +11,5 @@ class SceneDelegate: FlutterSceneDelegate {
     guard let windowScene = scene as? UIWindowScene else { return }
     let window = self.window ?? windowScene.windows.first
     window?.makeKeyAndVisible()
-    window?.makeSecure()
   }
 }

@@ -26,58 +26,70 @@ class ScreenGuard {
 
   /// Initializes screen protection and screen recording observers.
   /// Must be called during app boot after [WidgetsFlutterBinding.ensureInitialized].
+  /// Never throws unhandled exceptions.
   static Future<void> init() async {
-    if (kIsWeb) return;
-    if (!Platform.isIOS && !Platform.isAndroid) return;
-    if (_initialized) return;
-    _initialized = true;
-
-    // Listen to native MethodChannel events for immediate recording detection
-    _channel.setMethodCallHandler((call) async {
-      final dynamic arg = call.arguments;
-      if (arg is bool) {
-        isRecording.value = arg;
-      } else if (call.method == 'onRecordingChanged' ||
-          call.method == 'screenCaptureChanged') {
-        isRecording.value = arg == true;
-      }
-    });
-
     try {
-      // Android: sets FLAG_SECURE on Window.
-      // iOS: activates secure window overlay for screenshots.
-      await ScreenProtector.preventScreenshotOn();
+      if (kIsWeb) return;
+      if (!Platform.isIOS && !Platform.isAndroid) return;
+      if (_initialized) return;
+      _initialized = true;
+
+      // Listen to native MethodChannel events for immediate recording detection
+      _channel.setMethodCallHandler((call) async {
+        try {
+          final dynamic arg = call.arguments;
+          if (arg is bool) {
+            isRecording.value = arg;
+          } else if (call.method == 'onRecordingChanged' ||
+              call.method == 'screenCaptureChanged') {
+            isRecording.value = arg == true;
+          }
+        } catch (e) {
+          debugPrint('[ScreenGuard] methodCallHandler error: $e');
+        }
+      });
+
+      // Safely schedule screenshot prevention after the first frame renders
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          // Android: sets FLAG_SECURE on Window.
+          // iOS: activates secure window overlay for screenshots.
+          await ScreenProtector.preventScreenshotOn();
+        } catch (e) {
+          debugPrint('[ScreenGuard] preventScreenshotOn error: $e');
+        }
+      });
+
+      if (Platform.isIOS) {
+        try {
+          // App switcher / multitasking preview concealment.
+          await ScreenProtector.protectDataLeakageWithColor(Colors.black);
+        } catch (e) {
+          debugPrint('[ScreenGuard] protectDataLeakageWithColor error: $e');
+        }
+
+        try {
+          // Query initial screen recording / AirPlay mirroring state.
+          final bool initialCaptured = await ScreenProtector.isRecording();
+          isRecording.value = initialCaptured;
+        } catch (e) {
+          debugPrint('[ScreenGuard] isRecording query error: $e');
+        }
+
+        try {
+          // Subscribe to live screen recording state transitions.
+          ScreenProtector.addListener(
+            null, // Screenshot callback not needed: OS layer blanks it out.
+            (bool isCaptured) {
+              isRecording.value = isCaptured;
+            },
+          );
+        } catch (e) {
+          debugPrint('[ScreenGuard] addListener error: $e');
+        }
+      }
     } catch (e) {
-      debugPrint('[ScreenGuard] preventScreenshotOn error: $e');
-    }
-
-    if (Platform.isIOS) {
-      try {
-        // App switcher / multitasking preview concealment.
-        await ScreenProtector.protectDataLeakageWithColor(Colors.black);
-      } catch (e) {
-        debugPrint('[ScreenGuard] protectDataLeakageWithColor error: $e');
-      }
-
-      try {
-        // Query initial screen recording / AirPlay mirroring state.
-        final bool initialCaptured = await ScreenProtector.isRecording();
-        isRecording.value = initialCaptured;
-      } catch (e) {
-        debugPrint('[ScreenGuard] isRecording query error: $e');
-      }
-
-      try {
-        // Subscribe to live screen recording state transitions.
-        ScreenProtector.addListener(
-          null, // Screenshot callback not needed: OS layer blanks it out.
-          (bool isCaptured) {
-            isRecording.value = isCaptured;
-          },
-        );
-      } catch (e) {
-        debugPrint('[ScreenGuard] addListener error: $e');
-      }
+      debugPrint('[ScreenGuard] init error: $e');
     }
   }
 
