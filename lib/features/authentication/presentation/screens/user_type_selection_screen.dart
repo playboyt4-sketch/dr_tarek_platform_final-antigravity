@@ -54,65 +54,62 @@ class UserTypeSelectionScreen extends StatelessWidget {
                     vertical: context.rsV(10),
                   ),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Column(
-                        children: [
-                          // Header (Figma y72).
-                          Text(
-                            'I am a',
-                            textAlign: TextAlign.center,
-                            style: AppTypography.titleLarge(context),
-                          ),
-                          SizedBox(height: context.rsV(6)),
-
-                          // Subtitle (Figma y115).
-                          Text(
-                            'Select one that applies to you',
-                            textAlign: TextAlign.center,
-                            style: AppTypography.bodyRegular(
-                              context,
-                              color:
-                                  AppSemanticColors.of(context).textSecondary,
-                            ),
-                          ),
-                          SizedBox(height: context.rsV(12)),
-
-                          // Card 1: New Student (Figma 24,145 345x260 r28 #F59E0B).
-                          _buildCard(
-                            context: context,
-                            bgColor: const Color(0xFFF59E0B),
-                            title: 'طالب جديد',
-                            titleColor: const Color(0xFF111827),
-                            imagePath: 'assets/images/new_student photo.png',
-                            cardHeight: cardHeight,
-                            onTap: () async {
-                              if (FirebaseAuth.instance.currentUser != null) {
-                                try {
-                                  await FirebaseAuth.instance.signOut();
-                                } catch (_) {}
-                              }
-                              if (context.mounted) {
-                                context.pushNamed(AppRoutes.newStudentWelcome);
-                              }
-                            },
-                          ),
-                          SizedBox(height: context.rsV(14)),
-
-                          // Card 2: Current Student (Figma 24,421 345x260 r28).
-                          _buildCard(
-                            context: context,
-                            bgColor: const Color(0xFFDC2626),
-                            title: 'طالب حالي',
-                            titleColor: const Color(0xFFFFFCF7),
-                            imagePath:
-                                'assets/images/current student photo.png',
-                            cardHeight: cardHeight,
-                            onTap: () => context.pushNamed(AppRoutes.login),
-                          ),
-                        ],
+                      // Header (Figma y72).
+                      Text(
+                        'I am a',
+                        textAlign: TextAlign.center,
+                        style: AppTypography.titleLarge(context),
                       ),
+                      SizedBox(height: context.rsV(6)),
+
+                      // Subtitle (Figma y115).
+                      Text(
+                        'Select one that applies to you',
+                        textAlign: TextAlign.center,
+                        style: AppTypography.bodyRegular(
+                          context,
+                          color:
+                              AppSemanticColors.of(context).textSecondary,
+                        ),
+                      ),
+                      SizedBox(height: context.rsV(12)),
+
+                      // Card 1: New Student (Figma 24,145 345x260 r28 #F59E0B).
+                      _buildCard(
+                        context: context,
+                        bgColor: const Color(0xFFF59E0B),
+                        title: 'طالب جديد',
+                        titleColor: const Color(0xFF111827),
+                        imagePath: 'assets/images/new_student photo.png',
+                        cardHeight: cardHeight,
+                        onTap: () async {
+                          if (FirebaseAuth.instance.currentUser != null) {
+                            try {
+                              await FirebaseAuth.instance.signOut();
+                            } catch (_) {}
+                          }
+                          if (context.mounted) {
+                            context.pushNamed(AppRoutes.newStudentWelcome);
+                          }
+                        },
+                      ),
+                      SizedBox(height: context.rsV(14)),
+
+                      // Card 2: Current Student (Figma 24,421 345x260 r28).
+                      _buildCard(
+                        context: context,
+                        bgColor: const Color(0xFFDC2626),
+                        title: 'طالب حالي',
+                        titleColor: const Color(0xFFFFFCF7),
+                        imagePath:
+                            'assets/images/current student photo.png',
+                        cardHeight: cardHeight,
+                        onTap: () => context.pushNamed(AppRoutes.login),
+                      ),
+                      SizedBox(height: context.rsV(24)),
 
                       // Footer (logo frame y689; year/admin placed from MEASURED ink
                       SizedBox(

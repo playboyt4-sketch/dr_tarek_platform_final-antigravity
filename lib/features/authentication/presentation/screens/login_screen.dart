@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -209,10 +210,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // already honors it, then apply it to the Firebase session (web-native
     // persistence; mobile is enforced at cold start). Both best-effort:
     // login must never fail because of them.
-    await saveRememberMeChoice(_rememberMe);
-    await ref
+    unawaited(saveRememberMeChoice(_rememberMe));
+    unawaited(ref
         .read(authProvider.notifier)
-        .applyRememberMePersistence(_rememberMe);
+        .applyRememberMePersistence(_rememberMe));
 
     await ref.read(authProvider.notifier).login(
           phoneNumber: _phoneController.text.trim(),
@@ -231,22 +232,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // same invariant for deep links / restored URLs.
     if (session is SessionAuthenticated) {
       if (_rememberMe) {
-        await saveRememberedPhone(
+        unawaited(saveRememberedPhone(
           rememberMe: true,
           phone: _phoneController.text.trim(),
-        );
-        await saveRememberedPassword(
+        ));
+        unawaited(saveRememberedPassword(
           rememberMe: true,
           password: _passwordController.text,
-        );
+        ));
       } else {
-        await clearRememberedCredentials();
+        unawaited(clearRememberedCredentials());
       }
       if (!mounted) return;
       TextInput.finishAutofillContext(shouldSave: true);
-      await _flushPendingPhoto(session.user);
+      unawaited(_flushPendingPhoto(session.user));
       if (!mounted) return;
-      context.goNamed(_homeRouteForRole(session.user.role));
+      try { context.goNamed(_homeRouteForRole(session.user.role)); } catch (_) {}
       return;
     }
     // Error sessions surface inline via the watched providers below.
@@ -271,7 +272,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           );
           if (!mounted) return;
           TextInput.finishAutofillContext(shouldSave: true);
-          context.goNamed(_homeRouteForRole(retry.user.role));
+          try { context.goNamed(_homeRouteForRole(retry.user.role)); } catch (_) {}
           return;
         }
         if (retry is! SessionError) {
@@ -360,20 +361,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             final isKeyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
             final heroY = context.rsV(10);
             final heroHeight = isKeyboardOpen
-                ? context.rsV(200)
-                : (availableHeight * 0.32).clamp(180.0, context.rsV(270));
+                ? context.rsV(140)
+                : (availableHeight * 0.28).clamp(140.0, context.rsV(220));
             final backY = heroY + context.rsV(12);
             final titleY = heroY + heroHeight + context.rsV(12);
-            final phoneY = titleY + context.rsV(38);
-            final passwordY = phoneY + context.rsV(68);
-            final forgetY = passwordY + context.rsV(66);
-            final errorY = forgetY + context.rsV(30);
+            final phoneY = titleY + context.rsV(32);
+            final formEstimatedHeight = authError != null ? 240.0 : 208.0;
             final buttonY = isKeyboardOpen
-                ? errorY + context.rsV(52)
-                : math.max(errorY + context.rsV(40), availableHeight - context.rsV(76));
+                ? phoneY + formEstimatedHeight + context.rsV(20)
+                : math.max(
+                    phoneY + formEstimatedHeight + context.rsV(16),
+                    availableHeight - context.rsV(76),
+                  );
             final totalHeight = isKeyboardOpen
                 ? buttonY + context.rsV(80)
-                : availableHeight;
+                : math.max(availableHeight, buttonY + context.rsV(80));
 
             return SingleChildScrollView(
               physics: isKeyboardOpen
@@ -447,51 +449,95 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
 
-                    // --- 4+5. Phone + password fields inside one Form so a
-                    // single validate() call covers both.
-                    Positioned.fill(
+                    // --- 4+5. Phone + password fields inside one Form with explicit spacing
+                    Positioned(
+                      left: context.rs(_LoginDesign.fieldX),
+                      top: phoneY,
+                      width: context.rs(_LoginDesign.fieldWidth),
                       child: Form(
                         key: _formKey,
                         child: AutofillGroup(
-                          child: Stack(
-                            clipBehavior: Clip.none,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Positioned(
-                                left: context.rs(_LoginDesign.fieldX),
-                                top: phoneY,
-                                child: SizedBox(
-                                  width: context.rs(_LoginDesign.fieldWidth),
-                                  child: TextFormField(
-                                    controller: _phoneController,
-                                    keyboardType: TextInputType.phone,
-                                    textDirection: TextDirection.ltr,
-                                    textInputAction: TextInputAction.next,
-                                    autofillHints: const [
-                                      AutofillHints.username,
-                                      AutofillHints.telephoneNumber,
-                                    ],
-                                  validator: (value) {
-                                    final normalized =
-                                        normalizeEgyptianPhone(value ?? '');
-                                    if (normalized.isEmpty) {
-                                      return l10n.errorValidation;
-                                    }
-                                    if (!isValidEgyptianPhone(normalized)) {
-                                      return 'يرجى إدخال رقم هاتف مصري صحيح';
-                                    }
-                                    return null;
-                                  },
-                                  style: AppTypography.titleMedium(
-                                    context,
-                                    color: semantic.textPrimary,
+                              TextFormField(
+                                controller: _phoneController,
+                                keyboardType: TextInputType.phone,
+                                textDirection: TextDirection.ltr,
+                                textInputAction: TextInputAction.next,
+                                autofillHints: const [
+                                  AutofillHints.username,
+                                  AutofillHints.telephoneNumber,
+                                ],
+                                validator: (value) {
+                                  final normalized =
+                                      normalizeEgyptianPhone(value ?? '');
+                                  if (normalized.isEmpty) {
+                                    return l10n.errorValidation;
+                                  }
+                                  if (!isValidEgyptianPhone(normalized)) {
+                                    return 'يرجى إدخال رقم هاتف مصري صحيح';
+                                  }
+                                  return null;
+                                },
+                                style: AppTypography.titleMedium(
+                                  context,
+                                  color: semantic.textPrimary,
+                                ),
+                                decoration: _fieldDecoration(
+                                  context,
+                                  hint: 'phone number',
+                                  prefixIcon: SvgPicture.asset(
+                                    'assets/images/Smartphone.svg',
+                                    width: 20,
+                                    height: 20,
+                                    colorFilter: ColorFilter.mode(
+                                      semantic.inputHint,
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
-                                  decoration: _fieldDecoration(
-                                    context,
-                                    hint: 'phone number',
-                                    prefixIcon: SvgPicture.asset(
-                                      'assets/images/Smartphone.svg',
-                                      width: 20,
-                                      height: 20,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              TextFormField(
+                                controller: _passwordController,
+                                obscureText: _obscurePassword,
+                                autofillHints: const [
+                                  AutofillHints.password,
+                                ],
+                                textInputAction: TextInputAction.done,
+                                onFieldSubmitted: (_) =>
+                                    isLoading ? null : _login(),
+                                validator: (value) =>
+                                    (value == null || value.isEmpty)
+                                        ? l10n.errorValidation
+                                        : null,
+                                style: AppTypography.titleMedium(
+                                  context,
+                                  color: semantic.textPrimary,
+                                ),
+                                decoration: _fieldDecoration(
+                                  context,
+                                  hint: 'Password',
+                                  prefixIcon: Icon(
+                                    Icons.lock_outline,
+                                    size: 20,
+                                    color: semantic.inputHint,
+                                  ),
+                                  suffixIcon: IconButton(
+                                    key: const Key(
+                                      'passwordVisibilityToggle',
+                                    ),
+                                    onPressed: () => setState(
+                                      () => _obscurePassword =
+                                          !_obscurePassword,
+                                    ),
+                                    icon: SvgPicture.asset(
+                                      _obscurePassword
+                                          ? 'assets/images/Eye.svg'
+                                          : 'assets/images/Eye off.svg',
+                                      width: 24,
+                                      height: 24,
                                       colorFilter: ColorFilter.mode(
                                         semantic.inputHint,
                                         BlendMode.srcIn,
@@ -500,76 +546,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ),
                                 ),
                               ),
-                            ),
-
-                            // Password
-                            Positioned(
-                              left: context.rs(_LoginDesign.fieldX),
-                              top: passwordY,
-                              child: SizedBox(
-                                width: context.rs(_LoginDesign.fieldWidth),
-                                child: TextFormField(
-                                  controller: _passwordController,
-                                  obscureText: _obscurePassword,
-                                  autofillHints: const [
-                                    AutofillHints.password,
-                                  ],
-                                  textInputAction: TextInputAction.done,
-                                  onFieldSubmitted: (_) =>
-                                      isLoading ? null : _login(),
-                                  validator: (value) =>
-                                      (value == null || value.isEmpty)
-                                          ? l10n.errorValidation
-                                          : null,
-                                  style: AppTypography.titleMedium(
-                                    context,
-                                    color: semantic.textPrimary,
-                                  ),
-                                  decoration: _fieldDecoration(
-                                    context,
-                                    hint: 'Password',
-                                    prefixIcon: Icon(
-                                      Icons.lock_outline,
-                                      size: 20,
-                                      color: semantic.inputHint,
-                                    ),
-                                    suffixIcon: IconButton(
-                                      key: const Key(
-                                        'passwordVisibilityToggle',
-                                      ),
-                                      onPressed: () => setState(
-                                        () => _obscurePassword =
-                                            !_obscurePassword,
-                                      ),
-                                      icon: SvgPicture.asset(
-                                        _obscurePassword
-                                            ? 'assets/images/Eye.svg'
-                                            : 'assets/images/Eye off.svg',
-                                        width: 24,
-                                        height: 24,
-                                        colorFilter: ColorFilter.mode(
-                                          semantic.inputHint,
-                                          BlendMode.srcIn,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            // Remember me + Forget password on one row. The
-                            // right-aligned link (Figma 206,655 186x24,
-                            // 14 w100 black centered) opens the existing
-                            // V1 forgot-password bottom sheet; the
-                            // left-aligned checkbox toggles session
-                            // persistence (checked = stay signed in across
-                            // restarts, the long-standing default).
-                            Positioned(
-                              top: forgetY,
-                              left: context.rs(24),
-                              right: context.rs(24),
-                              child: SizedBox(
+                              const SizedBox(height: 16),
+                              SizedBox(
                                 height: context.rsV(
                                   _LoginDesign.optionsRowHeight,
                                 ),
@@ -655,17 +633,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ],
                                 ),
                               ),
-                            ),
-
-                            // Auth error (no Figma slot — sits in the gap
-                            // between the forget link and the CTA so the
-                            // fixed composition never overflows).
-                            if (authError != null)
-                              Positioned(
-                                top: errorY,
-                                left: context.rs(24),
-                                right: context.rs(24),
-                                child: Text(
+                              if (authError != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
                                   authError,
                                   textAlign: TextAlign.center,
                                   style: AppTypography.bodyRegular(
@@ -673,12 +643,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     color: semantic.error,
                                   ),
                                 ),
-                              ),
-                          ],
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
 
                     // --- 6. Primary CTA
                     Positioned(

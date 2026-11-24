@@ -198,7 +198,10 @@ class _NewStudentPasswordScreenState
 
     RegistrationDeviceInfo? pushInfo;
     try {
-      pushInfo = await RegistrationDeviceInfo.resolve();
+      pushInfo = await RegistrationDeviceInfo.resolve().timeout(
+        const Duration(milliseconds: 1200),
+        onTimeout: () => const RegistrationDeviceInfo(),
+      );
     } catch (_) {
       // Best-effort: push token resolution must never block registration
     }
@@ -214,25 +217,27 @@ class _NewStudentPasswordScreenState
           platform: pushInfo?.platform,
         );
     if (!mounted) return;
-    setState(() => _submitting = false);
 
     final authState = ref.read(authProvider);
     if (authState.hasError) {
       // Server-side failure (duplicate phone, no internet, …) — friendly
-      // Arabic copy only, never the raw exception.
-      setState(
-        () => _errorMessage = friendlyErrorMessage(context, authState.error),
-      );
+      // Arabic copy only, never the raw exception. Re-enable the CTA.
+      setState(() {
+        _submitting = false;
+        _errorMessage = friendlyErrorMessage(context, authState.error);
+      });
       return;
     }
 
     // Submission accepted: clear the in-memory draft (it also holds the
-    // password) and show the "under review" confirmation.
+    // password) and replace the registration stack with the "under review"
+    // confirmation so back navigation or double submission is impossible.
     ref.read(registrationFormProvider.notifier).reset();
     if (!mounted) return;
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const NewStudentEndScreen()));
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const NewStudentEndScreen()),
+      (route) => route.isFirst,
+    );
   }
 
   @override

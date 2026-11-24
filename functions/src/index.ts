@@ -2671,6 +2671,81 @@ export const onLoginAttempt = onCall(SECURE_CALL_OPTS, async (request) => {
     userId, deviceId, deviceName, platform, osVersion, appVersion, ipAddress,
   });
 
+  // ADR-004 / Single-device auto re-bind:
+  // When a student logs in on a new device, if they have active subject authorizations
+  // on a single-device allowance (device.max_count === 1), rebind them to the newly
+  // authenticated device so the student is never blocked after app updates or re-installs.
+  try {
+    const newDeviceHash = computeDeviceHash(userId, deviceId);
+    const activeSnap = await db.collection("subject_device_authorizations")
+      .where("student_id", "==", userId)
+      .where("status", "==", "active")
+      .get();
+
+    const activeDocs = activeSnap.docs.filter((d) => dataOf(d.data()).is_deleted !== true);
+    if (activeDocs.length > 0) {
+      const now = FieldValue.serverTimestamp();
+      const batch = db.batch();
+      let hasChanges = false;
+
+      for (const doc of activeDocs) {
+        const authData = dataOf(doc.data());
+        if (authData.device_hash !== newDeviceHash) {
+          const subjectId = getString(authData.subject_id);
+          if (subjectId) {
+            try {
+              const {planId} = await getActiveSubjectSubscription(userId, subjectId);
+              const allowance = await getSubjectAllowance(planId);
+              if (allowance === 1) {
+                // Revoke old single-device authorization
+                batch.update(doc.ref, {
+                  status: "revoked",
+                  revoked_at: now,
+                  revoked_by: "system",
+                  revoke_reason: "login_rebind",
+                  updated_at: now,
+                  updated_by: "system",
+                });
+                // Bind new device for this subject
+                const newAuthId = subjectAuthorizationId(userId, subjectId, newDeviceHash);
+                const newAuthRef = db.collection("subject_device_authorizations").doc(newAuthId);
+                batch.set(newAuthRef, {
+                  student_id: userId,
+                  subject_id: subjectId,
+                  device_hash: newDeviceHash,
+                  plan_key_at_bind: authData.plan_key_at_bind ?? null,
+                  status: "active",
+                  authorized_at: now,
+                  authorized_via: "login_rebind",
+                  last_used_at: now,
+                  revoked_at: null,
+                  revoked_by: null,
+                  revoke_reason: null,
+                  created_at: now,
+                  updated_at: now,
+                  created_by: "system",
+                  updated_by: "system",
+                  is_deleted: false,
+                  deleted_at: null,
+                  deleted_by: null,
+                }, {merge: true});
+                hasChanges = true;
+              }
+            } catch (_) {
+              // Inactive or deleted subscription, skip rebind for this subject
+            }
+          }
+        }
+      }
+      if (hasChanges) {
+        await batch.commit();
+      }
+    }
+  } catch (rebindError) {
+    // Rebind is best effort; registration outcome must still return
+    console.warn("Subject authorization rebind on login failed:", rebindError);
+  }
+
   await writeAnalyticsEvent(userId, "Device Registered", outcome.deviceDocId, {
     status: outcome.kind === "existing" ? "existing_device" : "new_device",
     platform,
