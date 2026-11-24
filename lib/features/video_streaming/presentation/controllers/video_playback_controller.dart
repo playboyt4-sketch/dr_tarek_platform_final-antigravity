@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -32,7 +33,8 @@ FirstVideoRef? firstVideoForEpisode(
 
 class VideoPlaybackController extends ChangeNotifier {
   final String userId;
-  final String subjectId;
+  String _subjectId;
+  String get subjectId => _subjectId;
   final VideoSourceGateway sourceResolver;
   final VideoEntitlementGateway entitlementService;
   final PlaybackRepository playbackRepository;
@@ -205,7 +207,8 @@ class VideoPlaybackController extends ChangeNotifier {
 
   VideoPlaybackController({
     required this.userId,
-    required this.subjectId,
+    // ignore: prefer_initializing_formals
+    required String subjectId,
     required this.sourceResolver,
     required this.entitlementService,
     required this.playbackRepository,
@@ -214,7 +217,8 @@ class VideoPlaybackController extends ChangeNotifier {
     this.watchWindowGateway,
     this.sessionGateway,
     this.deviceIdProvider,
-  }) : lectureId = episode.id,
+  }) : _subjectId = subjectId,
+       lectureId = episode.id,
        sectionId = episode.sectionId ?? '',
        episodeTitle = episode.title,
        episodeThumbnailUrl = episode.thumbnailUrl,
@@ -1231,6 +1235,10 @@ class VideoPlaybackController extends ChangeNotifier {
   Future<WatchWindowSnapshot?> _windowSnapshotBlocking(
     String targetLectureId,
   ) async {
+    // Pro/subscribed students with allowed entitlement are never blocked by rolling window
+    if (_entitlement?.allowed == true && dailyWindowExpiresAt == null) {
+      return null;
+    }
     final gateway = watchWindowGateway;
     if (_disposed || gateway == null) return null;
     try {
@@ -1255,6 +1263,12 @@ class VideoPlaybackController extends ChangeNotifier {
   }) async {
     if (_disposed || episode.id == lectureId) return;
     final operation = ++_operationId;
+    if (episode.subjectId != null && episode.subjectId!.isNotEmpty) {
+      _subjectId = episode.subjectId!;
+    }
+    try {
+      await FirebaseAuth.instance.currentUser?.getIdToken();
+    } catch (_) {}
     // §12 pre-check (FINAL_DECISIONS): never tear down the current engine
     // for a switch the server window will refuse — wall immediately for
     // the target instead (no wasted issuance, no playback flicker).

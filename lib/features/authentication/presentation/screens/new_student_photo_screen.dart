@@ -167,32 +167,42 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight =
+                (availableHeight * 0.38).clamp(180.0, context.rsV(310));
+            final backButtonY = illustrationY + context.rsV(14);
+            final titleY = illustrationY + illustrationHeight + context.rsV(16);
+            final uploadY = titleY + context.rsV(52);
+            final buttonY = math.max(
+              uploadY + uploadSize + context.rsV(20),
+              availableHeight - context.rsV(76),
+            );
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR - this is an English-only screen.
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_PhotoDesign.canvasWidth),
-                    height: context.rsV(_PhotoDesign.canvasHeight),
+                    height: availableHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                   children: [
                     // --- 1. Illustration panel (Figma 12,50 369x357 r35).
                     Positioned(
                       left: context.rs(_PhotoDesign.illustrationX),
-                      top: context.rsV(_PhotoDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_PhotoDesign.illustrationRadius),
                         ),
                         child: SizedBox(
                           width: context.rs(_PhotoDesign.illustrationWidth),
-                          height: context.rsV(
-                            _PhotoDesign.illustrationHeight,
-                          ),
+                          height: illustrationHeight,
                           child: Image.asset(
                             // Spec names `New Student - photo.png`,
                             // which is not shipped; reuse the
@@ -219,7 +229,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                     // --- Back button (Figma 24,64 44x44, sibling overlay).
                     Positioned(
                       left: context.rs(_PhotoDesign.backButtonX),
-                      top: context.rsV(_PhotoDesign.backButtonY),
+                      top: backButtonY,
                       child: SizedBox(
                         width: context.rs(_PhotoDesign.backButtonSize),
                         height: context.rs(_PhotoDesign.backButtonSize),
@@ -266,7 +276,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
 
                     // --- 2. Title (Figma y439, 393x69, centered).
                     Positioned(
-                      top: context.rsV(_PhotoDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: SizedBox(
@@ -290,7 +300,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                     // Positioned.
                     Positioned(
                       left: context.rs(_PhotoDesign.uploadX),
-                      top: context.rsV(_PhotoDesign.uploadY),
+                      top: uploadY,
                       child: InkWell(
                         onTap: () => _showPhotoPickerSheet(context),
                         borderRadius: BorderRadius.circular(uploadSize / 2),
@@ -388,7 +398,7 @@ class _NewStudentPhotoScreenState extends State<NewStudentPhotoScreen> {
                     // Photo is OPTIONAL: never validates, always navigates.
                     Positioned(
                       left: context.rs(_PhotoDesign.buttonX),
-                      top: context.rsV(_PhotoDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_PhotoDesign.buttonWidth),
                         height: _PhotoDesign.buttonHeight,

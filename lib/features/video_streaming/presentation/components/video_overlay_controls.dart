@@ -75,6 +75,7 @@ class VideoOverlayControls extends StatelessWidget {
               // Middle band: volume slider | center controls | brightness.
               // Physical LTR order pinned (volume LEFT, brightness RIGHT)
               // because the app RTL locale would otherwise mirror the Row.
+              // Safe margin protects against Notch / Dynamic Island in landscape.
               Expanded(
                 child: Directionality(
                   textDirection: TextDirection.ltr,
@@ -82,18 +83,28 @@ class VideoOverlayControls extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       SizedBox(
-                        width: 64,
-                        child: VideoEdgeSlider.volume(
-                          controller: controller,
+                        width: 64 + MediaQuery.paddingOf(context).left,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: MediaQuery.paddingOf(context).left,
+                          ),
+                          child: VideoEdgeSlider.volume(
+                            controller: controller,
+                          ),
                         ),
                       ),
                       Expanded(
                         child: VideoCenterControls(controller: controller),
                       ),
                       SizedBox(
-                        width: 64,
-                        child: VideoEdgeSlider.brightness(
-                          controller: controller,
+                        width: 64 + MediaQuery.paddingOf(context).right,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            right: MediaQuery.paddingOf(context).right,
+                          ),
+                          child: VideoEdgeSlider.brightness(
+                            controller: controller,
+                          ),
                         ),
                       ),
                     ],

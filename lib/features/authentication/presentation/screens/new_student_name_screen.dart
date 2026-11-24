@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -159,10 +160,6 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Same viewport math as the Welcome screen: the fixed 393x852 Stack
-    // lives INSIDE the SafeArea, so Figma's y-coords (measured from the
-    // canvas top, status-bar chrome included) land correctly without any
-    // manual top/bottom padding to tune.
     final semantic = AppSemanticColors.of(context);
 
     return Scaffold(
@@ -170,25 +167,41 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final isKeyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight = isKeyboardOpen
+                ? context.rsV(200)
+                : (availableHeight * 0.38).clamp(180.0, context.rsV(310));
+            final backButtonY = illustrationY + context.rsV(14);
+            final titleY = illustrationY + illustrationHeight + context.rsV(16);
+            final fieldY = titleY + context.rsV(48);
+            final buttonY = isKeyboardOpen
+                ? fieldY + context.rsV(86)
+                : math.max(fieldY + context.rsV(80), availableHeight - context.rsV(76));
+            final totalHeight = isKeyboardOpen
+                ? buttonY + context.rsV(80)
+                : availableHeight;
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: isKeyboardOpen
+                  ? const ClampingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR — English-only screen (see file-level OPEN ITEM).
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_NameDesign.canvasWidth),
-                    height: context.rsV(_NameDesign.canvasHeight),
+                    height: totalHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
-                  children: [
-                    // --- 1. Illustration panel (Figma 12,50 369x344 r35).
-                    // BoxFit.cover crops cleanly to the box — never
-                    // BoxFit.fill, which stretches the art.
+                      children: [
+                    // --- 1. Illustration panel
                     Positioned(
                       left: context.rs(_NameDesign.illustrationX),
-                      top: context.rsV(_NameDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_NameDesign.illustrationRadius),
@@ -196,8 +209,7 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                         child: SizedBox(
                           key: const Key('nameIllustrationStack'),
                           width: context.rs(_NameDesign.illustrationWidth),
-                          height:
-                              context.rsV(_NameDesign.illustrationHeight),
+                          height: illustrationHeight,
                           child: Image.asset(
                             AssetImages.newStudentNamePhoto,
                             fit: BoxFit.cover,
@@ -216,10 +228,10 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                       ),
                     ),
 
-                    // --- Back button (Figma 24,64 44x44, asset button/back).
+                    // --- Back button
                     Positioned(
                       left: context.rs(_NameDesign.backButtonX),
-                      top: context.rsV(_NameDesign.backButtonY),
+                      top: backButtonY,
                       child: SizedBox(
                         width: context.rs(_NameDesign.backButtonSize),
                         height: context.rs(_NameDesign.backButtonSize),
@@ -227,9 +239,9 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                       ),
                     ),
 
-                    // --- 2. Headline (Figma y426, 393 wide, centered).
+                    // --- 2. Headline
                     Positioned(
-                      top: context.rsV(_NameDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: Text(
@@ -243,16 +255,10 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                       ),
                     ),
 
-                    // --- 3. Full Name field (Figma 12,608 w369, ~69px box).
-                    // FONT: Figma exports Inter 20px for BOTH the
-                    // 'Full Name' label and the 'Enter your full name'
-                    // hint — reproduced here as the shared
-                    // AppTypography.bodyRegular size for both, in
-                    // Figma's #9A9A9A gray, LEFT-aligned
-                    // (floatingLabelAlignment.start + textAlign.start).
+                    // --- 3. Full Name field
                     Positioned(
                       left: context.rs(_NameDesign.fieldX),
-                      top: context.rsV(_NameDesign.fieldY),
+                      top: fieldY,
                       child: SizedBox(
                         width: context.rs(_NameDesign.fieldWidth),
                         child: Form(
@@ -362,10 +368,10 @@ class _NewStudentNameScreenState extends ConsumerState<NewStudentNameScreen> {
                       ),
                     ),
 
-                    // --- 4. Primary CTA (Figma 24,754 w345, Style = Solid).
+                    // --- 4. Primary CTA
                     Positioned(
                       left: context.rs(_NameDesign.buttonX),
-                      top: context.rsV(_NameDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_NameDesign.buttonWidth),
                         child: PrimaryButton(

@@ -215,4 +215,28 @@ void main() {
     expect(controller.errorMessage, 'ليس لديك اشتراك فعال في هذه المادة.');
     controller.dispose();
   });
+
+  test('Pro student successfully switches from lecture 1 to lecture 2 without rolling window block', () async {
+    final sourceResolver = _FakeSourceResolver();
+    final entitlementService = _FakeEntitlementService()
+      ..verdict = const VideoEntitlement(
+        allowed: true,
+        allowedQualities: {VideoQuality.q1080},
+      );
+    final controller = _controller(
+      sourceResolver: sourceResolver,
+      entitlementService: entitlementService,
+    );
+
+    await controller.initialize();
+    expect(controller.lectureId, 'ep-1');
+
+    final ep2 = _episode('ep-2');
+    await controller.switchEpisode(ep2);
+
+    expect(controller.lectureId, 'ep-2');
+    expect(controller.deviceBlocked, isFalse);
+    expect(controller.showUpgradePrompt, isFalse);
+    controller.dispose();
+  });
 }

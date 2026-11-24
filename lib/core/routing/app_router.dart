@@ -57,13 +57,6 @@ String? resolveSessionRedirect({
   required SessionState? session,
   required String location,
 }) {
-  const preLogin = {
-    AppRoutes.splashPath,
-    AppRoutes.userTypeSelectionPath,
-    AppRoutes.newStudentWelcomePath,
-    AppRoutes.loginPath,
-    AppRoutes.teacherAdminSelectionPath,
-  };
   const homes = {
     AppRoutes.studentHomePath,
     AppRoutes.adminHomePath,
@@ -76,7 +69,8 @@ String? resolveSessionRedirect({
             ? AppRoutes.adminHomePath
             : AppRoutes.studentHomePath;
     if (location == dest) return null;
-    if (preLogin.contains(location)) return dest;
+    // Explicit user choice: never auto-redirect away from pre-login screens
+    // (welcome, login, new student wizard). Redirection only guards home routes.
     if (homes.contains(location)) return dest;
     return null;
   }

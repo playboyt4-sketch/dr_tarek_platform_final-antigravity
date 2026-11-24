@@ -74,16 +74,24 @@ class NewStudentEndScreen extends StatelessWidget {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight =
+                (availableHeight * 0.40).clamp(200.0, context.rsV(320));
+            final titleY = illustrationY + illustrationHeight + context.rsV(20);
+            final subtitleY = titleY + context.rsV(60);
+            final buttonY = availableHeight - context.rsV(76);
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR - this is an English-only screen.
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_EndDesign.canvasWidth),
-                    height: context.rsV(_EndDesign.canvasHeight),
+                    height: availableHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                   children: [
@@ -91,15 +99,14 @@ class NewStudentEndScreen extends StatelessWidget {
                     // Figma 12,50 369x348 r35.
                     Positioned(
                       left: context.rs(_EndDesign.illustrationX),
-                      top: context.rsV(_EndDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_EndDesign.illustrationRadius),
                         ),
                         child: SizedBox(
                           width: context.rs(_EndDesign.illustrationWidth),
-                          height:
-                              context.rsV(_EndDesign.illustrationHeight),
+                          height: illustrationHeight,
                           child: Image.asset(
                             'assets/images/New Student - End photo.png',
                             fit: BoxFit.cover,
@@ -119,7 +126,7 @@ class NewStudentEndScreen extends StatelessWidget {
                     // --- 2. Title (Figma y430, 393x82, centered). ---
                     // Figma: Google Sans Flex 28px regular black, lh 36px.
                     Positioned(
-                      top: context.rsV(_EndDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: SizedBox(
@@ -141,7 +148,7 @@ class NewStudentEndScreen extends StatelessWidget {
                     // --- 3. Explanation Subtitle (Figma y537, 393x63). ---
                     // Figma: Google Sans Flex 14px regular #9A9A9A, lh 20px.
                     Positioned(
-                      top: context.rsV(_EndDesign.subtitleY),
+                      top: subtitleY,
                       left: 0,
                       right: 0,
                       child: SizedBox(
@@ -164,7 +171,7 @@ class NewStudentEndScreen extends StatelessWidget {
                     // Figma 24,754 w345.
                     Positioned(
                       left: context.rs(_EndDesign.buttonX),
-                      top: context.rsV(_EndDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_EndDesign.buttonWidth),
                         height: context.rsV(_EndDesign.buttonHeight),

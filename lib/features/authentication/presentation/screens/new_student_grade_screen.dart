@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
@@ -177,16 +178,25 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight =
+                (availableHeight * 0.35).clamp(160.0, context.rsV(280));
+            final backButtonY = illustrationY + context.rsV(14);
+            final titleY = illustrationY + illustrationHeight + context.rsV(14);
+            final listY = titleY + context.rsV(42);
+            final totalHeight = math.max(listY + context.rsV(280), availableHeight);
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR - this is an English-only screen.
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_GradeDesign.canvasWidth),
-                    height: context.rsV(_GradeDesign.canvasHeight),
+                    height: totalHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                   children: [
@@ -195,7 +205,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                     // BoxFit.fill, which stretches the art.
                     Positioned(
                       left: context.rs(_GradeDesign.illustrationX),
-                      top: context.rsV(_GradeDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_GradeDesign.illustrationRadius),
@@ -203,8 +213,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                         child: SizedBox(
                           key: const Key('gradeIllustration'),
                           width: context.rs(_GradeDesign.illustrationWidth),
-                          height: context
-                              .rsV(_GradeDesign.illustrationHeight),
+                          height: illustrationHeight,
                           child: Image.asset(
                             'assets/images/New Student - Grade photo.png',
                             fit: BoxFit.cover,
@@ -226,7 +235,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                     // the illustration box (same pattern as Welcome/Name).
                     Positioned(
                       left: context.rs(_GradeDesign.backButtonX),
-                      top: context.rsV(_GradeDesign.backButtonY),
+                      top: backButtonY,
                       child: SizedBox(
                         width: context.rs(_GradeDesign.backButtonSize),
                         height: context.rs(_GradeDesign.backButtonSize),
@@ -236,7 +245,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
 
                     // --- 2. Headline (Figma y406, 393 wide, centered).
                     Positioned(
-                      top: context.rsV(_GradeDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: Text(
@@ -256,7 +265,7 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
                     // (no bottom CTA — Teacher request).
                     Positioned(
                       left: context.rs(_GradeDesign.listX),
-                      top: context.rsV(_GradeDesign.listY),
+                      top: listY,
                       child: SizedBox(
                         key: const Key('gradeList'),
                         width: context.rs(_GradeDesign.listWidth),

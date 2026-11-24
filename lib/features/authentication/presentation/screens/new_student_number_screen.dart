@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -199,16 +200,34 @@ class _NewStudentNumberScreenState
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final isKeyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight = isKeyboardOpen
+                ? context.rsV(200)
+                : (availableHeight * 0.38).clamp(180.0, context.rsV(310));
+            final backButtonY = illustrationY + context.rsV(14);
+            final titleY = illustrationY + illustrationHeight + context.rsV(16);
+            final fieldY = titleY + context.rsV(48);
+            final buttonY = isKeyboardOpen
+                ? fieldY + context.rsV(86)
+                : math.max(fieldY + context.rsV(80), availableHeight - context.rsV(76));
+            final totalHeight = isKeyboardOpen
+                ? buttonY + context.rsV(80)
+                : availableHeight;
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: isKeyboardOpen
+                  ? const ClampingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR — English-only screen (see file-level OPEN ITEM).
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_NumberDesign.canvasWidth),
-                    height: context.rsV(_NumberDesign.canvasHeight),
+                    height: totalHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                   children: [
@@ -217,7 +236,7 @@ class _NewStudentNumberScreenState
                     // BoxFit.fill, which stretches the art.
                     Positioned(
                       left: context.rs(_NumberDesign.illustrationX),
-                      top: context.rsV(_NumberDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_NumberDesign.illustrationRadius),
@@ -225,9 +244,7 @@ class _NewStudentNumberScreenState
                         child: SizedBox(
                           key: const Key('numberIllustrationStack'),
                           width: context.rs(_NumberDesign.illustrationWidth),
-                          height: context.rsV(
-                            _NumberDesign.illustrationHeight,
-                          ),
+                          height: illustrationHeight,
                           child: Image.asset(
                             AssetImages.newStudentNumberPhoto,
                             fit: BoxFit.cover,
@@ -256,7 +273,7 @@ class _NewStudentNumberScreenState
                     // NOT nested inside the art box.
                     Positioned(
                       left: context.rs(_NumberDesign.backButtonX),
-                      top: context.rsV(_NumberDesign.backButtonY),
+                      top: backButtonY,
                       child: SizedBox(
                         width: context.rs(_NumberDesign.backButtonSize),
                         height: context.rs(_NumberDesign.backButtonSize),
@@ -266,7 +283,7 @@ class _NewStudentNumberScreenState
 
                     // --- 2. Headline (Figma y437, 393 wide, centered).
                     Positioned(
-                      top: context.rsV(_NumberDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: Text(
@@ -304,7 +321,7 @@ class _NewStudentNumberScreenState
                     // [_onNextPressed] OPEN ITEM).
                     Positioned(
                       left: context.rs(_NumberDesign.fieldX),
-                      top: context.rsV(_NumberDesign.fieldY),
+                      top: fieldY,
                       child: SizedBox(
                         width: context.rs(_NumberDesign.fieldWidth),
                         child: Form(
@@ -436,7 +453,7 @@ class _NewStudentNumberScreenState
                     // --- 4. Primary CTA (Figma 24,754 w345, Style = Solid).
                     Positioned(
                       left: context.rs(_NumberDesign.buttonX),
-                      top: context.rsV(_NumberDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_NumberDesign.buttonWidth),
                         child: PrimaryButton(

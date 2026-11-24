@@ -3132,10 +3132,10 @@ async function beginOrTakeoverSession(input: {
     if (sessionSnap.exists) {
       const current = dataOf(sessionSnap.data());
       if (sessionIsLive(current, nowMs) && getString(current.active_device_hash) === deviceHash) {
-        const position = Math.max(
-          persistedPosition,
-          getNumber(current.position_seconds) ?? 0,
-        );
+        const isSameLecture = current.content_ref?.lecture_id === content.lecture_id;
+        const position = isSameLecture
+          ? Math.max(persistedPosition, getNumber(current.position_seconds) ?? 0)
+          : persistedPosition;
         tx.update(sessionRef, {
           content_ref: {lecture_id: content.lecture_id, video_id: content.video_id},
           position_seconds: position,
@@ -4915,10 +4915,14 @@ export const generateBunnySignedUrl = onCall({
       plan: subjectPlan,
     },
   });
+  const isPaidSubscriber =
+    !isGuestPlan(subjectPlanId, subjectPlan) &&
+    issuerStudentType !== GUEST_STUDENT_TYPE;
   const isGuestAccess =
-    tier.tier === "guest" ||
-    isGuestPlan(subjectPlanId, subjectPlan) ||
-    issuerStudentType === GUEST_STUDENT_TYPE;
+    !isPaidSubscriber &&
+    (tier.tier === "guest" ||
+      isGuestPlan(subjectPlanId, subjectPlan) ||
+      issuerStudentType === GUEST_STUDENT_TYPE);
   let guestPreviewSeconds: number | null = null;
   if (isGuestAccess) {
     const guestFields = readGuestPreviewFields(lecture);
@@ -4931,6 +4935,12 @@ export const generateBunnySignedUrl = onCall({
     if (guestPreviewSeconds === null) {
       throw new HttpsError("permission-denied", "Guest preview is not enabled for this lecture.");
     }
+  } else if (isPaidSubscriber && tier.tier === "guest") {
+    throw new HttpsError(
+      "permission-denied",
+      "جهازك الحالي غير مصرح له بمشاهدة هذا المحتوى — تواصل مع الإدارة لتفعيل الجهاز.",
+      {reason: "device_limit_reached", allowance: tier.allowance, activeCount: tier.activeAuthorizationCount},
+    );
   }
 
   // ADR-004 Max continuity: on a 2-allowance Subject, Full video issuance
@@ -5563,6 +5573,16 @@ export const associateBunnyVideoToLibrary = onCall({
 
 export const getVideoWatchWindow = onCall(SECURE_CALL_OPTS, async (request) => {
   const userId = requireAuthenticated(request);
+  const userSnap = await db.collection("users").doc(userId).get();
+  if (!userSnap.exists) return {active: false};
+  const userData = dataOf(userSnap.data());
+  const issuerStudentType = getString(userData.student_type);
+
+  // Pro and non-guest students are never subject to the rolling watch window
+  if (issuerStudentType !== GUEST_STUDENT_TYPE && issuerStudentType !== "center_student") {
+    return {active: false};
+  }
+
   const windowSnap = await db.collection("video_watch_windows").doc(userId).get();
   if (!windowSnap.exists) return {active: false};
   const window = windowSnap.data() as any;

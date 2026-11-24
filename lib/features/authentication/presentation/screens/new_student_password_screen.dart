@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -247,16 +248,44 @@ class _NewStudentPasswordScreenState
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final isKeyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+            final illustrationY = context.rsV(10);
+            final illustrationHeight = isKeyboardOpen
+                ? context.rsV(140)
+                : (availableHeight * 0.28).clamp(160.0, context.rsV(240));
+            final backButtonY = illustrationY + context.rsV(14);
+            final titleY = illustrationY + illustrationHeight + context.rsV(10);
+            final field1Y = titleY + context.rsV(44);
+            final helperY = field1Y + context.rsV(62);
+            final field2Y = helperY + context.rsV(28);
+            final errorY = field2Y + context.rsV(62);
+            final buttonY = isKeyboardOpen
+                ? (_errorMessage != null
+                    ? errorY + context.rsV(32)
+                    : field2Y + context.rsV(76))
+                : math.max(
+                    _errorMessage != null
+                        ? errorY + context.rsV(32)
+                        : field2Y + context.rsV(76),
+                    availableHeight - context.rsV(76),
+                  );
+            final totalHeight = isKeyboardOpen
+                ? buttonY + context.rsV(80)
+                : availableHeight;
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: isKeyboardOpen
+                  ? const ClampingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR — same as the Welcome/Name sibling steps.
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_PasswordDesign.canvasWidth),
-                    height: context.rsV(_PasswordDesign.canvasHeight),
+                    height: totalHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                   children: [
@@ -265,7 +294,7 @@ class _NewStudentPasswordScreenState
                     // BoxFit.fill, which stretches the art.
                     Positioned(
                       left: context.rs(_PasswordDesign.illustrationX),
-                      top: context.rsV(_PasswordDesign.illustrationY),
+                      top: illustrationY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_PasswordDesign.illustrationRadius),
@@ -274,8 +303,7 @@ class _NewStudentPasswordScreenState
                           key: const Key('passwordIllustrationStack'),
                           width:
                               context.rs(_PasswordDesign.illustrationWidth),
-                          height: context.rsV(
-                              _PasswordDesign.illustrationHeight),
+                          height: illustrationHeight,
                           child: Image.asset(
                             _PasswordDesign.illustrationAsset,
                             fit: BoxFit.cover,
@@ -298,7 +326,7 @@ class _NewStudentPasswordScreenState
                     // Name pattern). Still pops the route.
                     Positioned(
                       left: context.rs(_PasswordDesign.backButtonX),
-                      top: context.rsV(_PasswordDesign.backButtonY),
+                      top: backButtonY,
                       child: SizedBox(
                         width:
                             context.rs(_PasswordDesign.backButtonSize),
@@ -349,7 +377,7 @@ class _NewStudentPasswordScreenState
                     // --- 2. Title (Figma 10,407 374x68, centered).
                     Positioned(
                       left: context.rs(_PasswordDesign.titleX),
-                      top: context.rsV(_PasswordDesign.titleY),
+                      top: titleY,
                       child: SizedBox(
                         width: context.rs(_PasswordDesign.titleWidth),
                         height:
@@ -376,7 +404,7 @@ class _NewStudentPasswordScreenState
                     // Figma shows it only on the confirm field).
                     Positioned(
                       left: context.rs(_PasswordDesign.fieldX),
-                      top: context.rsV(_PasswordDesign.field1Y),
+                      top: field1Y,
                       child: SizedBox(
                         width: context.rs(_PasswordDesign.fieldWidth),
                         child: TextField(
@@ -442,7 +470,7 @@ class _NewStudentPasswordScreenState
                     // --- 3b. Helper (Figma 24,584 356x31, centered).
                     Positioned(
                       left: context.rs(_PasswordDesign.helperX),
-                      top: context.rsV(_PasswordDesign.helperY),
+                      top: helperY,
                       child: SizedBox(
                         width: context.rs(_PasswordDesign.helperWidth),
                         height:
@@ -467,7 +495,7 @@ class _NewStudentPasswordScreenState
                     // With eye toggle icon per Figma. Decoration kept as-is.
                     Positioned(
                       left: context.rs(_PasswordDesign.fieldX),
-                      top: context.rsV(_PasswordDesign.field2Y),
+                      top: field2Y,
                       child: SizedBox(
                         width: context.rs(_PasswordDesign.fieldWidth),
                         child: TextField(
@@ -534,7 +562,7 @@ class _NewStudentPasswordScreenState
                     if (_errorMessage != null)
                       Positioned(
                         left: context.rs(_PasswordDesign.fieldX),
-                        top: context.rsV(_PasswordDesign.errorY),
+                        top: errorY,
                         child: SizedBox(
                           width:
                               context.rs(_PasswordDesign.fieldWidth),
@@ -558,7 +586,7 @@ class _NewStudentPasswordScreenState
                     // double taps.
                     Positioned(
                       left: context.rs(_PasswordDesign.buttonX),
-                      top: context.rsV(_PasswordDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_PasswordDesign.buttonWidth),
                         height: _PasswordDesign.buttonHeight,

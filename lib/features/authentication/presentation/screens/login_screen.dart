@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -122,6 +123,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _phoneController.text = phone;
       }
     });
+    loadRememberedPassword().then((password) {
+      if (!mounted || password == null || password.isEmpty) return;
+      if (_passwordController.text.isEmpty) {
+        _passwordController.text = password;
+      }
+    });
   }
 
   /// Terminal non-error session message (pending/rejected/disabled/…).
@@ -141,7 +148,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _rememberMe = value);
     saveRememberMeChoice(value);
     if (!value) {
-      saveRememberedPhone(rememberMe: false);
+      clearRememberedCredentials();
     }
   }
 
@@ -223,10 +230,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // Authenticated → role home. The GoRouter session redirect guards the
     // same invariant for deep links / restored URLs.
     if (session is SessionAuthenticated) {
-      await saveRememberedPhone(
-        rememberMe: _rememberMe,
-        phone: _phoneController.text.trim(),
-      );
+      if (_rememberMe) {
+        await saveRememberedPhone(
+          rememberMe: true,
+          phone: _phoneController.text.trim(),
+        );
+        await saveRememberedPassword(
+          rememberMe: true,
+          password: _passwordController.text,
+        );
+      } else {
+        await clearRememberedCredentials();
+      }
       if (!mounted) return;
       TextInput.finishAutofillContext(shouldSave: true);
       await _flushPendingPhoto(session.user);
@@ -341,31 +356,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final isKeyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+            final heroY = context.rsV(10);
+            final heroHeight = isKeyboardOpen
+                ? context.rsV(200)
+                : (availableHeight * 0.32).clamp(180.0, context.rsV(270));
+            final backY = heroY + context.rsV(12);
+            final titleY = heroY + heroHeight + context.rsV(12);
+            final phoneY = titleY + context.rsV(38);
+            final passwordY = phoneY + context.rsV(68);
+            final forgetY = passwordY + context.rsV(66);
+            final errorY = forgetY + context.rsV(30);
+            final buttonY = isKeyboardOpen
+                ? errorY + context.rsV(52)
+                : math.max(errorY + context.rsV(40), availableHeight - context.rsV(76));
+            final totalHeight = isKeyboardOpen
+                ? buttonY + context.rsV(80)
+                : availableHeight;
+
             return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
+              physics: isKeyboardOpen
+                  ? const ClampingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: availableHeight),
                 child: Directionality(
                   // Force LTR — English-only screen, mirrors sibling steps.
                   textDirection: TextDirection.ltr,
                   child: SizedBox(
                     width: context.rs(_LoginDesign.canvasWidth),
-                    height: context.rsV(_LoginDesign.canvasHeight),
+                    height: totalHeight,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                    // --- 1. Illustration panel (Figma 12,50 369x320 r35).
-                    // BoxFit.cover crops cleanly — never BoxFit.fill.
+                    // --- 1. Illustration panel
                     Positioned(
                       left: context.rs(_LoginDesign.heroX),
-                      top: context.rsV(_LoginDesign.heroY),
+                      top: heroY,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
                           context.rs(_LoginDesign.heroRadius),
                         ),
                         child: SizedBox(
                           width: context.rs(_LoginDesign.heroWidth),
-                          height: context.rsV(_LoginDesign.heroHeight),
+                          height: heroHeight,
                           child: Image.asset(
                             _LoginDesign.heroAsset,
                             fit: BoxFit.cover,
@@ -384,10 +419,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
 
-                    // --- 2. Back button (Figma 24,64 44x44 over illustration).
+                    // --- 2. Back button (over illustration).
                     Positioned(
                       left: context.rs(_LoginDesign.backX),
-                      top: context.rsV(_LoginDesign.backY),
+                      top: backY,
                       child: SizedBox(
                         width: context.rs(_LoginDesign.backSize),
                         height: context.rs(_LoginDesign.backSize),
@@ -397,9 +432,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
 
-                    // --- 3. Headline (Figma y401, 393 wide, centered).
+                    // --- 3. Headline (centered).
                     Positioned(
-                      top: context.rsV(_LoginDesign.titleY),
+                      top: titleY,
                       left: 0,
                       right: 0,
                       child: Text(
@@ -413,8 +448,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
 
                     // --- 4+5. Phone + password fields inside one Form so a
-                    // single validate() call covers both (Figma 23,486 and
-                    // 23,569, both 347 wide).
+                    // single validate() call covers both.
                     Positioned.fill(
                       child: Form(
                         key: _formKey,
@@ -422,12 +456,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
-                              // Phone (Figma 23,486 w347).
-                              // V1 convention: Egyptian mobile without country
-                              // code; no `+20` transformation.
                               Positioned(
                                 left: context.rs(_LoginDesign.fieldX),
-                                top: context.rsV(_LoginDesign.phoneY),
+                                top: phoneY,
                                 child: SizedBox(
                                   width: context.rs(_LoginDesign.fieldWidth),
                                   child: TextFormField(
@@ -471,11 +502,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
 
-                            // Password (Figma 23,569 w347, masked default,
-                            // eye toggle at the Figma 324,589 slot).
+                            // Password
                             Positioned(
                               left: context.rs(_LoginDesign.fieldX),
-                              top: context.rsV(_LoginDesign.passwordY),
+                              top: passwordY,
                               child: SizedBox(
                                 width: context.rs(_LoginDesign.fieldWidth),
                                 child: TextFormField(
@@ -536,7 +566,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             // persistence (checked = stay signed in across
                             // restarts, the long-standing default).
                             Positioned(
-                              top: context.rsV(_LoginDesign.forgetY),
+                              top: forgetY,
                               left: context.rs(24),
                               right: context.rs(24),
                               child: SizedBox(
@@ -632,7 +662,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             // fixed composition never overflows).
                             if (authError != null)
                               Positioned(
-                                top: context.rsV(688),
+                                top: errorY,
                                 left: context.rs(24),
                                 right: context.rs(24),
                                 child: Text(
@@ -650,14 +680,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
 
-                    // --- 6. Primary CTA (Figma 24,754 w345, Style3 solid).
-                    // Label is "Login" per product copy (Figma export says
-                    // "Next"); behavior is the existing login flow. Loading
-                    // disables the button and shows a spinner in the same
-                    // 56px pill geometry.
+                    // --- 6. Primary CTA
                     Positioned(
                       left: context.rs(_LoginDesign.buttonX),
-                      top: context.rsV(_LoginDesign.buttonY),
+                      top: buttonY,
                       child: SizedBox(
                         width: context.rs(_LoginDesign.buttonWidth),
                         child: isLoading

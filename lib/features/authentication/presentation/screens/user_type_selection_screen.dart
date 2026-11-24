@@ -1,5 +1,4 @@
-import 'dart:math' as math;
-
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -36,149 +35,151 @@ class UserTypeSelectionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Figma title top (72) measured from the screen top; the OS status-bar
-    // inset is respected without shifting the reference composition.
-    final topPad = math.max(
-      MediaQuery.paddingOf(context).top,
-      context.rsV(72),
-    );
-    final bottomPad = math.max(
-      MediaQuery.paddingOf(context).bottom,
-      context.rsV(24),
-    );
-
     return Scaffold(
       backgroundColor: AppSemanticColors.of(context).canvasWarm,
-      body: SingleChildScrollView(
-        physics: const ClampingScrollPhysics(),
-        padding: EdgeInsets.only(top: topPad, bottom: bottomPad),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: context.rs(24)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Header (Figma y72).
-                  Text(
-                    'I am a',
-                    textAlign: TextAlign.center,
-                    style: AppTypography.titleLarge(context),
-                  ),
-                  SizedBox(height: context.rsV(8)),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight;
+            final cardHeight = ((availableHeight - context.rsV(220)) / 2)
+                .clamp(145.0, context.rsV(230));
 
-                  // Subtitle (Figma y115).
-                  Text(
-                    'Select one that applies to you',
-                    textAlign: TextAlign.center,
-                    style: AppTypography.bodyRegular(
-                      context,
-                      color: AppSemanticColors.of(context).textSecondary,
-                    ),
+            return SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: availableHeight),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: context.rs(24),
+                    vertical: context.rsV(10),
                   ),
-                  SizedBox(height: context.rsV(10)),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Column(
+                        children: [
+                          // Header (Figma y72).
+                          Text(
+                            'I am a',
+                            textAlign: TextAlign.center,
+                            style: AppTypography.titleLarge(context),
+                          ),
+                          SizedBox(height: context.rsV(6)),
 
-                  // Card 1: New Student (Figma 24,145 345x260 r28 #F59E0B).
-                  _buildCard(
-                    context: context,
-                    bgColor: const Color(0xFFF59E0B),
-                    title: 'طالب جديد',
-                    titleColor: const Color(0xFF111827),
-                    imagePath: 'assets/images/new_student photo.png',
-                    onTap: () =>
-                        context.pushNamed(AppRoutes.newStudentWelcome),
-                  ),
-                  SizedBox(height: context.rsV(16)),
+                          // Subtitle (Figma y115).
+                          Text(
+                            'Select one that applies to you',
+                            textAlign: TextAlign.center,
+                            style: AppTypography.bodyRegular(
+                              context,
+                              color:
+                                  AppSemanticColors.of(context).textSecondary,
+                            ),
+                          ),
+                          SizedBox(height: context.rsV(12)),
 
-                  // Card 2: Current Student (Figma 24,421 345x260 r28).
-                  _buildCard(
-                    context: context,
-                    bgColor: const Color(0xFFDC2626),
-                    title: 'طالب حالي',
-                    titleColor: const Color(0xFFFFFCF7),
-                    imagePath: 'assets/images/current student photo.png',
-                    onTap: () => context.pushNamed(AppRoutes.login),
-                  ),
-                  SizedBox(height: context.rsV(8)),
-                ],
-              ),
-            ),
+                          // Card 1: New Student (Figma 24,145 345x260 r28 #F59E0B).
+                          _buildCard(
+                            context: context,
+                            bgColor: const Color(0xFFF59E0B),
+                            title: 'طالب جديد',
+                            titleColor: const Color(0xFF111827),
+                            imagePath: 'assets/images/new_student photo.png',
+                            cardHeight: cardHeight,
+                            onTap: () async {
+                              if (FirebaseAuth.instance.currentUser != null) {
+                                try {
+                                  await FirebaseAuth.instance.signOut();
+                                } catch (_) {}
+                              }
+                              if (context.mounted) {
+                                context.pushNamed(AppRoutes.newStudentWelcome);
+                              }
+                            },
+                          ),
+                          SizedBox(height: context.rsV(14)),
 
-            // Footer (logo frame y689; year/admin placed from MEASURED ink
-            // geometry, not the 95px nominal frame: the Gardenia 128 line
-            // box sits ~9px lower than Figma's tight frame layout (raster
-            // probe: app swash reaches +89 in the year column vs Figma +80),
-            // so year = 78 + 9 + 1 AA safety, admin keeps Figma's 5px gap
-            // to the year bottom. Logo box/position untouched (Hero intact).
-            SizedBox(
-              width: double.infinity,
-              height: context.rsV(149),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Brand signature (Figma x0 y689 w393; Hero destination,
-                  // same 128 design size as Splash: position-only flight).
-                  const Positioned(
-                    top: -24,
-                    left: 0,
-                    right: 0,
-                    child: Hero(
-                      tag: 'brand_logo_signature',
-                      child: BrandSignatureLogo(designPx: 128),
-                    ),
-                  ),
+                          // Card 2: Current Student (Figma 24,421 345x260 r28).
+                          _buildCard(
+                            context: context,
+                            bgColor: const Color(0xFFDC2626),
+                            title: 'طالب حالي',
+                            titleColor: const Color(0xFFFFFCF7),
+                            imagePath:
+                                'assets/images/current student photo.png',
+                            cardHeight: cardHeight,
+                            onTap: () => context.pushNamed(AppRoutes.login),
+                          ),
+                        ],
+                      ),
 
-                  // Academic year (Figma x4 w393 h16; top clears visible ink).
-                  Positioned(
-                    top: context.rsV(72),
-                    left: 0,
-                    right: 0,
-                    child: Text(
-                      '2026-2027',
-                      textAlign: TextAlign.center,
-                      style: AppTypography.captionSmall(context),
-                    ),
-                  ),
-
-                  // Admin gate (Figma x177 40x40; the SVG asset already
-                  // contains the 1px #E5E7EB circle, so no extra border).
-                  Positioned(
-                    top: context.rsV(97),
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: () => context.pushNamed(
-                          AppRoutes.teacherAdminSelection,
-                        ),
-                        behavior: HitTestBehavior.opaque,
-                        child: SvgPicture.asset(
-                          'assets/images/teacher & admin icone.svg',
-                          width: 40,
-                          height: 40,
+                      // Footer (logo frame y689; year/admin placed from MEASURED ink
+                      SizedBox(
+                        width: double.infinity,
+                        height: context.rsV(120),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            const Positioned(
+                              top: -20,
+                              left: 0,
+                              right: 0,
+                              child: Hero(
+                                tag: 'brand_logo_signature',
+                                child: BrandSignatureLogo(designPx: 128),
+                              ),
+                            ),
+                            Positioned(
+                              top: context.rsV(60),
+                              left: 0,
+                              right: 0,
+                              child: Text(
+                                '2026-2027',
+                                textAlign: TextAlign.center,
+                                style: AppTypography.captionSmall(context),
+                              ),
+                            ),
+                            Positioned(
+                              top: context.rsV(80),
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: GestureDetector(
+                                  onTap: () => context.pushNamed(
+                                    AppRoutes.teacherAdminSelection,
+                                  ),
+                                  behavior: HitTestBehavior.opaque,
+                                  child: SvgPicture.asset(
+                                    'assets/images/teacher & admin icone.svg',
+                                    width: 38,
+                                    height: 38,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 
-
-  /// Figma selection card: 345 wide (capped, centered), 260 tall, r28.
-  /// Image composition and navigation behavior are preserved as-is.
+  /// Figma selection card: 345 wide (capped, centered), responsive cardHeight, r28.
   Widget _buildCard({
     required BuildContext context,
     required Color bgColor,
     required String title,
     required Color titleColor,
     required String imagePath,
+    required double cardHeight,
     required VoidCallback onTap,
   }) {
     return ConstrainedBox(
@@ -190,7 +191,7 @@ class UserTypeSelectionScreen extends StatelessWidget {
           borderRadius: BorderRadius.circular(context.rs(28)),
           child: Container(
             width: double.infinity,
-            height: context.rsV(260),
+            height: cardHeight,
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               color: bgColor,
