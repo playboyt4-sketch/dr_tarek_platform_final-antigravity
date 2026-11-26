@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/localization/locale_controller.dart';
 import '../core/routing/app_router.dart';
+import '../core/security/app_lock_gate.dart';
 import '../core/security/screen_guard.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/theme_controller.dart';
@@ -45,7 +46,9 @@ class DrTarekPlatformApp extends ConsumerWidget {
         child: ValueListenableBuilder<bool>(
           valueListenable: ScreenGuard.isRecording,
           builder: (context, isRecording, _) {
-            final appChild = child ?? const SizedBox.shrink();
+            final appChild = AppLockGate(
+              child: child ?? const SizedBox.shrink(),
+            );
             if (!isRecording) return appChild;
             return Stack(
               fit: StackFit.expand,

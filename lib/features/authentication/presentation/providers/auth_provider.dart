@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/security/biometric_lock_service.dart';
 import '../../../pdf_viewer/presentation/providers/pdf_viewer_providers.dart';
 import '../../data/datasources/custom_token_remote_datasource.dart';
 import '../../data/datasources/registration_remote_datasource.dart';
@@ -155,20 +156,25 @@ class AuthController extends AsyncNotifier<AuthUser?> {
   }
 
   Future<void> logout() async {
+    ref.read(appLockStateProvider.notifier).onLogoutStarted();
     state = const AsyncLoading();
 
-    state = await AsyncValue.guard(() async {
-      // Offline DRM policy (FINAL_DECISIONS §2): ending the session wipes
-      // every protected download from the device. Best-effort — sign-out
-      // must never be blocked by local cleanup.
-      try {
-        final drmRepo = await ref.read(drmRepositoryProvider.future);
-        await drmRepo.wipeAllEncryptedFiles();
-      } catch (_) {
-        // Ignore cleanup failures.
-      }
-      await _logoutUseCase.execute();
-      return null;
-    });
+    try {
+      state = await AsyncValue.guard(() async {
+        // Offline DRM policy (FINAL_DECISIONS §2): ending the session wipes
+        // every protected download from the device. Best-effort — sign-out
+        // must never be blocked by local cleanup.
+        try {
+          final drmRepo = await ref.read(drmRepositoryProvider.future);
+          await drmRepo.wipeAllEncryptedFiles();
+        } catch (_) {
+          // Ignore cleanup failures.
+        }
+        await _logoutUseCase.execute();
+        return null;
+      });
+    } finally {
+      ref.read(appLockStateProvider.notifier).onLogoutCompleted();
+    }
   }
 }

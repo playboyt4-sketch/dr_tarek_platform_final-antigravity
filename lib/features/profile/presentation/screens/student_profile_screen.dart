@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/errors/failure.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/security/biometric_lock_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
@@ -65,6 +66,7 @@ class StudentProfileScreen extends ConsumerStatefulWidget {
 class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
   String? _photoUrl;
   late String _fullName;
+  bool _isTogglingBiometric = false;
 
   @override
   void initState() {
@@ -282,6 +284,44 @@ class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
     );
   }
 
+  Future<void> _onToggleBiometricLock(bool nextValue) async {
+    if (_isTogglingBiometric) return;
+    setState(() => _isTogglingBiometric = true);
+    try {
+      if (nextValue) {
+        final verified = await ref
+            .read(biometricLockServiceProvider)
+            .authenticate(
+              localizedReason: 'يرجى تأكيد هويتك لتفعيل قفل التطبيق',
+            );
+        if (!mounted) return;
+        if (!verified) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تعذر التحقق من الهوية، لم يتم تفعيل القفل'),
+            ),
+          );
+          return;
+        }
+        await ref.read(biometricLockEnabledProvider.notifier).setEnabled(true);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تفعيل قفل التطبيق بـ Face ID / البصمة'),
+          ),
+        );
+      } else {
+        await ref
+            .read(biometricLockEnabledProvider.notifier)
+            .setEnabled(false);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isTogglingBiometric = false);
+      }
+    }
+  }
+
   Future<void> _showDeleteAccountDialog() async {
     final l10n = AppLocalizations.of(context);
     final passwordController = TextEditingController();
@@ -427,6 +467,9 @@ class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
     final user = widget.user;
     final canvas = _gradeBackground(user.grade);
     final subjectsAsync = ref.watch(dashboardSubjectsProvider);
+    final biometricSupported =
+        ref.watch(biometricSupportedProvider).asData?.value ?? false;
+    final biometricLockEnabled = ref.watch(biometricLockEnabledProvider);
 
     return Scaffold(
       backgroundColor: canvas,
@@ -482,6 +525,15 @@ class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
                   subjectsAsync: subjectsAsync,
                   onRetry: () => ref.invalidate(dashboardSubjectsProvider),
                 ),
+                if (biometricSupported) ...[
+                  SizedBox(height: context.rsV(_StudentProfileDesign.sectionGap)),
+                  _BiometricLockTile(
+                    canvas: canvas,
+                    enabled: biometricLockEnabled,
+                    busy: _isTogglingBiometric,
+                    onChanged: _onToggleBiometricLock,
+                  ),
+                ],
                 SizedBox(height: context.rsV(32)),
                 // Account actions (white pills like the rest of the
                 // screen — the blue outlined style clashed with the
@@ -765,6 +817,64 @@ class _AvatarPlaceholder extends StatelessWidget {
 
 /// White pill button (Figma Change password / Delete My Account: 345
 /// white r28, 14 grade-canvas label).
+class _BiometricLockTile extends StatelessWidget {
+  final Color canvas;
+  final bool enabled;
+  final bool busy;
+  final ValueChanged<bool> onChanged;
+
+  const _BiometricLockTile({
+    required this.canvas,
+    required this.enabled,
+    required this.busy,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(context.rs(28)),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: context.rs(16),
+        vertical: context.rsV(6),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Row(
+          children: [
+            Icon(
+              Icons.face_rounded,
+              color: canvas,
+              size: context.rs(22),
+            ),
+            SizedBox(width: context.rs(10)),
+            Expanded(
+              child: Text(
+                'قفل التطبيق بـ Face ID / البصمة',
+                style: TextStyle(
+                  color: canvas,
+                  fontSize: context.rsFont(14),
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+              ),
+            ),
+            Switch.adaptive(
+              key: const ValueKey('biometric_lock_switch'),
+              value: enabled,
+              activeTrackColor: canvas,
+              onChanged: busy ? null : onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _WhitePillButton extends StatelessWidget {
   final String label;
   final Color foreground;

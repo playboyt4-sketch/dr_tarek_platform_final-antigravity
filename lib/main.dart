@@ -22,6 +22,7 @@ import 'core/errors/failure.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/routing/app_router.dart';
 import 'core/routing/notification_deep_link.dart';
+import 'core/security/biometric_lock_service.dart';
 import 'core/security/screen_guard.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/web/video_hls_backend_stub.dart'
@@ -242,12 +243,16 @@ Future<void> main() async {
       // before runApp so the user never sees a frame in the wrong brightness.
       // Never throws; defaults to System.
       final initialThemeMode = await loadPersistedThemeMode();
+      final initialBiometricLock = await loadPersistedBiometricLockEnabled();
 
       runApp(
         ProviderScope(
           overrides: [
             initialLocaleProvider.overrideWithValue(initialLocale),
             initialThemeModeProvider.overrideWithValue(initialThemeMode),
+            initialBiometricLockEnabledProvider.overrideWithValue(
+              initialBiometricLock,
+            ),
           ],
           child: const DrTarekPlatformApp(),
         ),

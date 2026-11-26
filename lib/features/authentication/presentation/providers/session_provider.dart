@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/auth_providers.dart';
+import '../../../../core/security/biometric_lock_service.dart';
 import '../../../device_binding/presentation/providers/device_binding_provider.dart';
 import '../../../membership/presentation/providers/membership_providers.dart';
 import '../../../subject_access/presentation/providers/subject_access_providers.dart';
@@ -67,12 +68,17 @@ class SessionController extends AsyncNotifier<SessionState> {
   }
 
   Future<void> logout() async {
-    await ref.read(authProvider.notifier).logout();
-    ref.invalidate(customClaimsProvider);
-    ref.invalidate(deviceBindingProvider);
-    ref.invalidate(subjectAccessRepositoryProvider);
-    ref.invalidate(membershipRepositoryProvider);
-    ref.invalidateSelf();
+    ref.read(appLockStateProvider.notifier).onLogoutStarted();
+    try {
+      await ref.read(authProvider.notifier).logout();
+      ref.invalidate(customClaimsProvider);
+      ref.invalidate(deviceBindingProvider);
+      ref.invalidate(subjectAccessRepositoryProvider);
+      ref.invalidate(membershipRepositoryProvider);
+      ref.invalidateSelf();
+    } finally {
+      ref.read(appLockStateProvider.notifier).onLogoutCompleted();
+    }
   }
 
   void retry() {

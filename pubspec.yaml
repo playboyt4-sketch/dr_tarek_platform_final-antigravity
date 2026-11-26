@@ -67,6 +67,7 @@ dependencies:
   go_router: ^18.0.1
   flutter_svg: ^2.3.0
   screen_protector: ^1.5.3
+  local_auth: ^2.3.0
 
 dev_dependencies:
   flutter_test:
