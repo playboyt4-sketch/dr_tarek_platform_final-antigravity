@@ -8,6 +8,7 @@ import '../../../applications/presentation/providers/application_decision_provid
     show DecisionFailure, SubjectOption;
 import '../../data/datasources/subject_access_remote_data_source.dart';
 import '../../data/repositories/subject_access_repository_impl.dart';
+import '../../domain/live_student.dart';
 import '../../domain/repositories/subject_access_repository.dart'
     show SubjectAccessRepository, SubjectGrantOutcome;
 
@@ -56,6 +57,37 @@ class StudentSubjectAssignment {
   }
 }
 
+/// Extracts the plan identifier from a `subscriptions` document across all
+/// supported schema spellings (`plan_id`, `plan`, `tier`, `plan_key`).
+String extractSubscriptionPlanId(Map<String, dynamic> data) {
+  for (final String field in const <String>[
+    'plan_id',
+    'plan',
+    'tier',
+    'plan_key',
+  ]) {
+    final Object? raw = data[field];
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw.trim();
+    }
+  }
+  return '';
+}
+
+/// Resolves a display tier (`FREE` / `PRO` / `MAX`) for a subscription's
+/// [planId] using the live `plans` map first and falling back to key parsing
+/// when the `plans` doc ID itself encodes the tier (e.g. `center_pro`, `pro`).
+String resolvePlanDisplayLabel({
+  required String planId,
+  required Map<String, String> planLabels,
+}) {
+  final String normalizedId = planId.trim();
+  if (normalizedId.isEmpty) return '';
+  final String? fromMap = planLabels[normalizedId];
+  if (fromMap != null && fromMap.isNotEmpty) return fromMap;
+  return planDisplayForKey(normalizedId);
+}
+
 /// One active, non-deleted subscription of a student for one subject.
 class StudentSubjectSubscription {
   final String subjectId;
@@ -71,8 +103,8 @@ class StudentSubjectSubscription {
   ) {
     final Map<String, dynamic> data = doc.data();
     return StudentSubjectSubscription(
-      subjectId: (data['subject_id'] as String?) ?? doc.id,
-      planId: (data['plan_id'] as String?) ?? '',
+      subjectId: ((data['subject_id'] as String?) ?? doc.id).trim(),
+      planId: extractSubscriptionPlanId(data),
     );
   }
 }
@@ -101,14 +133,12 @@ class StudentSubjectRegistration {
 /// the canonical `plan_key` (`public_free` / `center_free` / `center_pro` /
 /// `center_max`); unknown keys resolve to empty (rendered as `—`).
 String planDisplayForKey(String? planKey) {
-  final String key = (planKey ?? '').toLowerCase();
+  final String key = (planKey ?? '').trim().toLowerCase();
+  if (key.isEmpty) return '';
   if (key.endsWith('_max') || key == 'max') return 'MAX';
   if (key.endsWith('_pro') || key == 'pro') return 'PRO';
-  if (key.endsWith('_free') ||
-      key == 'free' ||
-      key == 'guest' ||
-      key.isEmpty) {
-    return key.isEmpty ? '' : 'FREE';
+  if (key.endsWith('_free') || key == 'free' || key == 'guest') {
+    return 'FREE';
   }
   return '';
 }
@@ -125,10 +155,16 @@ List<StudentSubjectRegistration> buildStudentSubjectRegistrations({
   final Map<String, SubjectOption> byId = <String, SubjectOption>{
     for (final SubjectOption s in subjects) s.id: s,
   };
-  final Map<String, String> planBySubject = <String, String>{
-    for (final StudentSubjectSubscription s in subscriptions)
-      s.subjectId: planLabels[s.planId] ?? '',
-  };
+  final Map<String, String> planBySubject = <String, String>{};
+  for (final StudentSubjectSubscription s in subscriptions) {
+    final String resolved = resolvePlanDisplayLabel(
+      planId: s.planId,
+      planLabels: planLabels,
+    );
+    if (resolved.isNotEmpty || !planBySubject.containsKey(s.subjectId)) {
+      planBySubject[s.subjectId] = resolved;
+    }
+  }
   final List<StudentSubjectRegistration> rows = <StudentSubjectRegistration>[];
   for (final StudentSubjectAssignment a in assignments) {
     final SubjectOption? subject = byId[a.subjectId];
@@ -179,9 +215,11 @@ final studentSubjectSubscriptionsProvider =
       .where('student_id', isEqualTo: studentId)
       .snapshots()
       .map((snap) => snap.docs
-          .where((doc) =>
-              doc.data()['status'] == 'active' &&
-              doc.data()['is_deleted'] != true)
+          .where((doc) {
+            final status = doc.data()['status'];
+            return (status == 'active' || status == 'trial') &&
+                doc.data()['is_deleted'] != true;
+          })
           .map(StudentSubjectSubscription.fromDoc)
           .toList(growable: false));
 });
@@ -193,7 +231,9 @@ final subjectPlanLabelsProvider =
   return db.collection('plans').snapshots().map((snap) {
     return <String, String>{
       for (final doc in snap.docs)
-        doc.id: planDisplayForKey(doc.data()['plan_key'] as String?),
+        doc.id: planDisplayForKey(
+          (doc.data()['plan_key'] as String?) ?? doc.id,
+        ),
     };
   });
 });
@@ -241,6 +281,7 @@ final studentProfileSubjectsProvider =
             .listen(
           (snap) {
             subjects = snap.docs
+                .where((doc) => !isArchivedData(doc.data()))
                 .map(SubjectOption.fromDoc)
                 .toList(growable: false);
             ready |= 1;
@@ -270,9 +311,11 @@ final studentProfileSubjectsProvider =
             .listen(
           (snap) {
             subscriptions = snap.docs
-                .where((doc) =>
-                    doc.data()['status'] == 'active' &&
-                    doc.data()['is_deleted'] != true)
+                .where((doc) {
+                  final status = doc.data()['status'];
+                  return (status == 'active' || status == 'trial') &&
+                      doc.data()['is_deleted'] != true;
+                })
                 .map(StudentSubjectSubscription.fromDoc)
                 .toList(growable: false);
             ready |= 4;
@@ -284,8 +327,9 @@ final studentProfileSubjectsProvider =
           (snap) {
             planLabels = <String, String>{
               for (final doc in snap.docs)
-                doc.id:
-                    planDisplayForKey(doc.data()['plan_key'] as String?),
+                doc.id: planDisplayForKey(
+                  (doc.data()['plan_key'] as String?) ?? doc.id,
+                ),
             };
             ready |= 8;
             emit();
@@ -334,6 +378,7 @@ List<NewStudentSubject> buildNewStudentSubjects({
   required Map<String, bool> toggles,
   required Map<String, String> plans,
   required Set<String> alreadyRegistered,
+  String defaultPlan = 'free',
 }) {
   final List<NewStudentSubject> picked = <NewStudentSubject>[];
   final Set<String> seen = <String>{};
@@ -348,7 +393,7 @@ List<NewStudentSubject> buildNewStudentSubjects({
     picked.add(NewStudentSubject(
       subjectId: subjectId,
       enabled: true,
-      plan: plans[subjectId] ?? 'free',
+      plan: plans[subjectId] ?? defaultPlan,
     ));
   }
 

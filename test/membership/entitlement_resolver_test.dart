@@ -283,10 +283,24 @@ class FakeMembershipRepository implements MembershipRepository {
   }
 
   @override
+  Stream<MembershipPlan?> watchPlan({required String planId}) =>
+      Stream.value(plan);
+
+  @override
   Future<List<PlanFeature>> getPlanFeatures({required String planId}) async {
     getPlanFeaturesCalls++;
     return features;
   }
+
+  @override
+  Stream<List<PlanFeature>> watchPlanFeatures({required String planId}) =>
+      Stream.value(features);
+
+  @override
+  Stream<MembershipSubscription?> watchSubscription({
+    required String studentId,
+    required String subjectId,
+  }) => Stream.value(subscription);
 
   @override
   Future<List<MembershipPlan>> getAvailablePlans({

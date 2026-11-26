@@ -92,10 +92,12 @@ class _ScopedSearchBarState extends State<ScopedSearchBar> {
             ),
           );
         },
-        child: Container(
-          width: 420,
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Container(
+            width: double.infinity,
+            height: 46,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -164,6 +166,7 @@ class _ScopedSearchBarState extends State<ScopedSearchBar> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

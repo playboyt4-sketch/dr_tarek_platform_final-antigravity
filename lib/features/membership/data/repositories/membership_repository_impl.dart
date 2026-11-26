@@ -60,6 +60,11 @@ class MembershipRepositoryImpl implements MembershipRepository {
   }
 
   @override
+  Stream<MembershipPlan?> watchPlan({required String planId}) {
+    return remoteDataSource.watchPlan(planId: planId);
+  }
+
+  @override
   Future<List<MembershipPlan>> getAvailablePlans({
     required String studentType,
   }) {
@@ -78,8 +83,24 @@ class MembershipRepositoryImpl implements MembershipRepository {
   }
 
   @override
+  Stream<MembershipSubscription?> watchSubscription({
+    required String studentId,
+    required String subjectId,
+  }) {
+    return remoteDataSource.watchActiveSubscription(
+      studentId: studentId,
+      subjectId: subjectId,
+    );
+  }
+
+  @override
   Future<List<PlanFeature>> getPlanFeatures({required String planId}) {
     return remoteDataSource.getPlanFeatures(planId: planId);
+  }
+
+  @override
+  Stream<List<PlanFeature>> watchPlanFeatures({required String planId}) {
+    return remoteDataSource.watchPlanFeatures(planId: planId);
   }
 
   Future<bool> hasFeature({

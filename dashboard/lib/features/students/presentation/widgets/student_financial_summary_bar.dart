@@ -29,26 +29,35 @@ class StudentFinancialSummaryBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 830,
-      child: Row(
+      width: double.infinity,
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        alignment: WrapAlignment.spaceBetween,
         children: <Widget>[
-          _StatusBadge(status: ledger.status),
-          const SizedBox(width: 16),
-          // Loose fit (not Expanded): the capsule hugs its content so the
-          // status chip stays packed with the pill group per Figma
-          // Frame 187, instead of being stranded at the strip's left edge
-          // by a stretched capsule. Texts still ellipsize on narrow widths.
-          Flexible(
-            child: InkWell(
-              onTap: onEditAccount,
-              borderRadius: BorderRadius.circular(28),
-              child: _NumbersCapsule(ledger: ledger),
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _StatusBadge(status: ledger.status),
+              const SizedBox(width: 12),
+              Flexible(
+                child: InkWell(
+                  onTap: onEditAccount,
+                  borderRadius: BorderRadius.circular(28),
+                  child: _NumbersCapsule(ledger: ledger),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 16),
-          _AddPaymentButton(accent: accent, onTap: onAddPayment),
-          const SizedBox(width: 12),
-          _PrintInvoiceButton(onTap: onPrintInvoice),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: <Widget>[
+              _AddPaymentButton(accent: accent, onTap: onAddPayment),
+              _PrintInvoiceButton(onTap: onPrintInvoice),
+            ],
+          ),
         ],
       ),
     );
@@ -119,34 +128,19 @@ class _NumbersCapsule extends StatelessWidget {
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: const Color(0xFF979797), width: 1),
       ),
-      child: Row(
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
-          Flexible(
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF979797),
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: Text(
-                'Net Total : ${formatEgp(ledger.netTotal)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                  color: Colors.white,
-                ),
-              ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF979797),
+              borderRadius: BorderRadius.circular(28),
             ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
             child: Text(
-              'Paid Amount : ${formatEgp(ledger.paidAmount)}',
+              'Net Total : ${formatEgp(ledger.netTotal)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -154,24 +148,32 @@ class _NumbersCapsule extends StatelessWidget {
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
                 fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Color(0xFF15803D),
+                color: Colors.white,
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              'Balance Due : ${formatEgp(ledger.balanceDue)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Color(0xFFDC2626),
-              ),
+          Text(
+            'Paid Amount : ${formatEgp(ledger.paidAmount)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              fontVariations: <FontVariation>[FontVariation('wght', 400)],
+              color: Color(0xFF15803D),
+            ),
+          ),
+          Text(
+            'Balance Due : ${formatEgp(ledger.balanceDue)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              fontVariations: <FontVariation>[FontVariation('wght', 400)],
+              color: Color(0xFFDC2626),
             ),
           ),
         ],

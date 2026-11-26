@@ -180,9 +180,14 @@ service cloud.firestore {
           'full_name',
           'display_handle',
           'profile_photo',
+          'unread_notifications_count',
           'updated_at',
           'updated_by'
-        ]);
+        ])
+        && (
+          !('unread_notifications_count' in request.resource.data.diff(resource.data).affectedKeys())
+          || request.resource.data.unread_notifications_count == 0
+        );
     }
 
     // Password hashes and other authentication secrets are server-only.

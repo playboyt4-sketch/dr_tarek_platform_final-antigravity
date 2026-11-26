@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../membership/presentation/widgets/center_phone_actions.dart';
 import '../../domain/entities/playback_entities.dart';
 import '../controllers/video_playback_controller.dart';
 
@@ -349,16 +350,10 @@ class VideoUpgradePrompt extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70, fontSize: 13),
               ),
-              const SizedBox(height: 4),
-              const Text(
-                kGuestWallContact,
-                textDirection: TextDirection.ltr,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
+              const SizedBox(height: 6),
+              const CenterPhoneActions(
+                phoneNumber: kGuestWallContact,
+                darkSurface: true,
               ),
             ],
             // §12 nicety: remaining time on the currently-open video.

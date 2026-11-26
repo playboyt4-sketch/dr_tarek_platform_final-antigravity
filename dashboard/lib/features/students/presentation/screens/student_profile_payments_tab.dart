@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../providers/grade_students_provider.dart' show GradeStudent;
 import '../providers/student_profile_payments_provider.dart';
@@ -243,11 +244,11 @@ class _StudentProfilePaymentsTabState
 
     if (_isGuest) {
       return SizedBox(
-        width: 830,
+        width: double.infinity,
         child: Column(
           children: <Widget>[
             Container(
-              width: 830,
+              width: double.infinity,
               padding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 12,
@@ -269,7 +270,7 @@ class _StudentProfilePaymentsTabState
             ),
             const SizedBox(height: 12),
             Container(
-              width: 830,
+              width: double.infinity,
               decoration: _cardDecoration(),
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -290,7 +291,7 @@ class _StudentProfilePaymentsTabState
     }
 
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: ledgerAsync.when(
         loading: () => const SizedBox(
           height: 200,
@@ -496,13 +497,13 @@ class _SubjectPricingSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return pricedAsync.when(
       loading: () => Container(
-        width: 830,
+        width: double.infinity,
         height: 120,
         decoration: _cardDecoration(),
         child: const Center(child: CircularProgressIndicator()),
       ),
       error: (_, _) => Container(
-        width: 830,
+        width: double.infinity,
         decoration: _cardDecoration(),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 24),
@@ -548,46 +549,49 @@ class _SubjectPricingTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 830,
+      width: double.infinity,
       decoration: _cardDecoration(),
-      child: Column(
-        children: <Widget>[
-          const Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: <Widget>[
-                SizedBox(width: 56, child: _PaymentsHeaderLabel('No.')),
-                SizedBox(
-                    width: 222, child: _PaymentsHeaderLabel('Subjects')),
-                SizedBox(width: 150, child: _PaymentsHeaderLabel('Grade')),
-                SizedBox(width: 120, child: _PaymentsHeaderLabel('Price')),
-                SizedBox(
-                    width: 120, child: _PaymentsHeaderLabel('Discount')),
-                SizedBox(width: 120, child: _PaymentsHeaderLabel('Net')),
-              ],
-            ),
-          ),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (rows.isEmpty)
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 830,
+        child: Column(
+          children: <Widget>[
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'لا توجد مواد مسجلة لهذا الطالب بعد.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
+              padding: EdgeInsets.all(8),
+              child: Row(
+                children: <Widget>[
+                  SizedBox(width: 56, child: _PaymentsHeaderLabel('No.')),
+                  SizedBox(
+                      width: 222, child: _PaymentsHeaderLabel('Subjects')),
+                  SizedBox(width: 150, child: _PaymentsHeaderLabel('Grade')),
+                  SizedBox(width: 120, child: _PaymentsHeaderLabel('Price')),
+                  SizedBox(
+                      width: 120, child: _PaymentsHeaderLabel('Discount')),
+                  SizedBox(width: 120, child: _PaymentsHeaderLabel('Net')),
+                ],
+              ),
+            ),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'لا توجد مواد مسجلة لهذا الطالب بعد.',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            )
-          else
-            for (int i = 0; i < rows.length; i++)
-              _SubjectPricingDataRow(
-                index: i,
-                row: rows[i],
-                onTap: () => onEdit(rows[i]),
-              ),
-        ],
+              )
+            else
+              for (int i = 0; i < rows.length; i++)
+                _SubjectPricingDataRow(
+                  index: i,
+                  row: rows[i],
+                  onTap: () => onEdit(rows[i]),
+                ),
+          ],
+        ),
       ),
     );
   }
@@ -842,45 +846,48 @@ class _PaymentsHistoryTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 830,
+      width: double.infinity,
       decoration: _cardDecoration(),
-      child: Column(
-        children: <Widget>[
-          const Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: <Widget>[
-                SizedBox(width: 56, child: _PaymentsHeaderLabel('No.')),
-                SizedBox(
-                    width: 306, child: _PaymentsHeaderLabel('Payment Date')),
-                SizedBox(width: 116, child: _PaymentsHeaderLabel('Amount')),
-                SizedBox(width: 116, child: _PaymentsHeaderLabel('Method')),
-                SizedBox(
-                    width: 116, child: _PaymentsHeaderLabel('Collected By')),
-              ],
-            ),
-          ),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (payments.isEmpty)
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 830,
+        child: Column(
+          children: <Widget>[
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'لا توجد دفعات مسجلة لهذا الطالب بعد.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
+              padding: EdgeInsets.all(8),
+              child: Row(
+                children: <Widget>[
+                  SizedBox(width: 56, child: _PaymentsHeaderLabel('No.')),
+                  SizedBox(
+                      width: 306, child: _PaymentsHeaderLabel('Payment Date')),
+                  SizedBox(width: 116, child: _PaymentsHeaderLabel('Amount')),
+                  SizedBox(width: 116, child: _PaymentsHeaderLabel('Method')),
+                  SizedBox(
+                      width: 116, child: _PaymentsHeaderLabel('Collected By')),
+                ],
+              ),
+            ),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            if (payments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'لا توجد دفعات مسجلة لهذا الطالب بعد.',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            )
-          else
-            for (int i = 0; i < payments.length; i++)
-              _PaymentDataRow(
-                index: i,
-                payment: payments[i],
-                onTap: () => onCorrect(payments[i]),
-              ),
-        ],
+              )
+            else
+              for (int i = 0; i < payments.length; i++)
+                _PaymentDataRow(
+                  index: i,
+                  payment: payments[i],
+                  onTap: () => onCorrect(payments[i]),
+                ),
+          ],
+        ),
       ),
     );
   }

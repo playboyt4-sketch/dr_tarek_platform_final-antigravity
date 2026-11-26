@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/firebase_providers.dart';
+import '../../../students/domain/live_student.dart';
 import '../../domain/grade.dart';
 
 /// A subject row available for approval-time access grants.
@@ -52,6 +53,8 @@ final gradeSubjectsProvider =
       .snapshots()
       .map(
         (QuerySnapshot<Map<String, dynamic>> snapshot) => snapshot.docs
+            .where((QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+                !isArchivedData(doc.data()))
             .map(SubjectOption.fromDoc)
             .where(
               (SubjectOption subject) =>

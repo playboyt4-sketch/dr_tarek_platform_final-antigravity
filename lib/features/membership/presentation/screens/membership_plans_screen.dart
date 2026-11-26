@@ -8,6 +8,7 @@ import '../../../student_dashboard/presentation/providers/dashboard_providers.da
 import '../../domain/entities/membership_plan.dart';
 import '../../domain/entities/plan_feature.dart';
 import '../../presentation/providers/membership_providers.dart';
+import '../widgets/center_phone_actions.dart';
 
 /// Membership plans browser — reads plans exclusively through
 /// [availablePlansProvider] (repository-backed).
@@ -351,16 +352,8 @@ class _InfoCard extends StatelessWidget {
                 children: [
                   Text(message, style: const TextStyle(height: 1.6)),
                   if (phoneNumber != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      phoneNumber!,
-                      textDirection: TextDirection.ltr,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        height: 1.6,
-                      ),
-                    ),
+                    const SizedBox(height: 6),
+                    CenterPhoneActions(phoneNumber: phoneNumber!),
                   ],
                 ],
               ),

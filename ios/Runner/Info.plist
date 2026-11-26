@@ -32,6 +32,11 @@
 	<string>The app accesses your photo library so you can choose a profile photo and upload images where the app offers image selection (such as subject images). / يصل التطبيق إلى مكتبة الصور لاختيار صورة الملف الشخصي ورفع الصور حيث يتيح التطبيق اختيار الصور (مثل صور المواد).</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tel</string>
+		<string>whatsapp</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/firebase_providers.dart';
 import 'grade_theme.dart';
+import 'subject_cover_url_field.dart';
 
 /// Figma `# add subject overlay` — literal implementation.
 ///
@@ -52,6 +53,7 @@ class _AddSubjectOverlayState extends ConsumerState<AddSubjectOverlay> {
   final TextEditingController _urlController = TextEditingController();
   late String _selectedGradeKey = widget.gradeKey;
   bool _saving = false;
+  bool _uploadingCover = false;
   String? _error;
 
   @override
@@ -106,45 +108,50 @@ class _AddSubjectOverlayState extends ConsumerState<AddSubjectOverlay> {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 1120,
-          height: 316,
-          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black12,
-                blurRadius: 30,
-                offset: Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              Positioned(
-                right: 0,
-                top: 0,
-                child: IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close, color: Color(0xFF6B7280)),
-                ),
-              ),
-              Column(
-                children: [
-                  const Text(
-                    'Add New Subject',
-                    style: TextStyle(
-                      fontFamily: 'Google Sans Flex',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF111827),
-                    ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Material(
+          color: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 30,
+                    offset: Offset(0, 8),
                   ),
-                  const SizedBox(height: 20),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: Stack(
+                  children: [
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close, color: Color(0xFF6B7280)),
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Add New Subject',
+                          style: TextStyle(
+                            fontFamily: 'Google Sans Flex',
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
                   _buildRow(
                     'Grade',
                     Container(
@@ -225,43 +232,26 @@ class _AddSubjectOverlayState extends ConsumerState<AddSubjectOverlay> {
                   const SizedBox(height: 12),
                   _buildRow(
                     'Subject Cover URL',
-                    SizedBox(
-                      height: 36,
-                      child: TextField(
-                        controller: _urlController,
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => _save(),
-                        decoration: InputDecoration(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9999),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFD1D5DB),
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9999),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFD1D5DB),
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9999),
-                            borderSide: BorderSide(color: widget.gradeColor),
-                          ),
-                        ),
-                        style: const TextStyle(
-                          fontFamily: 'Google Sans Flex',
-                          fontSize: 14,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
+                    SubjectCoverUrlField(
+                      controller: _urlController,
+                      accentColor: GradeTheme.fromKey(
+                        _selectedGradeKey,
+                      ).primaryColor,
+                      onSubmitted: _save,
+                      onUploadingChanged: (bool uploading) {
+                        if (mounted) {
+                          setState(() => _uploadingCover = uploading);
+                        }
+                      },
+                      onErrorChanged: (String? err) {
+                        if (mounted) {
+                          setState(() => _error = err);
+                        }
+                      },
                     ),
                   ),
                   if (_error != null) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 8),
                     Text(
                       _error!,
                       style: const TextStyle(
@@ -271,13 +261,13 @@ class _AddSubjectOverlayState extends ConsumerState<AddSubjectOverlay> {
                       ),
                     ),
                   ],
-                  const Spacer(),
+                  const SizedBox(height: 20),
                   Center(
                     child: SizedBox(
                       width: 130,
                       height: 38,
                       child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
+                        onPressed: (_saving || _uploadingCover) ? null : _save,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: GradeTheme.fromKey(
                             _selectedGradeKey,
@@ -313,27 +303,51 @@ class _AddSubjectOverlayState extends ConsumerState<AddSubjectOverlay> {
             ],
           ),
         ),
+        ),
+        ),
+        ),
       ),
     );
   }
 
   Widget _buildRow(String label, Widget field) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: 160,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontFamily: 'Google Sans Flex',
-              fontSize: 14,
-              color: Color(0xFF374151),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.maxWidth < 460) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: 'Google Sans Flex',
+                  fontSize: 14,
+                  color: Color(0xFF374151),
+                ),
+              ),
+              const SizedBox(height: 6),
+              field,
+            ],
+          );
+        }
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 150,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: 'Google Sans Flex',
+                  fontSize: 14,
+                  color: Color(0xFF374151),
+                ),
+              ),
             ),
-          ),
-        ),
-        SizedBox(width: 340, child: field),
-      ],
+            Expanded(child: field),
+          ],
+        );
+      },
     );
   }
 }
@@ -381,12 +395,16 @@ class SubjectDetailsDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          width: 520,
-          padding: const EdgeInsets.fromLTRB(32, 28, 32, 28),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -462,6 +480,8 @@ class SubjectDetailsDialog extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        ),
         ),
       ),
     );

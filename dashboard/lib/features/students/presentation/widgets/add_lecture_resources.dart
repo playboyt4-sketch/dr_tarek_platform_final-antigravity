@@ -1,6 +1,8 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../../../../core/widgets/file_drop_upload_zone.dart';
+import '../../../../core/widgets/web_file_drop.dart';
 
 import '../../domain/bunny_library_association.dart';
 import '../../domain/bunny_library_catalog.dart';
@@ -304,7 +306,7 @@ Future<StagedResource?> _videoDialog(
       title: existing == null ? 'Add New Video' : 'Edit Video',
       onSave: () => Navigator.of(context).pop(true),
       children: [
-        _field(controller: name, hint: 'Video Name'),
+        _field(controller: name, hint: 'Video Name / Details', multiline: true),
         const SizedBox(height: 8),
         _field(
           controller: bunnyId,
@@ -372,7 +374,7 @@ Future<StagedResource?> _fileDialog(
       text: '${existing?.displayOrder ?? nextOrder}');
   Uint8List? bytes = existing?.fileBytes;
   String? fileName = existing?.fileName;
-  String? pickedLabel = fileName;
+  int? fileSizeBytes = existing?.fileBytes?.length;
 
   final bool? saved = await showDialog<bool>(
     context: context,
@@ -395,37 +397,40 @@ Future<StagedResource?> _fileDialog(
             hint: 'Display Order',
             numeric: true,
           ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.upload_file_outlined),
-            label: Text(pickedLabel ??
-                (isPdf ? 'Upload PDF' : 'Upload Attachment')),
-            onPressed: () async {
-              final List<PlatformFile> picked =
-                  await FilePicker.pickFiles(
-                type: FileType.custom,
-                allowedExtensions: isPdf
-                    ? const ['pdf']
-                    : const [
-                        'zip', 'doc', 'docx', 'xls', 'xlsx',
-                        'ppt', 'pptx', 'txt', 'jpg', 'jpeg', 'png',
-                      ],
-              );
-              if (picked.isEmpty) return;
-              final PlatformFile file = picked.first;
-              Uint8List? data;
-              try {
-                data = await file.readAsBytes();
-              } catch (_) {
-                data = null;
-              }
-              if (data == null) return;
+          const SizedBox(height: 10),
+          FileDropUploadZone(
+            allowedExtensions: isPdf
+                ? kAllowedPdfExtensions
+                : kAllowedAttachmentExtensions,
+            maxBytes: isPdf
+                ? kMaxPdfUploadBytes
+                : kMaxAttachmentUploadBytes,
+            accentColor: gradeColor,
+            compact: true,
+            idleTitle: isPdf
+                ? 'اسحب وأفلت ملف الـ PDF هنا أو اضغط للاختيار'
+                : 'اسحب وأفلت المرفق هنا أو اضغط للاختيار',
+            dragOverTitle: 'أفلت الملف هنا للرفع',
+            subtitle: isPdf
+                ? 'PDF فقط • الحد الأقصى 50MB'
+                : 'PDF, Word, Excel, PowerPoint, ZIP, صور • الحد الأقصى 50MB',
+            browseLabel: isPdf ? 'Upload PDF' : 'Upload Attachment',
+            selectedFileName: fileName,
+            selectedFileSizeBytes: fileSizeBytes,
+            onClear: fileName == null
+                ? null
+                : () => setState(() {
+                      bytes = null;
+                      fileName = null;
+                      fileSizeBytes = null;
+                    }),
+            onFileAccepted: (DroppedFileData dropped) async {
               setState(() {
-                bytes = data;
-                fileName = file.name;
-                pickedLabel = fileName;
-                if (name.text.trim().isEmpty && fileName != null) {
-                  name.text = fileName!;
+                bytes = dropped.bytes;
+                fileName = dropped.name;
+                fileSizeBytes = dropped.sizeBytes;
+                if (name.text.trim().isEmpty) {
+                  name.text = dropped.name;
                 }
               });
             },
@@ -502,7 +507,41 @@ Widget _field({
   required String hint,
   String? helper,
   bool numeric = false,
+  bool multiline = false,
 }) {
+  if (multiline) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: TextInputType.multiline,
+      textInputAction: TextInputAction.newline,
+      minLines: 4,
+      maxLines: 8,
+      scrollPhysics: const BouncingScrollPhysics(),
+      decoration: InputDecoration(
+        hintText: hint,
+        helperText: helper,
+        helperMaxLines: 2,
+        alignLabelWithHint: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
+        ),
+      ),
+      style: const TextStyle(
+        fontFamily: 'Google Sans Flex',
+        fontSize: 14,
+        color: Color(0xFF111827),
+      ),
+    );
+  }
   return TextField(
     controller: controller,
     keyboardType: numeric ? TextInputType.number : TextInputType.text,

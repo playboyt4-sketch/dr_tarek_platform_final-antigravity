@@ -20,7 +20,13 @@ final customClaimsProvider = StreamProvider<Map<String, dynamic>?>((
       continue;
     }
 
-    final tokenResult = await user.getIdTokenResult(true);
+    // Avoid forcing a network ID-token refresh on every auth-state emission:
+    // newly minted custom-token sign-ins and warm sessions already carry claims
+    // locally; force-refresh only when claims are missing.
+    var tokenResult = await user.getIdTokenResult(false);
+    if (tokenResult.claims == null || tokenResult.claims!.isEmpty) {
+      tokenResult = await user.getIdTokenResult(true);
+    }
     yield tokenResult.claims;
   }
 });

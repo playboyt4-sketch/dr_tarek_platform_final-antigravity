@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../providers/grade_students_provider.dart' show GradeStudent;
 import '../providers/student_profile_devices_provider.dart';
@@ -130,7 +131,7 @@ class _StudentProfileDeviceTabState
     final bool canManage = _canManage(permissionAsync);
 
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: rowsAsync.when(
         loading: () => const SizedBox(
           height: 200,
@@ -194,7 +195,7 @@ class _DeviceTableBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
@@ -245,7 +246,7 @@ class _DeviceTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 830,
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
@@ -258,31 +259,34 @@ class _DeviceTable extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        children: <Widget>[
-          const _DeviceHeaderRow(),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (rows.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'No subjects registered for this student yet.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 830,
+        child: Column(
+          children: <Widget>[
+            const _DeviceHeaderRow(),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'No subjects registered for this student yet.',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            )
-          else
-            for (int i = 0; i < rows.length; i++)
-              _DeviceDataRow(
-                state: state,
-                index: i,
-                row: rows[i],
-                canManage: canManage,
-              ),
-        ],
+              )
+            else
+              for (int i = 0; i < rows.length; i++)
+                _DeviceDataRow(
+                  state: state,
+                  index: i,
+                  row: rows[i],
+                  canManage: canManage,
+                ),
+          ],
+        ),
       ),
     );
   }

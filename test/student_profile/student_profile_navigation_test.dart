@@ -13,6 +13,7 @@ import 'package:dr_tarek_platform/features/student_dashboard/domain/entities/das
 import 'package:dr_tarek_platform/features/student_dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:dr_tarek_platform/features/student_dashboard/presentation/providers/dashboard_providers.dart';
 import 'package:dr_tarek_platform/features/student_home/presentation/screens/student_home_screen.dart';
+import 'package:dr_tarek_platform/l10n/generated/app_localizations.dart';
 
 class _FakeDashboardRepository implements DashboardRepository {
   List<DashboardSubject> subjects = const [];
@@ -21,6 +22,11 @@ class _FakeDashboardRepository implements DashboardRepository {
   Future<List<DashboardSubject>> getAccessibleSubjects({
     required String studentId,
   }) async => subjects;
+
+  @override
+  Stream<List<DashboardSubject>> watchAccessibleSubjects({
+    required String studentId,
+  }) => Stream.value(subjects);
 }
 
 /// Hand fake: records the name-update payload instead of touching
@@ -99,7 +105,7 @@ Future<void> _pumpHome(
     ProviderScope(
       overrides: [
         dashboardSubjectsProvider.overrideWith(
-          (ref) async => repository.subjects,
+          (ref) => Stream.value(repository.subjects),
         ),
         studentPlanKeyProvider.overrideWith((ref, studentId) async => null),
         profileRepositoryProvider.overrideWithValue(
@@ -109,7 +115,11 @@ Future<void> _pumpHome(
           'student-1',
         ).overrideWith((ref) => Stream.value(devices)),
       ],
-      child: const MaterialApp(home: StudentHomeScreen(user: _student)),
+      child: const MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: StudentHomeScreen(user: _student),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -212,7 +222,7 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardSubjectsProvider.overrideWith(
-            (ref) async => const <DashboardSubject>[],
+            (ref) => Stream.value(const <DashboardSubject>[]),
           ),
           profileRepositoryProvider.overrideWithValue(_FakeProfileRepository()),
           studentDevicesProvider(
@@ -245,7 +255,7 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardSubjectsProvider.overrideWith(
-            (ref) async => const <DashboardSubject>[],
+            (ref) => Stream.value(const <DashboardSubject>[]),
           ),
           profileRepositoryProvider.overrideWithValue(_FakeProfileRepository()),
           studentDevicesProvider(
@@ -288,7 +298,7 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardSubjectsProvider.overrideWith(
-            (ref) async => const <DashboardSubject>[
+            (ref) => Stream.value(const <DashboardSubject>[
               DashboardSubject(
                 id: 'subject-1',
                 title: 'مالية متقدمة',
@@ -301,7 +311,7 @@ void main() {
                 planKey: 'center_free',
                 displayOrder: 2,
               ),
-            ],
+            ]),
           ),
           profileRepositoryProvider.overrideWithValue(_FakeProfileRepository()),
           studentDevicesProvider(

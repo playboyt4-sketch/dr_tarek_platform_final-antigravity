@@ -22,15 +22,15 @@ final subjectNavigationRepositoryProvider =
     });
 
 final subjectSectionsProvider =
-    FutureProvider.family<List<LearningSection>, String>(
+    StreamProvider.family<List<LearningSection>, String>(
       (ref, subjectId) =>
-          ref.watch(subjectNavigationRepositoryProvider).getSections(subjectId),
+          ref.watch(subjectNavigationRepositoryProvider).watchSections(subjectId),
     );
 
 final sectionLecturesProvider =
-    FutureProvider.family<List<LectureSummary>, String>(
+    StreamProvider.family<List<LectureSummary>, String>(
       (ref, sectionId) =>
-          ref.watch(subjectNavigationRepositoryProvider).getLectures(sectionId),
+          ref.watch(subjectNavigationRepositoryProvider).watchLectures(sectionId),
     );
 
 /// Display media for one lecture (cards + header cover): poster image
@@ -163,4 +163,39 @@ Future<void> warmUpSubjectMedia(WidgetRef ref, BuildContext context) async {
     '[VIDEO-THUMB] warmup done sections=$sectionsWarmed '
     'elapsedMs=${stopwatch.elapsedMilliseconds}',
   );
+}
+
+
+/// Refreshes subject, section, lecture, and display-media providers and
+/// evicts stale poster URLs from [ImageCache] so edits from the dashboard
+/// reflect immediately upon pull-to-refresh, app resume, or returning from
+/// video/PDF playback.
+Future<void> refreshStudentLearningContent(
+  WidgetRef ref, {
+  String? subjectId,
+  Iterable<String> sectionIds = const <String>[],
+  Iterable<String?> imageUrls = const <String?>[],
+}) async {
+  for (final url in imageUrls) {
+    if (url != null && url.isNotEmpty) {
+      PaintingBinding.instance.imageCache.evict(NetworkImage(url));
+    }
+  }
+  ref.invalidate(dashboardSubjectsProvider);
+  if (subjectId != null && subjectId.isNotEmpty) {
+    ref.invalidate(subjectSectionsProvider(subjectId));
+  }
+  for (final sectionId in sectionIds) {
+    if (sectionId.isEmpty) continue;
+    ref.invalidate(sectionLecturesProvider(sectionId));
+    ref.invalidate(sectionDisplayMediaProvider(sectionId));
+  }
+  try {
+    await ref.read(dashboardSubjectsProvider.future);
+    if (subjectId != null && subjectId.isNotEmpty) {
+      await ref.read(subjectSectionsProvider(subjectId).future);
+    }
+  } catch (_) {
+    // Callers watch AsyncValue directly; transient refresh errors surface there.
+  }
 }

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/responsive/responsive.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/widgets/animated_menu_button.dart';
+import '../../features/applications/presentation/providers/application_decision_provider.dart';
+import '../../features/archive/presentation/screens/archive_screen.dart';
 import '../../features/authentication/presentation/providers/auth_providers.dart';
+import '../../features/authentication/presentation/providers/sign_out_action.dart';
 import '../../features/home/presentation/screens/dashboard_home_screen.dart';
 import '../../features/students/presentation/providers/grade_pending_requests_provider.dart';
 import '../../features/students/presentation/providers/grade_students_provider.dart';
@@ -12,7 +16,6 @@ import '../../features/students/presentation/screens/grade_pending_requests_view
 import '../../features/students/presentation/screens/grade_students_screen.dart';
 import '../../features/students/presentation/screens/student_profile_overview_screen.dart';
 import '../../features/students/presentation/screens/subject_details_screen.dart';
-import '../../features/applications/presentation/providers/application_decision_provider.dart';
 import '../../features/students/presentation/widgets/grade_theme.dart';
 import '../../features/subscription/presentation/screens/subscription_screen.dart';
 import 'dashboard_full_menu.dart';
@@ -35,23 +38,26 @@ enum DashboardSection {
   auditLogs,
   payments,
   systemSettings,
+  archive,
 }
 
-/// App shell for the 1280 x 800 dashboard with a geometrically-locked
-/// centered canvas: every page renders inside a fixed 1280 x 800 canvas
-/// that stays centered in the browser window ([Center] + [FittedBox]
-/// scaleDown), so grade screens never stick to the left. A unified top
-/// [Stack] layer keeps [TheMenuButton] at the exact canvas pixel
-/// (80, 24, 80 x 80) on every screen, so opening the
-/// [DashboardFullMenu] overlay never shifts the button by a single pixel.
-class DashboardShell extends StatefulWidget {
+/// Fully responsive Dashboard shell using [LayoutBuilder]:
+/// - Mobile (`< 768px`): `AppBar` + slide-out `Drawer` navigation, full-width
+///   scrollable content without scaling or rigid dimensions.
+/// - Tablet (`768px – 1100px`) & Desktop (`> 1100px`): full-viewport layout
+///   expanding to fill 100% of available space with top-left [TheMenuButton]
+///   toggling [DashboardFullMenu].
+class DashboardShell extends ConsumerStatefulWidget {
   const DashboardShell({super.key});
 
   @override
-  State<DashboardShell> createState() => _DashboardShellState();
+  ConsumerState<DashboardShell> createState() => _DashboardShellState();
 }
 
-class _DashboardShellState extends State<DashboardShell> {
+class _DashboardShellState extends ConsumerState<DashboardShell> {
+  final GlobalKey<ScaffoldState> _mobileScaffoldKey =
+      GlobalKey<ScaffoldState>();
+
   DashboardSection activeSection = DashboardSection.home;
   bool _menuOpen = false;
   String _pendingGrade = 'grade_one';
@@ -67,7 +73,7 @@ class _DashboardShellState extends State<DashboardShell> {
   bool get isMenuOpen => _menuOpen;
 
   /// Single toggle for the fixed top-layer button — opens and closes
-  /// the full-menu overlay without moving a single pixel.
+  /// the full-menu overlay on tablet/desktop.
   void toggleMenu() => setState(() => _menuOpen = !_menuOpen);
 
   void _openMenu() => setState(() => _menuOpen = true);
@@ -108,11 +114,6 @@ class _DashboardShellState extends State<DashboardShell> {
       });
 
   /// Grade students screen for [gradeKey], optionally on Subjects tab.
-  ///
-  /// Dashboard-level grade navigation always leaves any detail state:
-  /// the selected student profile is cleared so a grade tap from inside
-  /// a profile returns to that grade's Students list instead of
-  /// re-contextualizing the open profile.
   void _openGradeStudents(String gradeKey, {bool subjectsTab = false}) =>
       setState(() {
         activeSection = _sectionForGrade(gradeKey);
@@ -122,18 +123,6 @@ class _DashboardShellState extends State<DashboardShell> {
       });
 
   /// Subject Details page for one subject inside its grade context.
-  ///
-  /// The [SubjectOption.gradeKey] carried from Firestore is the single
-  /// source of truth for the grade context: the shell's cached
-  /// [_gradeTabGrade] can be stale when the grade was switched inside
-  /// [GradeStudentsScreen] (its internal nav owns a local `_gradeKey`
-  /// that never notifies the shell). Deriving [_detailsGrade] from the
-  /// subject itself keeps selected grade → [GradeTheme] → active nav
-  /// pill → Subject Details on the same grade. A null/missing subject
-  /// grade falls back to the shell's current tab grade; both paths are
-  /// canonicalized through [GradeTheme.fromKey] so legacy spellings
-  /// (`grade_1`, `1`, …) resolve to the same `grade_*` id.
-  /// Canonical entry point for subject-card navigation.
   void _openSubjectDetailsForSubject(SubjectOption subject) => setState(() {
         final String resolved = GradeTheme.fromKey(
           subject.gradeKey ?? _gradeTabGrade,
@@ -198,6 +187,8 @@ class _DashboardShellState extends State<DashboardShell> {
         return DashboardSection.payments;
       case DashboardMenuRoutes.systemSettings:
         return DashboardSection.systemSettings;
+      case DashboardMenuRoutes.archive:
+        return DashboardSection.archive;
       case DashboardMenuRoutes.home:
       default:
         return DashboardSection.home;
@@ -206,35 +197,87 @@ class _DashboardShellState extends State<DashboardShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Center(
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.center,
-          child: SizedBox(
-            width: 1280,
-            height: 800,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final DashboardBreakpoint breakpoint =
+            breakpointForWidth(constraints.maxWidth);
+
+        if (breakpoint == DashboardBreakpoint.mobile) {
+          return Scaffold(
+            key: _mobileScaffoldKey,
+            backgroundColor: AppColors.background,
+            appBar: AppBar(
+              toolbarHeight: 60,
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              iconTheme: const IconThemeData(color: Color(0xFF111827)),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(1),
+                child: Container(height: 1, color: const Color(0xFFE5E7EB)),
+              ),
+              title: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text.rich(
+                  TextSpan(
+                    children: <TextSpan>[
+                      TextSpan(
+                        text: 'Tarek el araby ',
+                        style: AppTypography.homeBrandHeavy(fontSize: 22),
+                      ),
+                      TextSpan(
+                        text: 'Platform',
+                        style: AppTypography.homeBrandLight(fontSize: 22),
+                      ),
+                    ],
+                  ),
+                  maxLines: 1,
+                ),
+              ),
+            ),
+            drawer: _MobileDashboardDrawer(
+              activeSection: activeSection,
+              onSelectRoute: (String route) {
+                Navigator.of(context).pop();
+                _navigate(route);
+              },
+              onSignOut: () {
+                Navigator.of(context).pop();
+                confirmAndSignOut(context, ref);
+              },
+            ),
+            body: SafeArea(
+              top: false,
+              child: SizedBox.expand(
+                child: _contentFor(activeSection),
+              ),
+            ),
+          );
+        }
+
+        final bool isDesktop = breakpoint == DashboardBreakpoint.desktop;
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          body: SizedBox.expand(
             child: Stack(
               clipBehavior: Clip.none,
-              children: [
-                // محتوى الصفحة (يبدأ محتواه الداخلي عند X: 80px)
-                _contentFor(activeSection),
-
-                // القائمة الكاملة
+              children: <Widget>[
+                Positioned.fill(
+                  child: _contentFor(activeSection),
+                ),
                 if (isMenuOpen)
-                  DashboardFullMenu(
-                    onClose: _closeMenu,
-                    onNavigate: (String section) {
-                      _navigate(section);
-                    },
+                  Positioned.fill(
+                    child: DashboardFullMenu(
+                      onClose: _closeMenu,
+                      onNavigate: _navigate,
+                      onSignOut: () => confirmAndSignOut(context, ref),
+                    ),
                   ),
-
-                // زر المنيو داخل الـ 1280 الموسط:
-                // يبدأ عند left: 80px بالمللي ليستقر فوق كارت الدائرة والجدول تماماً:
                 Positioned(
-                  left: 80,
-                  top: 24,
+                  left: isDesktop ? 48 : 20,
+                  top: isDesktop ? 20 : 16,
                   width: 80,
                   height: 80,
                   child: TheMenuButton(
@@ -245,8 +288,8 @@ class _DashboardShellState extends State<DashboardShell> {
               ],
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -270,8 +313,7 @@ class _DashboardShellState extends State<DashboardShell> {
           onMenuPressed: _openMenu,
           onReviewPending: _openPendingRequests,
           onStudentTap: _openStudentProfile,
-          onSubjectTap: (subject) =>
-              _openSubjectDetailsForSubject(subject),
+          onSubjectTap: (subject) => _openSubjectDetailsForSubject(subject),
         );
       case DashboardSection.studentProfile:
         final GradeStudent? profileStudent = _profileStudent;
@@ -294,10 +336,6 @@ class _DashboardShellState extends State<DashboardShell> {
           gradeKey: _profileGrade,
           avatarUrl: profileStudent.photoUrl,
           onBack: _closeStudentProfile,
-          // Dashboard-level controls: grade tabs exit the profile to
-          // that grade's Students list, Students returns to the current
-          // grade's list, Subjects opens the grade's Subjects view.
-          // Each clears the selected student; none edits users.grade.
           onGradeSelected: _openGradeStudents,
           onStudentsTab: () => _openGradeStudents(_profileGrade),
           onSubjectsTab: () =>
@@ -311,15 +349,12 @@ class _DashboardShellState extends State<DashboardShell> {
           subjectId: _detailsSubjectId,
           onGradeSelected: (String gradeKey) =>
               _openGradeStudents(gradeKey, subjectsTab: true),
-          onStudentsTab: () =>
-              _openGradeStudents(_detailsGrade),
+          onStudentsTab: () => _openGradeStudents(_detailsGrade),
           onSubjectsTab: () =>
               _openGradeStudents(_detailsGrade, subjectsTab: true),
           onSubjectDeleted: () =>
               _openGradeStudents(_detailsGrade, subjectsTab: true),
           onSubjectGradeChanged: (String gradeKey) => setState(() {
-            // Stay on the details page; the new key remounts it in the
-            // subject's new grade context.
             _detailsGrade = gradeKey;
           }),
         );
@@ -328,8 +363,7 @@ class _DashboardShellState extends State<DashboardShell> {
           key: ValueKey<String>('pending-$_pendingGrade'),
           initialGradeKey: _pendingGrade,
           onMenuPressed: _openMenu,
-          onStudentsTab: (String gradeKey) =>
-              _openGradeStudents(gradeKey),
+          onStudentsTab: (String gradeKey) => _openGradeStudents(gradeKey),
           onSubjectsTab: (String gradeKey) =>
               _openGradeStudents(gradeKey, subjectsTab: true),
           onViewRequest: _openRequestView,
@@ -341,8 +375,7 @@ class _DashboardShellState extends State<DashboardShell> {
             key: ValueKey<String>('pending-$_pendingGrade'),
             initialGradeKey: _pendingGrade,
             onMenuPressed: _openMenu,
-            onStudentsTab: (String gradeKey) =>
-                _openGradeStudents(gradeKey),
+            onStudentsTab: (String gradeKey) => _openGradeStudents(gradeKey),
             onSubjectsTab: (String gradeKey) =>
                 _openGradeStudents(gradeKey, subjectsTab: true),
             onViewRequest: _openRequestView,
@@ -352,16 +385,12 @@ class _DashboardShellState extends State<DashboardShell> {
           key: ValueKey<String>('pending-view-${row.application.id}'),
           row: row,
           onMenuPressed: _openMenu,
-          onStudentsTab: (String gradeKey) =>
-              _openGradeStudents(gradeKey),
+          onStudentsTab: (String gradeKey) => _openGradeStudents(gradeKey),
           onSubjectsTab: (String gradeKey) =>
               _openGradeStudents(gradeKey, subjectsTab: true),
           onBack: _closeRequestView,
         );
       case DashboardSection.subscription:
-        // Role-aware gating: delegated Admins see the rolling-window rows
-        // locked (Doctor only); the backend re-enforces this server-side.
-        // Unknown/loading sessions fail closed (locked).
         return Consumer(
           builder: (BuildContext context, WidgetRef ref, _) {
             final bool isDoctor = ref.watch(sessionProvider).maybeWhen(
@@ -396,15 +425,257 @@ class _DashboardShellState extends State<DashboardShell> {
           title: 'System Settings',
           child: _ComingNext(),
         );
+      case DashboardSection.archive:
+        return const ArchiveScreen();
     }
   }
 }
 
-/// Framed inner section: header brand + title + content.
-///
-/// The unified shell now owns the fixed top-layer [TheMenuButton] at
-/// (80, 24, 80 x 80), so this frame only reserves the 290 px spacer
-/// (80 button + 210 gap) to keep the brand locked at (370, 24).
+class _MobileDashboardDrawer extends StatelessWidget {
+  final DashboardSection activeSection;
+  final ValueChanged<String> onSelectRoute;
+  final VoidCallback? onSignOut;
+
+  const _MobileDashboardDrawer({
+    required this.activeSection,
+    required this.onSelectRoute,
+    this.onSignOut,
+  });
+
+  static DashboardSection _sectionForRoute(String route) {
+    return switch (route) {
+      DashboardMenuRoutes.gradeOne => DashboardSection.gradeOne,
+      DashboardMenuRoutes.gradeTwo => DashboardSection.gradeTwo,
+      DashboardMenuRoutes.gradeThree => DashboardSection.gradeThree,
+      DashboardMenuRoutes.gradeFour => DashboardSection.gradeFour,
+      DashboardMenuRoutes.subscription => DashboardSection.subscription,
+      DashboardMenuRoutes.admins => DashboardSection.admins,
+      DashboardMenuRoutes.announcements => DashboardSection.announcements,
+      DashboardMenuRoutes.auditLogs => DashboardSection.auditLogs,
+      DashboardMenuRoutes.payments => DashboardSection.payments,
+      DashboardMenuRoutes.systemSettings => DashboardSection.systemSettings,
+      DashboardMenuRoutes.archive => DashboardSection.archive,
+      _ => DashboardSection.home,
+    };
+  }
+
+  static Color? _dotColorForRoute(String route) {
+    return switch (route) {
+      DashboardMenuRoutes.gradeOne => AppColors.gradeOne,
+      DashboardMenuRoutes.gradeTwo => AppColors.gradeTwo,
+      DashboardMenuRoutes.gradeThree => AppColors.gradeThree,
+      DashboardMenuRoutes.gradeFour => AppColors.gradeFour,
+      _ => null,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      backgroundColor: Colors.white,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text.rich(
+                        TextSpan(
+                          children: <TextSpan>[
+                            TextSpan(
+                              text: 'Tarek el araby ',
+                              style: AppTypography.homeBrandHeavy(fontSize: 22),
+                            ),
+                            TextSpan(
+                              text: 'Platform',
+                              style: AppTypography.homeBrandLight(fontSize: 22),
+                            ),
+                          ],
+                        ),
+                        maxLines: 1,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close menu',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                children: <Widget>[
+                  _DrawerEntry(
+                    label: 'Home',
+                    icon: Icons.home_outlined,
+                    selected: activeSection == DashboardSection.home,
+                    onTap: () => onSelectRoute(DashboardMenuRoutes.home),
+                  ),
+                  const SizedBox(height: 16),
+                  const _DrawerGroupLabel('Grades'),
+                  const SizedBox(height: 4),
+                  for (final item in DashboardMenuData.grades)
+                    _DrawerEntry(
+                      label: item.label,
+                      dotColor: _dotColorForRoute(item.route),
+                      selected: activeSection == _sectionForRoute(item.route),
+                      onTap: () => onSelectRoute(item.route),
+                    ),
+                  const SizedBox(height: 16),
+                  const _DrawerGroupLabel('Management'),
+                  const SizedBox(height: 4),
+                  for (final item in DashboardMenuData.management)
+                    _DrawerEntry(
+                      label: item.label,
+                      icon: item.route == DashboardMenuRoutes.archive
+                          ? Icons.archive_outlined
+                          : Icons.tune_rounded,
+                      selected: activeSection == _sectionForRoute(item.route),
+                      onTap: () => onSelectRoute(item.route),
+                    ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1, color: Color(0xFFE5E7EB)),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    dense: true,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    leading: const Icon(
+                      Icons.logout_rounded,
+                      size: 20,
+                      color: Color(0xFFDC2626),
+                    ),
+                    title: const Text(
+                      'Sign Out',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFDC2626),
+                      ),
+                    ),
+                    onTap: onSignOut,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerGroupLabel extends StatelessWidget {
+  final String text;
+
+  const _DrawerGroupLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF6B7280),
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerEntry extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final Color? dotColor;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _DrawerEntry({
+    required this.label,
+    this.icon,
+    this.dotColor,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(
+        color: selected ? const Color(0xFFF3F4F6) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: <Widget>[
+                if (dotColor != null)
+                  Container(
+                    width: 10,
+                    height: 10,
+                    margin: const EdgeInsets.only(left: 4, right: 14),
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                    ),
+                  )
+                else if (icon != null) ...<Widget>[
+                  Icon(
+                    icon,
+                    size: 20,
+                    color: selected
+                        ? const Color(0xFF111827)
+                        : const Color(0xFF6B7280),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 16,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF374151),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Framed inner section: responsive header + title + content.
 class _SectionFrame extends StatelessWidget {
   final String title;
   final Widget child;
@@ -416,58 +687,42 @@ class _SectionFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(0, 24, 0, 40),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    // Spacer matching the shell's fixed button (80) + gap
-                    // (210) so the brand stays at X 370.
-                    const SizedBox(width: 290, height: 80),
-                    SizedBox(
-                      width: 540,
-                      height: 80,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text.rich(
-                          TextSpan(
-                            children: <TextSpan>[
-                              TextSpan(
-                                text: 'Tarek el araby ',
-                                style: AppTypography.homeBrandHeavy(
-                                    fontSize: 48),
-                              ),
-                              TextSpan(
-                                text: 'Platform',
-                                style: AppTypography.homeBrandLight(
-                                    fontSize: 48),
-                              ),
-                            ],
-                          ),
-                          maxLines: 1,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 32),
-                Text(title,
-                    style: AppTypography.sectionHeading(fontSize: 32)),
-                const SizedBox(height: 24),
-                child,
-              ],
-            ),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double horizontalPadding =
+            breakpointForWidth(constraints.maxWidth) ==
+                    DashboardBreakpoint.mobile
+                ? 16
+                : breakpointForWidth(constraints.maxWidth) ==
+                        DashboardBreakpoint.tablet
+                    ? 28
+                    : 48;
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            20,
+            horizontalPadding,
+            40,
           ),
-        ),
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const ResponsiveScreenHeader(),
+              const SizedBox(height: 24),
+              Text(
+                title,
+                style: AppTypography.sectionHeading(
+                  fontSize: constraints.maxWidth < AppBreakpoints.mobileMax
+                      ? 24
+                      : 32,
+                ),
+              ),
+              const SizedBox(height: 24),
+              child,
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -480,7 +735,7 @@ class _ComingNext extends StatelessWidget {
     return Center(
       child: Text(
         'This section is coming next.',
-        style: AppTypography.statLabel(fontSize: 24),
+        style: AppTypography.statLabel(fontSize: 20),
         textAlign: TextAlign.center,
       ),
     );

@@ -10,6 +10,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../student_dashboard/domain/entities/dashboard_subject.dart';
+import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../domain/entities/subject_learning_entities.dart';
 import '../providers/subject_navigation_providers.dart';
 import '../widgets/lecture_download_button.dart';
@@ -201,8 +202,69 @@ Map<_SubjectTab, List<LearningSection>> _groupSectionsByTab(
 }
 
 class _SubjectNavigationScreenState
-    extends ConsumerState<SubjectNavigationScreen> {
+    extends ConsumerState<SubjectNavigationScreen>
+    with WidgetsBindingObserver {
   _SubjectTab? selectedTab;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      unawaited(_refreshSubjectData(evictImages: false));
+    }
+  }
+
+  DashboardSubject get _liveSubject {
+    final subjects = ref.watch(dashboardSubjectsProvider).value;
+    if (subjects != null) {
+      for (final s in subjects) {
+        if (s.id == widget.subject.id) return s;
+      }
+    }
+    return widget.subject;
+  }
+
+  Future<void> _refreshSubjectData({bool evictImages = true}) async {
+    final sections =
+        ref.read(subjectSectionsProvider(widget.subject.id)).value ??
+        const <LearningSection>[];
+    final sectionIds = sections.map((s) => s.id).toList();
+    final urls = <String?>[];
+    if (evictImages) {
+      urls.add(_liveSubject.thumbnailUrl);
+      for (final sectionId in sectionIds) {
+        final lectures = ref.read(sectionLecturesProvider(sectionId)).value;
+        if (lectures != null) {
+          for (final lec in lectures) {
+            urls.add(lec.thumbnailUrl);
+          }
+        }
+        final media = ref.read(sectionDisplayMediaProvider(sectionId)).value;
+        if (media != null) {
+          for (final item in media.values) {
+            urls.add(item.thumbnailUrl);
+          }
+        }
+      }
+    }
+    await refreshStudentLearningContent(
+      ref,
+      subjectId: widget.subject.id,
+      sectionIds: sectionIds,
+      imageUrls: urls,
+    );
+  }
 
   Color get _background =>
       widget.backgroundColor ?? _gradeBackground(widget.grade);
@@ -293,19 +355,21 @@ class _SubjectNavigationScreenState
   /// when the subject doc carries no parseable grade, so a grade-three
   /// student holding a grade-one subject sees `الفرقة الأولى`.
   String get _headerSubtitle {
-    final subjectLabel = widget.subject.gradeLabel;
+    final subject = _liveSubject;
+    final subjectLabel = subject.gradeLabel;
     if (subjectLabel != null) return subjectLabel;
     final studentLabel = _gradeLabel(_normalizeGradeKey(widget.grade));
     if (studentLabel != null) return studentLabel;
-    final legacy = widget.subject.subtitle?.trim();
+    final legacy = subject.subtitle?.trim();
     if (legacy != null && legacy.isNotEmpty) return legacy;
     return '';
   }
 
   @override
   Widget build(BuildContext context) {
+    final subject = _liveSubject;
     final sectionsAsync = ref.watch(
-      subjectSectionsProvider(widget.subject.id),
+      subjectSectionsProvider(subject.id),
     );
 
     return Scaffold(
@@ -314,7 +378,7 @@ class _SubjectNavigationScreenState
         loading: () => Column(
           children: [
             _Header(
-              subject: widget.subject,
+              subject: subject,
               subtitle: _headerSubtitle,
               coverBackground: const _PlainCover(),
             ),
@@ -329,17 +393,30 @@ class _SubjectNavigationScreenState
         error: (_, _) => Column(
           children: [
             _Header(
-              subject: widget.subject,
+              subject: subject,
               subtitle: _headerSubtitle,
               coverBackground: const _PlainCover(),
             ),
             SizedBox(height: context.rsV(_SubjectPageDesign.tabsTopGap)),
             Expanded(
-              child: _MessageState(
-                message: 'تعذر تحميل أقسام المادة.',
-                actionLabel: 'إعادة المحاولة',
-                onAction: () => ref.invalidate(
-                  subjectSectionsProvider(widget.subject.id),
+              child: RefreshIndicator(
+                color: Colors.white,
+                backgroundColor: _background,
+                onRefresh: () => _refreshSubjectData(),
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: SizedBox(
+                      height: constraints.maxHeight,
+                      child: _MessageState(
+                        message: 'تعذر تحميل أقسام المادة.',
+                        actionLabel: 'إعادة المحاولة',
+                        onAction: () => ref.invalidate(
+                          subjectSectionsProvider(subject.id),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -352,16 +429,29 @@ class _SubjectNavigationScreenState
             return Column(
               children: [
                 _Header(
-                  subject: widget.subject,
+                  subject: subject,
                   subtitle: _headerSubtitle,
                   coverBackground: const _PlainCover(),
                 ),
                 SizedBox(
                   height: context.rsV(_SubjectPageDesign.tabsTopGap),
                 ),
-                const Expanded(
-                  child: _MessageState(
-                    message: 'لا توجد أقسام منشورة في هذه المادة بعد.',
+                Expanded(
+                  child: RefreshIndicator(
+                    color: Colors.white,
+                    backgroundColor: _background,
+                    onRefresh: () => _refreshSubjectData(),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: SizedBox(
+                          height: constraints.maxHeight,
+                          child: const _MessageState(
+                            message: 'لا توجد أقسام منشورة في هذه المادة بعد.',
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -383,12 +473,14 @@ class _SubjectNavigationScreenState
           return Column(
             children: [
               _Header(
-                subject: widget.subject,
+                subject: subject,
                 subtitle: _headerSubtitle,
                 coverBackground: _FirstVideoCover(
-                  subjectId: widget.subject.id,
+                  subjectId: subject.id,
                   firstSectionId: coverSection.id,
                   seasons: visible,
+                  onReturnedFromPlayer: () =>
+                      unawaited(_refreshSubjectData(evictImages: false)),
                 ),
               ),
               SizedBox(height: context.rsV(_SubjectPageDesign.tabsTopGap)),
@@ -403,10 +495,14 @@ class _SubjectNavigationScreenState
                         message: 'هذا القسم مقفل ضمن اشتراكك الحالي.',
                       )
                     : _LecturesBody(
-                        subjectId: widget.subject.id,
+                        subjectId: subject.id,
                         tab: currentTab,
                         sections: unlockedSections,
                         seasons: visible,
+                        backgroundColor: _background,
+                        onRefresh: () => _refreshSubjectData(),
+                        onReturnedFromPlayer: () =>
+                            unawaited(_refreshSubjectData(evictImages: false)),
                       ),
               ),
             ],
@@ -547,11 +643,13 @@ class _FirstVideoCover extends ConsumerWidget {
   final String subjectId;
   final String firstSectionId;
   final List<LearningSection> seasons;
+  final VoidCallback? onReturnedFromPlayer;
 
   const _FirstVideoCover({
     required this.subjectId,
     required this.firstSectionId,
     required this.seasons,
+    this.onReturnedFromPlayer,
   });
 
   @override
@@ -604,14 +702,14 @@ class _FirstVideoCover extends ConsumerWidget {
       bottomRight: Radius.circular(radius),
     );
 
-    void openFirst() {
+    Future<void> openFirst() async {
       final episode = first;
       final episodes = items;
       if (episode == null || episodes == null || episode.isLocked) return;
       if (!_claimVideoPush()) return;
       // Single-route contract: tap pushes DIRECTLY to the full-screen
       // player route — no intermediate screen/AppBar between tap and video.
-      Navigator.of(context).push(
+      await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => VideoStreamingScreen(
             subjectId: subjectId,
@@ -623,6 +721,7 @@ class _FirstVideoCover extends ConsumerWidget {
           ),
         ),
       );
+      onReturnedFromPlayer?.call();
     }
 
     return GestureDetector(
@@ -848,12 +947,18 @@ class _LecturesBody extends ConsumerWidget {
   final _SubjectTab tab;
   final List<LearningSection> sections;
   final List<LearningSection> seasons;
+  final Color backgroundColor;
+  final Future<void> Function() onRefresh;
+  final VoidCallback? onReturnedFromPlayer;
 
   const _LecturesBody({
     required this.subjectId,
     required this.tab,
     required this.sections,
     required this.seasons,
+    required this.backgroundColor,
+    required this.onRefresh,
+    this.onReturnedFromPlayer,
   });
 
   @override
@@ -875,14 +980,27 @@ class _LecturesBody extends ConsumerWidget {
       merged.addAll(items);
     }
     if (failed && merged.isEmpty && !loading) {
-      return _MessageState(
-        message: 'تعذر تحميل المحاضرات.',
-        actionLabel: 'إعادة المحاولة',
-        onAction: () {
-          for (final section in sections) {
-            ref.invalidate(sectionLecturesProvider(section.id));
-          }
-        },
+      return RefreshIndicator(
+        color: Colors.white,
+        backgroundColor: backgroundColor,
+        onRefresh: onRefresh,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: SizedBox(
+              height: constraints.maxHeight,
+              child: _MessageState(
+                message: 'تعذر تحميل المحاضرات.',
+                actionLabel: 'إعادة المحاولة',
+                onAction: () {
+                  for (final section in sections) {
+                    ref.invalidate(sectionLecturesProvider(section.id));
+                  }
+                },
+              ),
+            ),
+          ),
+        ),
       );
     }
     if (loading && merged.isEmpty) {
@@ -893,52 +1011,92 @@ class _LecturesBody extends ConsumerWidget {
     {
         final items = merged;
         if (items.isEmpty) {
-          return const _MessageState(
-            message: 'لا توجد محاضرات منشورة في هذا القسم بعد.',
+          return RefreshIndicator(
+            color: Colors.white,
+            backgroundColor: backgroundColor,
+            onRefresh: onRefresh,
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: SizedBox(
+                  height: constraints.maxHeight,
+                  child: const _MessageState(
+                    message: 'لا توجد محاضرات منشورة في هذا القسم بعد.',
+                  ),
+                ),
+              ),
+            ),
           );
         }
-        return ListView.builder(
-          padding: EdgeInsets.only(
-            top: context.rsV(_SubjectPageDesign.listTopGap),
-            left: context.rs(_SubjectPageDesign.listMarginHorizontal),
-            right: context.rs(_SubjectPageDesign.listMarginHorizontal),
-            bottom: context.rsV(24),
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, index) {
-            final lecture = items[index];
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: index == items.length - 1
-                    ? 0
-                    : context.rsV(_SubjectPageDesign.cardGap),
-              ),
-              child: _LectureCard(
-                lecture: lecture,
-                subjectId: subjectId,
-                onOpen: lecture.isLocked
-                    ? null
-                    : () {
-                        if (!_claimVideoPush()) return;
-                        // Single-route contract: tap pushes DIRECTLY to the
-                        // full-screen player route — no intermediate screen.
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => VideoStreamingScreen(
-                              subjectId: subjectId,
-                              initialEpisode: lecture,
-                              episodes: items,
-                              seasons: seasons,
-                              loadEpisodes: (id) => ref.read(
-                                sectionLecturesProvider(id).future,
+        return RefreshIndicator(
+          color: Colors.white,
+          backgroundColor: backgroundColor,
+          onRefresh: onRefresh,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.only(
+              top: context.rsV(_SubjectPageDesign.listTopGap),
+              left: context.rs(_SubjectPageDesign.listMarginHorizontal),
+              right: context.rs(_SubjectPageDesign.listMarginHorizontal),
+              bottom: context.rsV(24),
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final lecture = items[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == items.length - 1
+                      ? 0
+                      : context.rsV(_SubjectPageDesign.cardGap),
+                ),
+                child: _LectureCard(
+                  lecture: lecture,
+                  subjectId: subjectId,
+                  onPlayOffline: lecture.isLocked
+                      ? null
+                      : () async {
+                          if (!_claimVideoPush()) return;
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => VideoStreamingScreen(
+                                subjectId: subjectId,
+                                initialEpisode: lecture,
+                                episodes: items,
+                                seasons: seasons,
+                                preferOffline: true,
+                                loadEpisodes: (id) => ref.read(
+                                  sectionLecturesProvider(id).future,
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      },
-              ),
-            );
-          },
+                          );
+                          onReturnedFromPlayer?.call();
+                        },
+                  onOpen: lecture.isLocked
+                      ? null
+                      : () async {
+                          if (!_claimVideoPush()) return;
+                          // Single-route contract: tap pushes DIRECTLY to the
+                          // full-screen player route — no intermediate screen.
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => VideoStreamingScreen(
+                                subjectId: subjectId,
+                                initialEpisode: lecture,
+                                episodes: items,
+                                seasons: seasons,
+                                loadEpisodes: (id) => ref.read(
+                                  sectionLecturesProvider(id).future,
+                                ),
+                              ),
+                            ),
+                          );
+                          onReturnedFromPlayer?.call();
+                        },
+                ),
+              );
+            },
+          ),
         );
     }
   }
@@ -951,11 +1109,13 @@ class _LectureCard extends StatelessWidget {
   final LectureSummary lecture;
   final String subjectId;
   final VoidCallback? onOpen;
+  final VoidCallback? onPlayOffline;
 
   const _LectureCard({
     required this.lecture,
     required this.subjectId,
     this.onOpen,
+    this.onPlayOffline,
   });
 
   @override
@@ -1044,6 +1204,7 @@ class _LectureCard extends StatelessWidget {
                             LectureDownloadButton(
                               lecture: lecture,
                               subjectId: subjectId,
+                              onPlayOffline: onPlayOffline,
                             ),
                             SizedBox(
                               width: context.rs(
@@ -1148,8 +1309,9 @@ class _LectureThumb extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final docUrl = lecture.thumbnailUrl;
+    final cacheVersion = lecture.updatedAt?.millisecondsSinceEpoch ?? 0;
     if (docUrl != null && docUrl.isNotEmpty) {
-      return _NetworkThumb(url: docUrl);
+      return _NetworkThumb(url: docUrl, cacheVersion: cacheVersion);
     }
     final sectionId = lecture.sectionId;
     if (sectionId == null || sectionId.isEmpty) {
@@ -1158,7 +1320,7 @@ class _LectureThumb extends ConsumerWidget {
     final mediaAsync = ref.watch(sectionDisplayMediaProvider(sectionId));
     final url = mediaAsync.value?[lecture.id]?.thumbnailUrl;
     if (url != null && url.isNotEmpty) {
-      return _NetworkThumb(url: url);
+      return _NetworkThumb(url: url, cacheVersion: cacheVersion);
     }
     return _ThumbnailPlaceholder(loading: mediaAsync.isLoading);
   }
@@ -1199,9 +1361,26 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
   @override
   void didUpdateWidget(covariant _AutoPlayCover oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // The signed preview URL resolves AFTER first paint (batched fetch);
-    // start the 2s countdown when it arrives, not only at init.
+    if (oldWidget.posterUrl != widget.posterUrl &&
+        oldWidget.posterUrl != null &&
+        oldWidget.posterUrl!.isNotEmpty) {
+      PaintingBinding.instance.imageCache.evict(
+        NetworkImage(oldWidget.posterUrl!),
+      );
+    }
+    // The signed preview URL resolves AFTER first paint (batched fetch) or
+    // updates after an admin edit: reset & reschedule when it changes.
     if (oldWidget.previewUrl != widget.previewUrl) {
+      _timer?.cancel();
+      _timer = null;
+      final oldController = _controller;
+      _controller = null;
+      if (_ready) {
+        setState(() => _ready = false);
+      }
+      if (oldController != null) {
+        unawaited(oldController.dispose());
+      }
       _schedulePreview();
     }
   }
@@ -1283,6 +1462,7 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
         if (posterUrl != null && posterUrl.isNotEmpty)
           Image.network(
             posterUrl,
+            key: ValueKey(posterUrl),
             headers: bunnyPlaybackHttpHeaders,
             cacheWidth: 600,
             fit: BoxFit.cover,
@@ -1321,13 +1501,15 @@ class _AutoPlayCoverState extends State<_AutoPlayCover> {
 
 class _NetworkThumb extends StatelessWidget {
   final String url;
+  final int cacheVersion;
 
-  const _NetworkThumb({required this.url});
+  const _NetworkThumb({required this.url, this.cacheVersion = 0});
 
   @override
   Widget build(BuildContext context) {
     return Image.network(
       url,
+      key: ValueKey('$url|$cacheVersion'),
       headers: bunnyPlaybackHttpHeaders,
       cacheWidth: 600,
       fit: BoxFit.cover,

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
+import '../../../archive/presentation/providers/archive_provider.dart';
+import '../../../archive/presentation/widgets/archive_confirm_dialog.dart';
 import '../providers/grade_students_provider.dart';
 import '../providers/subject_details_provider.dart';
 import '../widgets/add_subject_overlay.dart';
-import '../widgets/dashboard_brand_lockup.dart';
 import '../widgets/grade_nav_bar.dart';
 import '../widgets/grade_theme.dart';
 import '../widgets/scoped_search_bar.dart';
@@ -88,51 +90,44 @@ class _GradeStudentsScreenState extends ConsumerState<GradeStudentsScreen> {
   Widget build(BuildContext context) {
     return Material(
       color: const Color(0xFFFFFFFF),
-      child: SingleChildScrollView(
-        clipBehavior: Clip.antiAlias,
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          clipBehavior: Clip.antiAlias,
-          child: SizedBox(
-            width: 1280,
-            height: 800,
-            child: Stack(
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final DashboardBreakpoint breakpoint =
+              breakpointForWidth(constraints.maxWidth);
+          final bool isMobile = breakpoint == DashboardBreakpoint.mobile;
+          final double horizontalPadding = switch (breakpoint) {
+            DashboardBreakpoint.mobile => 16,
+            DashboardBreakpoint.tablet => 28,
+            DashboardBreakpoint.desktop => 48,
+          };
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              isMobile ? 12 : 20,
+              horizontalPadding,
+              32,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Positioned(
-                  left: 370,
-                  top: 24,
-                  width: 540,
-                  height: 80,
-                  child:
-                      IgnorePointer(child: DashboardBrandLockup()),
+                const ResponsiveScreenHeader(),
+                SizedBox(height: isMobile ? 8 : 20),
+                GradeNavBar(
+                  gradeKey: _gradeKey,
+                  onGradeSelected: (String key) => setState(() {
+                    _gradeKey = key;
+                    _query = '';
+                  }),
                 ),
-                Positioned(
-                  left: 310,
-                  top: 136,
-                  width: 660,
-                  height: 40,
-                  child: GradeNavBar(
-                    gradeKey: _gradeKey,
-                    onGradeSelected: (String key) => setState(() {
-                      _gradeKey = key;
-                      _query = '';
-                    }),
-                  ),
+                const SizedBox(height: 14),
+                StudentsSubjectsTabs(
+                  studentsActive: _studentsTab,
+                  accent: _accent,
+                  onStudentsTap: () => setState(() => _studentsTab = true),
+                  onSubjectsTap: () => setState(() => _studentsTab = false),
                 ),
-                Positioned(
-                  left: 474,
-                  top: 190,
-                  width: 332,
-                  height: 40,
-                  child: StudentsSubjectsTabs(
-                    studentsActive: _studentsTab,
-                    accent: _accent,
-                    onStudentsTap: () =>
-                        setState(() => _studentsTab = true),
-                    onSubjectsTap: () =>
-                        setState(() => _studentsTab = false),
-                  ),
-                ),
+                const SizedBox(height: 20),
                 if (_studentsTab) ...<Widget>[
                   _StatsRow(
                     gradeKey: _gradeKey,
@@ -140,11 +135,8 @@ class _GradeStudentsScreenState extends ConsumerState<GradeStudentsScreen> {
                     onReviewPending: () =>
                         widget.onReviewPending?.call(_gradeKey),
                   ),
-                  Positioned(
-                    left: 430,
-                    top: 427,
-                    width: 420,
-                    height: 44,
+                  const SizedBox(height: 24),
+                  Center(
                     child: ScopedSearchBar(
                       onScopeChanged: (SearchScope scope) =>
                           setState(() => _scope = scope),
@@ -152,6 +144,7 @@ class _GradeStudentsScreenState extends ConsumerState<GradeStudentsScreen> {
                           setState(() => _query = value),
                     ),
                   ),
+                  const SizedBox(height: 20),
                   _StudentsTable(
                     gradeKey: _gradeKey,
                     accent: _accent,
@@ -167,14 +160,14 @@ class _GradeStudentsScreenState extends ConsumerState<GradeStudentsScreen> {
                   ),
               ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-/// Stats row at Y 250: total capsule + plan breakdown + pending CTA.
+/// Responsive stats row: stacks on mobile, 2+1 on tablet, 3-column on desktop.
 class _StatsRow extends ConsumerWidget {
   final String gradeKey;
   final Color accent;
@@ -192,65 +185,61 @@ class _StatsRow extends ConsumerWidget {
         ref.watch(gradeStudentsProvider(gradeKey));
     return dataAsync.when(
       loading: () => const SizedBox.shrink(),
-      error: (Object error, StackTrace stackTrace) =>
-          const SizedBox.shrink(),
+      error: (Object error, StackTrace stackTrace) => const SizedBox.shrink(),
       data: (GradeStudentsData data) {
-        return Stack(
-          children: <Widget>[
-            // Total students capsule (80, 250, 250 x 124).
-            Positioned(
-              left: 80,
-              top: 250,
-              width: 250,
-              height: 124,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(9999),
-                  border: Border.all(color: accent, width: 1.5),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
-                    const Text(
-                      'Total Students',
-                      style: TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w400,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${data.total}',
-                      style: const TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
-                      ),
-                    ),
-                  ],
-                ),
+        return LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final DashboardBreakpoint breakpoint =
+                breakpointForWidth(constraints.maxWidth);
+
+            final Widget totalCard = Container(
+              constraints: const BoxConstraints(minHeight: 116),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(9999),
+                border: Border.all(color: accent, width: 1.5),
               ),
-            ),
-            // Frame 39 plan breakdown (370, 250, 250 x 150): one
-            // consistent subscription-derived axis (see
-            // buildPlanBreakdown). Buckets overlap by design — a student
-            // with plans on several subjects is counted in each tier —
-            // so shares may sum past 100%; the caption says so explicitly.
-            Positioned(
-              left: 370,
-              top: 250,
-              width: 250,
-              height: 150,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  const Text(
+                    'Total Students',
+                    style: TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${data.total}',
+                    style: const TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 34,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                ],
+              ),
+            );
+
+            final Widget breakdownCard = Container(
+              constraints: const BoxConstraints(minHeight: 116),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF9FAFB),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   for (int i = 0; i < data.breakdown.length; i++) ...<Widget>[
-                    if (i > 0) const SizedBox(height: 6),
+                    if (i > 0) const SizedBox(height: 5),
                     Text(
                       '${data.breakdown[i].label}: '
                       '${data.breakdown[i].count} '
@@ -267,8 +256,6 @@ class _StatsRow extends ConsumerWidget {
                     ),
                   ],
                   const SizedBox(height: 4),
-                  // Denominator made explicit: shares are of the grade's
-                  // total student count (buckets overlap — see above).
                   Text(
                     data.total == 1
                         ? 'Share of 1 student; a student with several '
@@ -287,41 +274,45 @@ class _StatsRow extends ConsumerWidget {
                   ),
                 ],
               ),
-            ),
-            // Pending CTA capsule (660, 250, 540 x 124).
-            Positioned(
-              left: 660,
-              top: 250,
-              width: 540,
-              height: 124,
-              child: Material(
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(9999),
-                  side: BorderSide(color: accent, width: 2),
-                ),
-                child: InkWell(
-                  onTap: onReviewPending,
-                  borderRadius: BorderRadius.circular(9999),
+            );
+
+            final Widget pendingButton = Material(
+              color: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9999),
+                side: BorderSide(color: accent, width: 2),
+              ),
+              child: InkWell(
+                onTap: onReviewPending,
+                borderRadius: BorderRadius.circular(9999),
+                child: Container(
+                  constraints: BoxConstraints(
+                    minHeight:
+                        breakpoint == DashboardBreakpoint.mobile ? 64 : 116,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
-                      const Flexible(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            'Review Pending Requests',
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontFamily: AppTypography.fontFamily,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w500,
-                              color: Color(0xFF374151),
-                            ),
+                      Flexible(
+                        child: Text(
+                          'Review Pending Requests',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: breakpoint == DashboardBreakpoint.mobile
+                                ? 16
+                                : 20,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF374151),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -341,12 +332,12 @@ class _StatsRow extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 10),
                       const Text(
                         '>',
                         style: TextStyle(
                           fontFamily: AppTypography.fontFamily,
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF111827),
                         ),
@@ -355,15 +346,58 @@ class _StatsRow extends ConsumerWidget {
                   ),
                 ),
               ),
-            ),
-          ],
+            );
+
+            if (breakpoint == DashboardBreakpoint.mobile) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  totalCard,
+                  const SizedBox(height: 12),
+                  breakdownCard,
+                  const SizedBox(height: 12),
+                  pendingButton,
+                ],
+              );
+            }
+
+            if (breakpoint == DashboardBreakpoint.tablet) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(child: totalCard),
+                      const SizedBox(width: 16),
+                      Expanded(child: breakdownCard),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  pendingButton,
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(flex: 2, child: totalCard),
+                const SizedBox(width: 24),
+                Expanded(flex: 2, child: breakdownCard),
+                const SizedBox(width: 24),
+                Expanded(flex: 4, child: pendingButton),
+              ],
+            );
+          },
         );
       },
     );
   }
 }
 
-/// Students table (80, 522, 1120 x 260): 40 px header + scrollable rows.
+/// Students table: expands to full width on desktop, horizontally scrollable
+/// on mobile/narrow tablet.
 class _StudentsTable extends ConsumerWidget {
   final String gradeKey;
   final Color accent;
@@ -383,29 +417,29 @@ class _StudentsTable extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AsyncValue<GradeStudentsData> dataAsync =
         ref.watch(gradeStudentsProvider(gradeKey));
-    return Positioned(
-      left: 80,
-      top: 522,
-      width: 1120,
-      height: 260,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-            boxShadow: const <BoxShadow>[
-              BoxShadow(
-                color: Color(0x0D000000),
-                blurRadius: 20,
-                offset: Offset(0, 4),
-              ),
-            ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x0D000000),
+              blurRadius: 20,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: dataAsync.when(
+          loading: () => const SizedBox(
+            height: 200,
+            child: Center(child: CircularProgressIndicator()),
           ),
-          child: dataAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (Object error, StackTrace stackTrace) => const Center(
+          error: (Object error, StackTrace stackTrace) => const SizedBox(
+            height: 200,
+            child: Center(
               child: Text(
                 'Could not load students.',
                 style: TextStyle(
@@ -415,56 +449,92 @@ class _StudentsTable extends ConsumerWidget {
                 ),
               ),
             ),
-            data: (GradeStudentsData data) {
-              final List<GradeStudent> rows =
-                  filterStudents(data.students, scope, query);
-              return Column(
+          ),
+          data: (GradeStudentsData data) {
+            final List<GradeStudent> rows =
+                filterStudents(data.students, scope, query);
+            return ResponsiveHorizontalTable(
+              minTableWidth: 900,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   const _TableHeader(),
                   Container(height: 1, color: const Color(0xFFE5E7EB)),
-                  Expanded(
-                    child: rows.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No students found.',
-                              style: TextStyle(
-                                fontFamily: AppTypography.fontFamily,
-                                fontSize: 14,
-                                color: Color(0xFF6B7280),
-                              ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: EdgeInsets.zero,
-                            itemCount: rows.length,
-                            separatorBuilder:
-                                (BuildContext context, int index) =>
-                                    Container(
-                              height: 1,
-                              color: const Color(0xFFF3F4F6),
-                            ),
-                            itemBuilder:
-                                (BuildContext context, int index) {
-                              final GradeStudent student = rows[index];
-                              final void Function(GradeStudent, String)?
-                                  openProfile = onStudentTap;
-                              return _StudentRow(
-                                number: index + 1,
-                                student: student,
-                                accent: accent,
-                                onViewPressed: openProfile == null
-                                    ? () => showStudentDetailsDialog(
-                                        context, student)
-                                    : () =>
-                                        openProfile(student, gradeKey),
-                              );
-                            },
+                  if (rows.isEmpty)
+                    const SizedBox(
+                      height: 180,
+                      child: Center(
+                        child: Text(
+                          'No students found.',
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 14,
+                            color: Color(0xFF6B7280),
                           ),
-                  ),
+                        ),
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: rows.length,
+                      separatorBuilder: (BuildContext context, int index) =>
+                          Container(
+                        height: 1,
+                        color: const Color(0xFFF3F4F6),
+                      ),
+                      itemBuilder: (BuildContext context, int index) {
+                        final GradeStudent student = rows[index];
+                        final void Function(GradeStudent, String)? openProfile =
+                            onStudentTap;
+                        return _StudentRow(
+                          number: index + 1,
+                          student: student,
+                          accent: accent,
+                          onViewPressed: openProfile == null
+                              ? () => showStudentDetailsDialog(context, student)
+                              : () => openProfile(student, gradeKey),
+                          onArchivePressed: () async {
+                            final bool confirmed = await showArchiveConfirmDialog(
+                              context: context,
+                              entityLabel: 'Student',
+                              itemTitle: student.name,
+                              extraNote:
+                                  'While archived, the student account is temporarily disabled and cannot sign in.',
+                            );
+                            if (!confirmed || !context.mounted) return;
+                            final ScaffoldMessengerState messenger =
+                                ScaffoldMessenger.of(context);
+                            try {
+                              await ref
+                                  .read(archiveControllerProvider)
+                                  .archiveStudent(student.id);
+                              invalidateArchiveDependents(ref);
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '${student.name} moved to Archive.',
+                                  ),
+                                ),
+                              );
+                            } catch (error) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  backgroundColor: const Color(0xFFDC2626),
+                                  content: Text('Could not archive student: $error'),
+                                ),
+                              );
+                            }
+                          },
+                        );
+                      },
+                    ),
                 ],
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -518,12 +588,14 @@ class _StudentRow extends StatelessWidget {
   final GradeStudent student;
   final Color accent;
   final VoidCallback onViewPressed;
+  final VoidCallback? onArchivePressed;
 
   const _StudentRow({
     required this.number,
     required this.student,
     required this.accent,
     required this.onViewPressed,
+    this.onArchivePressed,
   });
 
   @override
@@ -632,30 +704,54 @@ class _StudentRow extends StatelessWidget {
               flex: 2,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: SizedBox(
-                  width: 88,
-                  height: 32,
-                  child: ElevatedButton(
-                    onPressed: onViewPressed,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(9999),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    SizedBox(
+                      width: 70,
+                      height: 32,
+                      child: ElevatedButton(
+                        onPressed: onViewPressed,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: accent,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9999),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'View',
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFFFFFFFF),
+                          ),
+                        ),
                       ),
-                      elevation: 0,
                     ),
-                    child: const Text(
-                      'View',
-                      style: TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFFFFFFFF),
+                    if (onArchivePressed != null) ...<Widget>[
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: IconButton(
+                          tooltip: 'Move to Archive',
+                          style: IconButton.styleFrom(
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            minimumSize: const Size(32, 32),
+                            padding: EdgeInsets.zero,
+                          ),
+                          iconSize: 18,
+                          color: const Color(0xFFDC2626),
+                          onPressed: onArchivePressed,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                        ),
                       ),
-                    ),
-                  ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -795,12 +891,7 @@ class _DetailLine extends StatelessWidget {
   }
 }
 
-/// Subjects pane (80, 276, 1120 wide): destination of the Subjects tab.
-///
-/// Figma `# Grade- Grade one - subjects`:
-/// - scrollable body [Y:276], margins 80, W:1120, AlwaysScrollableScrollPhysics
-/// - 2-column grid, gap 40h / 24v, card 540x128 + Add card always last
-/// - card tap → details dialog; Add tap → add-subject overlay.
+/// Subjects pane: responsive grid (1 column on mobile, 2 columns on tablet/desktop).
 class _SubjectsPane extends ConsumerWidget {
   final String gradeKey;
   final Color accent;
@@ -817,14 +908,14 @@ class _SubjectsPane extends ConsumerWidget {
     final AsyncValue<List<SubjectOption>> subjectsAsync =
         ref.watch(gradeSubjectsProvider(gradeKey));
     final Color gradeColor = GradeTheme.fromKey(gradeKey).primaryColor;
-    return Positioned(
-      left: 80,
-      top: 276,
-      width: 1120,
-      height: 506,
-      child: subjectsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (Object error, StackTrace stackTrace) => const Center(
+    return subjectsAsync.when(
+      loading: () => const SizedBox(
+        height: 240,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (Object error, StackTrace stackTrace) => const SizedBox(
+        height: 240,
+        child: Center(
           child: Text(
             'Could not load subjects.',
             style: TextStyle(
@@ -834,46 +925,76 @@ class _SubjectsPane extends ConsumerWidget {
             ),
           ),
         ),
-        data: (List<SubjectOption> subjects) {
-          return SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: Wrap(
-              spacing: 40,
-              runSpacing: 24,
-              children: <Widget>[
-                for (final SubjectOption subject in subjects)
-                  _LiveSubjectCard(
-                    subject: subject,
-                    gradeColor: gradeColor,
-                    onTap: () {
-                      final ValueChanged<SubjectOption>? open =
-                          onSubjectTap;
-                      if (open != null) {
-                        open(subject);
-                      } else {
-                        SubjectDetailsDialog.show(
-                          context,
-                          title: subject.title,
-                          isActive: subject.isVisible,
-                          gradeColor: gradeColor,
-                        );
-                      }
-                    },
-                  ),
-                AddSubjectCard(
-                  gradeColor: gradeColor,
-                  onTap: () => AddSubjectOverlay.show(
-                    context,
-                    gradeKey: gradeKey,
-                    gradeColor: gradeColor,
-                    nextDisplayOrder: subjects.length,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
       ),
+      data: (List<SubjectOption> subjects) {
+        final List<Widget> cards = <Widget>[
+          for (final SubjectOption subject in subjects)
+            _LiveSubjectCard(
+              subject: subject,
+              gradeColor: gradeColor,
+              onTap: () {
+                final ValueChanged<SubjectOption>? open = onSubjectTap;
+                if (open != null) {
+                  open(subject);
+                } else {
+                  SubjectDetailsDialog.show(
+                    context,
+                    title: subject.title,
+                    isActive: subject.isVisible,
+                    gradeColor: gradeColor,
+                  );
+                }
+              },
+            ),
+          AddSubjectCard(
+            gradeColor: gradeColor,
+            onTap: () => AddSubjectOverlay.show(
+              context,
+              gradeKey: gradeKey,
+              gradeColor: gradeColor,
+              nextDisplayOrder: subjects.length,
+            ),
+          ),
+        ];
+
+        return LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final bool singleColumn =
+                constraints.maxWidth < AppBreakpoints.mobileMax;
+            if (singleColumn) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  for (int i = 0; i < cards.length; i++) ...<Widget>[
+                    if (i > 0) const SizedBox(height: 16),
+                    cards[i],
+                  ],
+                ],
+              );
+            }
+            const double gap = 24;
+            return Column(
+              children: <Widget>[
+                for (int i = 0; i < cards.length; i += 2) ...<Widget>[
+                  if (i > 0) const SizedBox(height: 20),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(child: cards[i]),
+                      const SizedBox(width: gap),
+                      Expanded(
+                        child: i + 1 < cards.length
+                            ? cards[i + 1]
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -914,6 +1035,29 @@ class _LiveSubjectCard extends ConsumerWidget {
       onlineCount: _tabCount(ref, SubjectContentTab.online),
       gradeColor: gradeColor,
       onTap: onTap,
+      onArchiveTap: () async {
+        final bool confirmed = await showArchiveConfirmDialog(
+          context: context,
+          entityLabel: 'Subject',
+          itemTitle: subject.title,
+        );
+        if (!confirmed || !context.mounted) return;
+        final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+        try {
+          await ref.read(archiveControllerProvider).archiveSubject(subject.id);
+          invalidateArchiveDependents(ref);
+          messenger.showSnackBar(
+            SnackBar(content: Text('${subject.title} moved to Archive.')),
+          );
+        } catch (error) {
+          messenger.showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFFDC2626),
+              content: Text('Could not archive subject: $error'),
+            ),
+          );
+        }
+      },
     );
   }
 }

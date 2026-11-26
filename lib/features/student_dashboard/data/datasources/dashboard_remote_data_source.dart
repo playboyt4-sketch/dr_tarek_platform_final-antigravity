@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../domain/entities/dashboard_subject.dart';
@@ -87,7 +89,7 @@ SubscriptionVerdict bestSubscriptionVerdict(
   SubscriptionVerdict? best;
   var bestRank = 1 << 30;
   for (final data in documents) {
-    if (data['is_deleted'] == true) continue;
+    if (data['is_deleted'] == true || data['is_archived'] == true) continue;
     final verdict = verdictForSubscriptionDoc(data, nowUtc: nowUtc);
     final rank = subscriptionRank(verdict);
     if (rank < bestRank) {
@@ -199,25 +201,157 @@ String? _normalizeSubjectGradeKey(Object? raw) {
   return null;
 }
 
+DateTime? _timestamp(Object? value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  return null;
+}
+
 class DashboardRemoteDataSource {
   final FirebaseFirestore firestore;
 
   const DashboardRemoteDataSource({required this.firestore});
 
+  /// Live stream of accessible subjects for [studentId]: reacts immediately
+  /// to Firestore edits on `subject_access_assignments`, `subjects` (title,
+  /// poster/cover URL, visibility, archive), and `subscriptions`, excluding
+  /// soft-deleted / archived documents.
+  Stream<List<DashboardSubject>> watchAccessibleSubjects({
+    required String studentId,
+  }) {
+    late final StreamController<List<DashboardSubject>> controller;
+    QuerySnapshot<Map<String, dynamic>>? assignmentsSnap;
+    QuerySnapshot<Map<String, dynamic>>? subjectsSnap;
+    QuerySnapshot<Map<String, dynamic>>? subscriptionsSnap;
+    final Map<String, Map<String, dynamic>?> plansCache =
+        <String, Map<String, dynamic>?>{};
+    final Map<String, bool> featuresCache = <String, bool>{};
+    final List<StreamSubscription<QuerySnapshot<Map<String, dynamic>>>> subs =
+        <StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>[];
+    var computeVersion = 0;
+
+    Future<void> recompute() async {
+      final a = assignmentsSnap;
+      final s = subjectsSnap;
+      final p = subscriptionsSnap;
+      if (a == null || s == null || p == null || controller.isClosed) return;
+      final version = ++computeVersion;
+
+      final List<String> subjectIds = <String>[];
+      for (final doc in a.docs) {
+        final data = doc.data();
+        if (data['is_archived'] == true || data['enabled'] != true) continue;
+        final sid = data['subject_id'];
+        if (sid is String && sid.isNotEmpty && !subjectIds.contains(sid)) {
+          subjectIds.add(sid);
+        }
+      }
+      if (subjectIds.isEmpty) {
+        if (!controller.isClosed && version == computeVersion) {
+          controller.add(const <DashboardSubject>[]);
+        }
+        return;
+      }
+
+      final Map<String, Map<String, dynamic>> liveSubjects =
+          <String, Map<String, dynamic>>{};
+      final Set<String> allowedIds = subjectIds.toSet();
+      for (final doc in s.docs) {
+        if (!allowedIds.contains(doc.id)) continue;
+        final data = doc.data();
+        if (data['is_deleted'] == true ||
+            data['is_archived'] == true ||
+            data['is_visible'] != true) {
+          continue;
+        }
+        liveSubjects[doc.id] = data;
+      }
+      if (liveSubjects.isEmpty) {
+        if (!controller.isClosed && version == computeVersion) {
+          controller.add(const <DashboardSubject>[]);
+        }
+        return;
+      }
+
+      final Map<String, List<Map<String, dynamic>>> subsBySubject =
+          <String, List<Map<String, dynamic>>>{};
+      for (final doc in p.docs) {
+        final data = doc.data();
+        if (data['is_deleted'] == true || data['is_archived'] == true) {
+          continue;
+        }
+        final sid = data['subject_id'];
+        if (sid is String && liveSubjects.containsKey(sid)) {
+          (subsBySubject[sid] ??= <Map<String, dynamic>>[]).add(data);
+        }
+      }
+
+      final result = await _assembleDashboardSubjects(
+        liveSubjects: liveSubjects,
+        subsBySubject: subsBySubject,
+        plansCache: plansCache,
+        featuresCache: featuresCache,
+      );
+      if (!controller.isClosed && version == computeVersion) {
+        controller.add(result);
+      }
+    }
+
+    controller = StreamController<List<DashboardSubject>>(
+      onListen: () {
+        subs.add(
+          firestore
+              .collection('subject_access_assignments')
+              .where('student_id', isEqualTo: studentId)
+              .where('is_deleted', isEqualTo: false)
+              .snapshots()
+              .listen(
+                (snap) {
+                  assignmentsSnap = snap;
+                  recompute();
+                },
+                onError: controller.addError,
+              ),
+        );
+        subs.add(
+          firestore
+              .collection('subjects')
+              .where('is_deleted', isEqualTo: false)
+              .where('is_visible', isEqualTo: true)
+              .snapshots()
+              .listen(
+                (snap) {
+                  subjectsSnap = snap;
+                  recompute();
+                },
+                onError: controller.addError,
+              ),
+        );
+        subs.add(
+          firestore
+              .collection('subscriptions')
+              .where('student_id', isEqualTo: studentId)
+              .snapshots()
+              .listen(
+                (snap) {
+                  subscriptionsSnap = snap;
+                  recompute();
+                },
+                onError: controller.addError,
+              ),
+        );
+      },
+      onCancel: () async {
+        for (final sub in subs) {
+          await sub.cancel();
+        }
+      },
+    );
+
+    return controller.stream;
+  }
+
   /// Accessible subjects for Student Home / Student Profile subjects.
-  ///
-  /// Latency discipline: exactly FIVE sequential Firestore waves no matter
-  /// how many subjects the student holds — (1) assignments, (2) subject
-  /// docs in parallel, (3) subscription queries in parallel, (4) distinct
-  /// plan docs in parallel, (5) distinct plan-features queries in parallel.
-  /// The previous per-subject sequential waterfall issued 1 + 4×n round
-  /// trips (subject + subscriptions + plan + features per subject), which
-  /// kept the home carousel on a spinner for seconds on web. Plan reads
-  /// are additionally deduplicated: co-subjects on one plan share a single
-  /// plan + features read.
-  ///
-  /// Fault isolation is preserved per subject: one unreadable/denied doc
-  /// skips that subject and keeps the rest.
   Future<List<DashboardSubject>> getAccessibleSubjects({
     required String studentId,
   }) async {
@@ -231,14 +365,13 @@ class DashboardRemoteDataSource {
     final List<String> subjectIds = <String>[];
     for (final doc in assignments.docs) {
       final data = doc.data();
-      if (data['enabled'] != true) continue;
+      if (data['is_archived'] == true || data['enabled'] != true) continue;
       final sid = data['subject_id'];
       if (sid is String && sid.isNotEmpty && !subjectIds.contains(sid)) {
         subjectIds.add(sid);
       }
     }
     if (subjectIds.isEmpty) return <DashboardSubject>[];
-    final nowUtc = DateTime.now().toUtc();
 
     // Wave 1 — subject docs in parallel.
     final subjectDocs = await Future.wait(
@@ -250,7 +383,11 @@ class DashboardRemoteDataSource {
     for (final entry in subjectDocs) {
       if (entry == null) continue;
       final data = entry.data;
-      if (data['is_deleted'] == true || data['is_visible'] != true) continue;
+      if (data['is_deleted'] == true ||
+          data['is_archived'] == true ||
+          data['is_visible'] != true) {
+        continue;
+      }
       liveSubjects[entry.id] = data;
     }
     if (liveSubjects.isEmpty) return <DashboardSubject>[];
@@ -262,16 +399,35 @@ class DashboardRemoteDataSource {
       ),
       eagerError: false,
     );
+    final Map<String, List<Map<String, dynamic>>> subsBySubject =
+        <String, List<Map<String, dynamic>>>{};
+    int index = 0;
+    for (final sid in liveSubjects.keys) {
+      subsBySubject[sid] = subsLists[index];
+      index++;
+    }
+
+    return _assembleDashboardSubjects(
+      liveSubjects: liveSubjects,
+      subsBySubject: subsBySubject,
+    );
+  }
+
+  Future<List<DashboardSubject>> _assembleDashboardSubjects({
+    required Map<String, Map<String, dynamic>> liveSubjects,
+    required Map<String, List<Map<String, dynamic>>> subsBySubject,
+    Map<String, Map<String, dynamic>?>? plansCache,
+    Map<String, bool>? featuresCache,
+  }) async {
+    final nowUtc = DateTime.now().toUtc();
     final Map<String, SubscriptionVerdict> verdicts =
         <String, SubscriptionVerdict>{};
     final Set<String> planIds = <String>{};
-    int index = 0;
     for (final sid in liveSubjects.keys) {
       final verdict = bestSubscriptionVerdict(
-        subsLists[index],
+        subsBySubject[sid] ?? const <Map<String, dynamic>>[],
         nowUtc: nowUtc,
       );
-      index++;
       verdicts[sid] = verdict;
       final planId = verdict.planId;
       if ((verdict.state == DashboardSubscriptionState.active ||
@@ -282,34 +438,37 @@ class DashboardRemoteDataSource {
       }
     }
 
-    // Wave 3 — distinct plan docs in parallel.
-    final planDocs = await Future.wait(
-      planIds.map(_guardPlanDoc),
-      eagerError: false,
-    );
     final Map<String, Map<String, dynamic>?> plansById =
-        <String, Map<String, dynamic>?>{};
-    int planIndex = 0;
-    for (final planId in planIds) {
-      plansById[planId] = planDocs[planIndex];
-      planIndex++;
+        plansCache ?? <String, Map<String, dynamic>?>{};
+    final List<String> missingPlanIds = <String>[
+      for (final id in planIds)
+        if (!plansById.containsKey(id)) id,
+    ];
+    if (missingPlanIds.isNotEmpty) {
+      final planDocs = await Future.wait(
+        missingPlanIds.map(_guardPlanDoc),
+        eagerError: false,
+      );
+      for (var i = 0; i < missingPlanIds.length; i++) {
+        plansById[missingPlanIds[i]] = planDocs[i];
+      }
     }
 
-    // Wave 4 — distinct plan-features probes in parallel (enabled only:
-    // the student rule allows listing ENABLED features, so the query
-    // itself filters — otherwise a single disabled feature doc denies
-    // the entire query).
+    final Map<String, bool> hasFeatures = featuresCache ?? <String, bool>{};
     final activePlanIds = <String>[
       for (final planId in planIds)
-        if (plansById[planId]?['is_active'] == true) planId,
+        if (plansById[planId]?['is_active'] == true &&
+            !hasFeatures.containsKey(planId))
+          planId,
     ];
-    final featuresLists = await Future.wait(
-      activePlanIds.map(_guardPlanFeatures),
-      eagerError: false,
-    );
-    final Map<String, bool> hasFeatures = <String, bool>{};
-    for (var i = 0; i < activePlanIds.length; i++) {
-      hasFeatures[activePlanIds[i]] = featuresLists[i].isNotEmpty;
+    if (activePlanIds.isNotEmpty) {
+      final featuresLists = await Future.wait(
+        activePlanIds.map(_guardPlanFeatures),
+        eagerError: false,
+      );
+      for (var i = 0; i < activePlanIds.length; i++) {
+        hasFeatures[activePlanIds[i]] = featuresLists[i].isNotEmpty;
+      }
     }
 
     final subjects = <DashboardSubject>[];
@@ -321,11 +480,9 @@ class DashboardRemoteDataSource {
       final entitlement = resolveEntitlement(
         subscriptionState: verdict.state,
         planId: planId,
-        planKey:
-            planData == null ? null : _text(planData['plan_key']),
+        planKey: planData == null ? null : _text(planData['plan_key']),
         planActive: planData != null && planData['is_active'] == true,
-        hasEnabledFeatures:
-            planId != null && (hasFeatures[planId] ?? false),
+        hasEnabledFeatures: planId != null && (hasFeatures[planId] ?? false),
       );
       subjects.add(
         DashboardSubject(
@@ -342,6 +499,7 @@ class DashboardRemoteDataSource {
               _text(data['cover_url']),
           gradeKey: _normalizeSubjectGradeKey(data['grade']),
           displayOrder: (data['display_order'] as num?)?.toInt() ?? 0,
+          updatedAt: _timestamp(data['updated_at'] ?? data['cover_updated_at']),
           planKey: entitlement.planKey,
           subjectAccessState: DashboardSubjectAccessState.enabled,
           subscriptionState: verdict.state,
@@ -387,7 +545,9 @@ class DashboardRemoteDataSource {
           .get();
       return <Map<String, dynamic>>[
         for (final doc in snap.docs)
-          if (doc.data()['is_deleted'] != true) doc.data(),
+          if (doc.data()['is_deleted'] != true &&
+              doc.data()['is_archived'] != true)
+            doc.data(),
       ];
     } catch (_) {
       return const <Map<String, dynamic>>[];

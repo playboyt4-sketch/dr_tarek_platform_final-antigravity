@@ -39,7 +39,6 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
   final subjectsSnap = await db
       .collection('subjects')
       .where('is_deleted', isEqualTo: false)
-      .count()
       .get();
   final staffSnap = await db
       .collection('users')
@@ -64,9 +63,13 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
     }
   }
 
+  final int liveSubjects = subjectsSnap.docs
+      .where((doc) => !isArchivedData(doc.data()))
+      .length;
+
   return HomeStats(
     students: students,
-    subjects: subjectsSnap.count ?? 0,
+    subjects: liveSubjects,
     pendingApplications: pending,
     staff: staffSnap.count ?? 0,
   );

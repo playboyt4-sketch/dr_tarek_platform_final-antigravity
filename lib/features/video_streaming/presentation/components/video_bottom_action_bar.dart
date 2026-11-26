@@ -11,6 +11,10 @@ class VideoBottomActionBar extends StatelessWidget {
   final VoidCallback onQualityTap;
   final VoidCallback onNextTap;
   final VoidCallback? onBookmarkTap;
+  final VoidCallback? onDownloadTap;
+  final bool isDownloading;
+  final bool isDownloaded;
+  final double downloadProgress;
 
   /// Section-aware label for the leftmost toolbar button
   /// (Lectures / Revisions / Finals / Online), resolved by the screen from
@@ -24,6 +28,10 @@ class VideoBottomActionBar extends StatelessWidget {
     required this.onQualityTap,
     required this.onNextTap,
     this.onBookmarkTap,
+    this.onDownloadTap,
+    this.isDownloading = false,
+    this.isDownloaded = false,
+    this.downloadProgress = 0.0,
     this.sectionButtonLabel = 'Lectures',
     super.key,
   });
@@ -167,6 +175,10 @@ class VideoBottomActionBar extends StatelessWidget {
                 label: 'Quality',
                 onTap: onQualityTap,
               ),
+              if (onDownloadTap != null) ...[
+                SizedBox(width: context.rs(35)),
+                _buildDownloadToolBtn(context),
+              ],
               SizedBox(width: context.rs(35)),
               _buildToolBtn(
                 context,
@@ -193,6 +205,74 @@ class VideoBottomActionBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildDownloadToolBtn(BuildContext context) {
+    if (isDownloading) {
+      final percentage = (downloadProgress * 100).toInt();
+      return GestureDetector(
+        onTap: onDownloadTap,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: context.rsFont(16),
+              height: context.rsFont(16),
+              child: CircularProgressIndicator(
+                value: downloadProgress > 0 ? downloadProgress : null,
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+            SizedBox(width: context.rs(6)),
+            Text(
+              downloadProgress > 0 ? '$percentage%' : 'Downloading',
+              style: TextStyle(
+                fontFamily: AppFontFamilies.googleSansFlex,
+                color: Colors.white,
+                fontSize: context.rsFont(13),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (isDownloaded) {
+      return GestureDetector(
+        onTap: onDownloadTap,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.check_circle,
+              color: const Color(0xFF10B981),
+              size: context.rsFont(18),
+            ),
+            SizedBox(width: context.rs(6)),
+            Text(
+              'Saved',
+              style: TextStyle(
+                fontFamily: AppFontFamilies.googleSansFlex,
+                color: const Color(0xFF10B981),
+                fontSize: context.rsFont(13),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _buildToolBtn(
+      context,
+      icon: Icons.file_download_outlined,
+      label: 'Download',
+      onTap: onDownloadTap,
     );
   }
 

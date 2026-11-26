@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -10,6 +12,7 @@ import '../../../../core/constants/bunny_playback_headers.dart';
 import '../../../../core/security/screen_guard.dart';
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
 import '../../data/repositories/playback_repository.dart';
+import '../../data/services/video_download_service.dart';
 import '../../data/services/video_source_resolver.dart';
 import '../../domain/entities/playback_entities.dart';
 import '../../domain/services/playback_session_coordinator.dart';
@@ -52,6 +55,16 @@ class VideoPlaybackController extends ChangeNotifier {
   /// shared resolver used by URL issuance so both paths address the same
   /// device. Identity material only, never proof.
   final Future<String> Function()? deviceIdProvider;
+
+  /// When true (launched from "Play Offline"), plays directly from the local
+  /// sandbox MP4 copy if present and valid before touching the network.
+  final bool preferOffline;
+
+  /// Optional test seam for resolving a local downloaded MP4 path.
+  final Future<String?> Function({
+    required String subjectId,
+    required String lectureId,
+  })? offlineVideoPathLookup;
 
   List<LectureSummary> episodes;
   String lectureId;
@@ -217,6 +230,8 @@ class VideoPlaybackController extends ChangeNotifier {
     this.watchWindowGateway,
     this.sessionGateway,
     this.deviceIdProvider,
+    this.preferOffline = false,
+    this.offlineVideoPathLookup,
   }) : _subjectId = subjectId,
        lectureId = episode.id,
        sectionId = episode.sectionId ?? '',
@@ -312,6 +327,18 @@ class VideoPlaybackController extends ChangeNotifier {
       debugPrint(
         '[VIDEO-DIAG] player initialize start userId=$userId subjectId=$subjectId lectureId=$lectureId',
       );
+      if (preferOffline && !kIsWeb) {
+        final offlinePath = await _resolveLocalOfflinePath();
+        if (_disposed || operation != _operationId) return;
+        if (offlinePath != null) {
+          await _loadOfflineEngine(
+            operation: operation,
+            filePath: offlinePath,
+            autoplay: true,
+          );
+          return;
+        }
+      }
       // Startup latency: entitlement (membership reads) and the lecture
       // resources callable are independent — fire both at once instead of
       // serially so open-to-first-frame costs a single round trip.
@@ -661,6 +688,70 @@ class VideoPlaybackController extends ChangeNotifier {
     _sessionInvalidated = false;
   }
 
+  Future<String?> _resolveLocalOfflinePath() {
+    final lookup = offlineVideoPathLookup;
+    if (lookup != null) {
+      return lookup(subjectId: subjectId, lectureId: lectureId);
+    }
+    return VideoDownloadController.resolveValidOfflineVideoPath(
+      subjectId: subjectId,
+      lectureId: lectureId,
+    );
+  }
+
+  Future<void> _loadOfflineEngine({
+    required int operation,
+    required String filePath,
+    required bool autoplay,
+  }) async {
+    _dropSession();
+    _firstFrameLogged = false;
+    _bufferingStartedAt = null;
+    _downgradedThisEngine = false;
+    _resource = VideoResource(
+      id: 'offline_$lectureId',
+      title: episodeTitle,
+      resourceType: 'video',
+    );
+    selectedQuality = VideoQuality.auto;
+
+    PlaybackProgressRecord? resumeRecord;
+    try {
+      resumeRecord = await playbackRepository.read(lectureId);
+    } catch (_) {}
+    if (_disposed || operation != _operationId) return;
+
+    final previous = _engine;
+    previous?.removeListener(_onEngineUpdate);
+    _engine = null;
+    await previous?.dispose();
+
+    final next = VideoPlayerController.file(File(filePath));
+    _engine = next;
+    next.addListener(_onEngineUpdate);
+    await next.initialize();
+    if (_disposed || operation != _operationId) {
+      await next.dispose();
+      return;
+    }
+
+    if (resumeRecord != null && resumeRecord.position > Duration.zero) {
+      _resumeRecord = resumeRecord;
+      showResumePrompt = false;
+      await next.seekTo(
+        ProgressMath.clampPosition(resumeRecord.position, next.value.duration),
+      );
+    }
+    playbackStatus = PlayerPlaybackStatus.ready;
+    errorMessage = null;
+    _notify();
+    if (autoplay) {
+      try {
+        await play();
+      } catch (_) {}
+    }
+  }
+
   Future<void> _loadEngine({
     required int operation,
     Duration? positionToRestore,
@@ -828,9 +919,7 @@ class VideoPlaybackController extends ChangeNotifier {
         return;
       }
       _resumeRecord = resumeRecord;
-      showResumePrompt =
-          ProgressMath.resumeAction(resumeRecord) ==
-          ResumeAction.continueWatching;
+      showResumePrompt = false;
     }
     final effectiveRestore = adoptedSession != null
         ? adoptedSession.position

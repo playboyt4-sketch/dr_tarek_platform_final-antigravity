@@ -22,4 +22,8 @@ abstract class NotificationsRepository {
   Stream<int> watchUnreadCount({
     required String userId,
   });
+
+  Future<void> resetUnreadBadgeCount({
+    required String userId,
+  });
 }

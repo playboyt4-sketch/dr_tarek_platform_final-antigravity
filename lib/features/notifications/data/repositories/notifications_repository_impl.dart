@@ -37,4 +37,9 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
   Stream<int> watchUnreadCount({required String userId}) {
     return remoteDataSource.watchUnreadCount(userId: userId);
   }
+
+  @override
+  Future<void> resetUnreadBadgeCount({required String userId}) {
+    return remoteDataSource.resetUnreadBadgeCount(userId: userId);
+  }
 }

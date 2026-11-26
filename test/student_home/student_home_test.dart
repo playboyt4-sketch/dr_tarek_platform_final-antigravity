@@ -17,6 +17,12 @@ class _FakeDashboardRepository implements DashboardRepository {
     required String studentId,
   }) async =>
       subjects;
+
+  @override
+  Stream<List<DashboardSubject>> watchAccessibleSubjects({
+    required String studentId,
+  }) =>
+      Stream.value(subjects);
 }
 
 AuthUser _student() {
@@ -40,7 +46,7 @@ Future<void> _pumpHome(
     ProviderScope(
       overrides: [
         dashboardSubjectsProvider.overrideWith(
-          (ref) async => repository.subjects,
+          (ref) => Stream.value(repository.subjects),
         ),
         studentPlanKeyProvider.overrideWith((ref, studentId) async => null),
       ],
@@ -135,7 +141,7 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardSubjectsProvider.overrideWith(
-            (ref) async => repository.subjects,
+            (ref) => Stream.value(repository.subjects),
           ),
           studentPlanKeyProvider.overrideWith((ref, studentId) async => null),
         ],

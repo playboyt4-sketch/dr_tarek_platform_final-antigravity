@@ -151,6 +151,7 @@ class FcmPushService {
     _authStateSub = auth.authStateChanges().listen((user) {
       if (user != null) {
         unawaited(_registerToken());
+        unawaited(_resetUnreadBadgeCount());
       } else {
         _tokenRefreshSub?.cancel();
         _tokenRefreshSub = null;
@@ -162,6 +163,7 @@ class FcmPushService {
     // cannot double-call the backend.
     if (auth.currentUser != null) {
       unawaited(_registerToken());
+      unawaited(_resetUnreadBadgeCount());
     }
 
     _tokenRefreshSub ??= messaging.onTokenRefresh.listen((_) {
@@ -408,6 +410,15 @@ class FcmPushService {
 
     if (!_reportedRegistrationStages.add(stage)) return;
     unawaited(_recordNonFatal(error, stackTrace ?? StackTrace.current, reason));
+  }
+
+  Future<void> _resetUnreadBadgeCount() async {
+    if (auth.currentUser == null) return;
+    try {
+      await functions.httpsCallable('resetUnreadNotificationsCount').call();
+    } catch (_) {
+      // Best-effort badge reset; never block push setup.
+    }
   }
 
   Future<void> _recordNonFatal(

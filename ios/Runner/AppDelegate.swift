@@ -20,12 +20,26 @@ import Flutter
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
     window?.makeKeyAndVisible()
+    clearNotificationBadge(application)
 
     setupScreenGuardChannel()
     setupCaptureObservers()
     screenCaptureChanged()
 
     return result
+  }
+
+  override func applicationDidBecomeActive(_ application: UIApplication) {
+    super.applicationDidBecomeActive(application)
+    clearNotificationBadge(application)
+  }
+
+  private func clearNotificationBadge(_ application: UIApplication) {
+    if #available(iOS 16.0, *) {
+      UNUserNotificationCenter.current().setBadgeCount(0) { _ in }
+    } else {
+      application.applicationIconBadgeNumber = 0
+    }
   }
 
   @available(iOS 10.0, *)

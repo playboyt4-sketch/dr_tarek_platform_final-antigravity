@@ -1,13 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/utils/storage_upload_helper.dart';
+import '../../../../core/widgets/file_drop_upload_zone.dart';
+import '../../../../core/widgets/web_file_drop.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
 import '../../../students/data/bunny_association_gateway.dart';
@@ -100,12 +101,14 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
   String _lastDiscoveredVideoId = '';
 
   final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _bunnyController = TextEditingController();
   final TextEditingController _pdfController = TextEditingController();
 
   @override
   void dispose() {
     _titleController.dispose();
+    _descriptionController.dispose();
     _bunnyController.dispose();
     _pdfController.dispose();
     super.dispose();
@@ -154,46 +157,33 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
   }
 
   bool _uploadingPdf = false;
+  String? _uploadedPdfName;
+  int? _uploadedPdfSize;
 
-  Future<void> _uploadPdfFile() async {
+  Future<void> _uploadPdfFile(DroppedFileData file) async {
     if (_uploadingPdf || _saving) return;
+    setState(() => _uploadingPdf = true);
     try {
-      final PlatformFile? file = await FilePicker.pickFile(
-        type: FileType.custom,
-        allowedExtensions: const ['pdf'],
+      final downloadUrl = await uploadDashboardFileToStorage(
+        folder: 'lectures/pdfs',
+        file: file,
+        contentType: 'application/pdf',
       );
-      if (file == null) return;
-      setState(() => _uploadingPdf = true);
-
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تعذر قراءة ملف الـ PDF المختار.')),
-          );
-        }
-        return;
-      }
-
-      final safeName = file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
-      final storagePath = 'lectures/pdfs/${DateTime.now().millisecondsSinceEpoch}_$safeName';
-      final storageRef = FirebaseStorage.instance.ref().child(storagePath);
-
-      await storageRef.putData(
-        bytes,
-        SettableMetadata(contentType: 'application/pdf'),
-      );
-      final downloadUrl = await storageRef.getDownloadURL();
 
       if (mounted) {
         setState(() {
           _pdfController.text = downloadUrl;
+          _uploadedPdfName = file.name;
+          _uploadedPdfSize = file.sizeBytes;
           if (_titleController.text.trim().isEmpty) {
-            _titleController.text = file.name.replaceAll('.pdf', '').replaceAll('_', ' ');
+            _titleController.text =
+                file.name.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '').replaceAll('_', ' ');
           }
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم رفع ملف الـ PDF بنجاح وملء الرابط تلقائياً.')),
+          const SnackBar(
+            content: Text('تم رفع ملف الـ PDF بنجاح وملء الرابط تلقائياً.'),
+          ),
         );
       }
     } catch (e) {
@@ -243,6 +233,7 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
         subjectId: _subjectId!,
         tabKey: _tabKey,
         title: _titleController.text.trim(),
+        description: _descriptionController.text.trim(),
         bunnyVideoId: vid.isEmpty ? null : vid,
         selectedLibraryId: _selectedLibraryId,
         pdfPath: _pdfController.text.trim().isEmpty
@@ -365,6 +356,21 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
                 },
         ),
         const SizedBox(height: 12),
+        TextFormField(
+          controller: _descriptionController,
+          enabled: !_saving,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          minLines: 4,
+          maxLines: 8,
+          scrollPhysics: const BouncingScrollPhysics(),
+          decoration: const InputDecoration(
+            labelText: 'Video Details / Description',
+            hintText: 'اكتب تفاصيل أو وصف الفيديو هنا...',
+            alignLabelWithHint: true,
+          ),
+        ),
+        const SizedBox(height: 12),
         TextField(
           controller: _bunnyController,
           enabled: !_saving,
@@ -462,39 +468,36 @@ class _QuickUploadFormState extends ConsumerState<QuickUploadForm> {
               ),
         ],
         const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: _pdfController,
-                enabled: !_saving && !_uploadingPdf,
-                decoration: const InputDecoration(
-                  labelText: 'رابط ملف الـ PDF (أو ارفعه من الزر)',
-                  hintText: 'https://... أو مسار الملف',
-                ),
-                textInputAction: TextInputAction.done,
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              height: 48,
-              child: OutlinedButton.icon(
-                onPressed: _saving || _uploadingPdf ? null : _uploadPdfFile,
-                icon: _uploadingPdf
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.upload_file),
-                label: Text(_uploadingPdf ? 'جارٍ الرفع...' : 'رفع ملف PDF'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                ),
-              ),
-            ),
-          ],
+        TextField(
+          controller: _pdfController,
+          enabled: !_saving && !_uploadingPdf,
+          decoration: const InputDecoration(
+            labelText: 'رابط ملف الـ PDF (أو اسحب وأفلت الملف أدناه)',
+            hintText: 'https://... أو مسار الملف',
+          ),
+          textInputAction: TextInputAction.done,
+        ),
+        const SizedBox(height: 10),
+        FileDropUploadZone(
+          allowedExtensions: kAllowedPdfExtensions,
+          maxBytes: kMaxPdfUploadBytes,
+          accentColor: const Color(0xFF00C08B),
+          compact: true,
+          enabled: !_saving,
+          isUploading: _uploadingPdf,
+          idleTitle: 'اسحب وأفلت ملف الـ PDF هنا أو اضغط للاختيار',
+          dragOverTitle: 'أفلت الملف هنا للرفع',
+          subtitle: 'PDF فقط • الحد الأقصى 50MB',
+          browseLabel: 'رفع ملف PDF',
+          selectedFileName: _uploadedPdfName,
+          selectedFileSizeBytes: _uploadedPdfSize,
+          onClear: _uploadedPdfName == null
+              ? null
+              : () => setState(() {
+                    _uploadedPdfName = null;
+                    _uploadedPdfSize = null;
+                  }),
+          onFileAccepted: _uploadPdfFile,
         ),
         const SizedBox(height: 12),
         Row(
@@ -631,8 +634,10 @@ Future<String> publishQuickLecture({
       .get();
   int maxLectureOrder = 0;
   for (final doc in lecturesSnap.docs) {
+    final Map<String, dynamic> data = doc.data();
+    if (data['is_archived'] == true || data['is_deleted'] == true) continue;
     final int order =
-        (doc.data()['display_order'] as num?)?.toInt() ?? 0;
+        (data['display_order'] as num?)?.toInt() ?? 0;
     if (order > maxLectureOrder) maxLectureOrder = order;
   }
 

@@ -37,6 +37,7 @@ class LectureSummary {
   final Duration? duration;
   final Duration? skipIntroStart;
   final Duration? skipIntroEnd;
+  final DateTime? updatedAt;
 
   /// Denormalized first playable video of the lecture (05 Database
   /// §lectures `first_video`). Written by content authoring whenever the
@@ -59,6 +60,7 @@ class LectureSummary {
     this.duration,
     this.skipIntroStart,
     this.skipIntroEnd,
+    this.updatedAt,
     this.firstVideo,
   });
 
@@ -78,6 +80,7 @@ class LectureSummary {
       duration: duration,
       skipIntroStart: skipIntroStart,
       skipIntroEnd: skipIntroEnd,
+      updatedAt: updatedAt,
       firstVideo: firstVideo ?? this.firstVideo,
     );
   }

@@ -13,4 +13,11 @@ class DashboardRepositoryImpl implements DashboardRepository {
   }) {
     return remoteDataSource.getAccessibleSubjects(studentId: studentId);
   }
+
+  @override
+  Stream<List<DashboardSubject>> watchAccessibleSubjects({
+    required String studentId,
+  }) {
+    return remoteDataSource.watchAccessibleSubjects(studentId: studentId);
+  }
 }

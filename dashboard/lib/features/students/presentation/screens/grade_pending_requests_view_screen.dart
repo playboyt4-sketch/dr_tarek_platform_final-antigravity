@@ -1,21 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart';
 import '../providers/grade_pending_requests_provider.dart';
 import '../providers/grade_students_provider.dart';
+import '../widgets/grade_nav_bar.dart';
 import 'grade_students_screen.dart' show gradeAccent;
-
-const List<({String key, String label})> _grades =
-    <({String key, String label})>[
-  (key: 'grade_one', label: 'Grade One'),
-  (key: 'grade_two', label: 'Grade Two'),
-  (key: 'grade_three', label: 'Grade Three'),
-  (key: 'grade_four', label: 'Grade Four'),
-];
 
 String _gradeLabel(String? gradeKey) {
   return switch (gradeKey) {
@@ -356,113 +352,72 @@ class _GradePendingRequestsViewScreenState
     ];
     return Material(
       color: const Color(0xFFFFFFFF),
-      child: SingleChildScrollView(
-        clipBehavior: Clip.antiAlias,
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          clipBehavior: Clip.antiAlias,
-          child: SizedBox(
-            width: 1280,
-            height: 800,
-            child: Stack(
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final DashboardBreakpoint breakpoint =
+              breakpointForWidth(constraints.maxWidth);
+          final bool isMobile = breakpoint == DashboardBreakpoint.mobile;
+          final double horizontalPadding = switch (breakpoint) {
+            DashboardBreakpoint.mobile => 16,
+            DashboardBreakpoint.tablet => 28,
+            DashboardBreakpoint.desktop => 48,
+          };
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              isMobile ? 12 : 20,
+              horizontalPadding,
+              32,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Positioned(
-                  left: 370,
-                  top: 24,
-                  width: 540,
-                  height: 80,
-                  child: IgnorePointer(child: _BrandLockup()),
+                const ResponsiveScreenHeader(),
+                SizedBox(height: isMobile ? 8 : 20),
+                GradeNavBar(
+                  gradeKey: _gradeKey,
+                  onGradeSelected: (_) {},
                 ),
-                Positioned(
-                  left: 310,
-                  top: 132,
-                  width: 660,
-                  height: 40,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: const Color(0xFF979797),
-                        width: 1,
-                        strokeAlign: BorderSide.strokeAlignInside,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        for (int i = 0; i < _grades.length; i++)
-                          ...<Widget>[
-                          if (i > 0) const SizedBox(width: 4),
-                          _GradePill(
-                            label: _grades[i].label,
-                            active: _grades[i].key == _gradeKey,
-                            accent: gradeAccent(_grades[i].key),
-                            onTap: () {},
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 472,
-                  top: 190,
-                  width: 336,
-                  height: 40,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      _SectionTab(
-                        label: 'Students',
-                        active: true,
-                        accent: _accent,
-                        onTap: () =>
-                            widget.onStudentsTab?.call(_gradeKey),
-                      ),
-                      const SizedBox(width: 4),
-                      _SectionTab(
-                        label: 'Subjects',
-                        active: false,
-                        accent: _accent,
-                        onTap: () =>
-                            widget.onSubjectsTab?.call(_gradeKey),
-                      ),
-                    ],
-                  ),
-                ),
-                _StudentInfoCard(
-                  row: widget.row,
-                  gradeLabel: _gradeLabel(_gradeKey),
+                const SizedBox(height: 14),
+                StudentsSubjectsTabs(
+                  studentsActive: true,
                   accent: _accent,
+                  onStudentsTap: () => widget.onStudentsTab?.call(_gradeKey),
+                  onSubjectsTap: () => widget.onSubjectsTab?.call(_gradeKey),
                 ),
-                // Review stepper bar (80, 392, 1120 wide, gap 40).
-                Positioned(
-                  left: 80,
-                  top: 392,
-                  width: 1120,
-                  height: 60,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                const SizedBox(height: 20),
+                Center(
+                  child: _StudentInfoCard(
+                    row: widget.row,
+                    gradeLabel: _gradeLabel(_gradeKey),
+                    accent: _accent,
+                    compact: isMobile,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Center(
+                  child: Wrap(
+                    spacing: isMobile ? 12 : 28,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.center,
                     children: <Widget>[
-                      for (int i = 0; i < steps.length; i++) ...<Widget>[
-                        if (i > 0) const SizedBox(width: 40),
+                      for (final step in steps)
                         _StepButton(
-                          label: steps[i].label,
-                          value: steps[i].value,
+                          label: step.label,
+                          value: step.value,
                           accent: _accent,
-                          onTap: _busy ? null : steps[i].onTap,
+                          compact: isMobile,
+                          onTap: _busy ? null : step.onTap,
                         ),
-                      ],
                     ],
                   ),
                 ),
-                if (_error != null)
-                  Positioned(
-                    left: 240,
-                    top: 664,
-                    width: 800,
-                    height: 40,
-                    child: Center(
+                if (_error != null) ...<Widget>[
+                  const SizedBox(height: 20),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 800),
                       child: Text(
                         _error!,
                         textAlign: TextAlign.center,
@@ -474,14 +429,13 @@ class _GradePendingRequestsViewScreenState
                       ),
                     ),
                   ),
-                // Decision bar centered at Y 710 (gap 24).
-                Positioned(
-                  left: 468,
-                  top: 710,
-                  width: 344,
-                  height: 48,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                ],
+                const SizedBox(height: 32),
+                Center(
+                  child: Wrap(
+                    spacing: 20,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.center,
                     children: <Widget>[
                       _DecisionButton(
                         label: 'Approve',
@@ -490,7 +444,6 @@ class _GradePendingRequestsViewScreenState
                         busy: _busy,
                         onTap: _approve,
                       ),
-                      const SizedBox(width: 24),
                       _DecisionButton(
                         label: 'Reject',
                         filled: false,
@@ -503,190 +456,63 @@ class _GradePendingRequestsViewScreenState
                 ),
               ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-class _BrandLockup extends StatelessWidget {
-  const _BrandLockup();
-
-  @override
-  Widget build(BuildContext context) {
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.centerLeft,
-      child: Text.rich(
-        TextSpan(
-          children: <TextSpan>[
-            TextSpan(
-              text: 'Tarek el araby ',
-              style: AppTypography.homeBrandHeavy(fontSize: 48),
-            ),
-            TextSpan(
-              text: 'Platform',
-              style: AppTypography.homeBrandLight(fontSize: 48).copyWith(
-                color: AppColors.ink,
-              ),
-            ),
-          ],
-        ),
-        maxLines: 1,
-      ),
-    );
-  }
-}
-
-class _GradePill extends StatelessWidget {
-  final String label;
-  final bool active;
-  final Color accent;
-  final VoidCallback onTap;
-
-  const _GradePill({
-    required this.label,
-    required this.active,
-    required this.accent,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 160,
-      height: 32,
-      child: Material(
-        color: active ? accent : Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(28),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: active
-                    ? const Color(0xFFFFFFFF)
-                    : const Color(0xFF374151),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionTab extends StatelessWidget {
-  final String label;
-  final bool active;
-  final Color accent;
-  final VoidCallback onTap;
-
-  const _SectionTab({
-    required this.label,
-    required this.active,
-    required this.accent,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 160,
-      height: 32,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 14,
-                fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-                color: active ? accent : const Color(0xFF6B7280),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              height: 2,
-              width: 64,
-              color: active ? accent : Colors.transparent,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Student capsule 540 x 132 at (370, 240): 100 x 100 avatar, 24 Bold
-/// name, 13 px metadata row (phone • grade • date • device).
+/// Student capsule: responsive width up to 580px with clean Row layout.
 class _StudentInfoCard extends StatelessWidget {
   final PendingRequestRow row;
   final String gradeLabel;
   final Color accent;
+  final bool compact;
 
   const _StudentInfoCard({
     required this.row,
     required this.gradeLabel,
     required this.accent,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: 370,
-      top: 240,
-      width: 540,
-      height: 132,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 580),
       child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(compact ? 14 : 16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(9999),
+          borderRadius: BorderRadius.circular(compact ? 32 : 9999),
           border: Border.all(
             color: accent,
             width: 1.5,
           ),
         ),
-        child: Stack(
+        child: Row(
           children: <Widget>[
-            const Positioned(
-              left: 16,
-              top: 16,
-              width: 100,
-              height: 100,
-              child: _StudentAvatar(),
-            ),
-            Positioned(
-              left: 132,
-              top: 24,
-              width: 392,
+            _StudentAvatar(size: compact ? 64 : 96),
+            const SizedBox(width: 16),
+            Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
                     row.application.fullName,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: AppTypography.fontFamily,
-                      fontSize: 24,
+                      fontSize: compact ? 18 : 24,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF1F2937),
+                      color: const Color(0xFF1F2937),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     runSpacing: 4,
@@ -708,20 +534,24 @@ class _StudentInfoCard extends StatelessWidget {
 }
 
 class _StudentAvatar extends StatelessWidget {
-  const _StudentAvatar();
+  final double size;
+
+  const _StudentAvatar({this.size = 96});
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      width: size,
+      height: size,
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
         color: Color(0xFFF3F4F6),
       ),
       alignment: Alignment.center,
-      child: const Icon(
+      child: Icon(
         Icons.person,
-        size: 56,
-        color: Color(0xFF9CA3AF),
+        size: size * 0.56,
+        color: const Color(0xFF9CA3AF),
       ),
     );
   }
@@ -746,25 +576,26 @@ class _MetaChip extends StatelessWidget {
   }
 }
 
-/// Stepper capsule 250 x 60 with a #F59E0B frame: 18 Medium label +
-/// current-value subtitle.
+/// Stepper capsule with accent border: 18 Medium label + current-value subtitle.
 class _StepButton extends StatelessWidget {
   final String label;
   final String value;
   final Color accent;
+  final bool compact;
   final VoidCallback? onTap;
 
   const _StepButton({
     required this.label,
     required this.value,
     required this.accent,
+    this.compact = false,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 250,
+      width: compact ? double.infinity : 250,
       height: 60,
       child: Material(
         color: Colors.white,
@@ -775,35 +606,39 @@ class _StepButton extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(9999),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 18,
-                  height: 1.1,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF374151),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 17,
+                    height: 1.15,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151),
+                  ),
                 ),
-              ),
-              Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 13,
-                  height: 1.1,
-                  fontWeight: FontWeight.w400,
-                  color: Color(0xFF6B7280),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 13,
+                    height: 1.1,
+                    fontWeight: FontWeight.w400,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -911,36 +746,44 @@ Widget _overlayShell({
   double borderRadius = 20,
   double titleFontSize = 20,
 }) {
-  return Dialog(
-    backgroundColor: Colors.white,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(borderRadius),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: SizedBox(
-      width: width,
-      height: height,
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: titleFontSize,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF111827),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ...children,
-          ],
+  return Builder(
+    builder: (BuildContext context) {
+      final Size screen = MediaQuery.sizeOf(context);
+      final double maxH = math.min(height, screen.height * 0.85);
+      return Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(borderRadius),
         ),
-      ),
-    ),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: width, maxHeight: maxH),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: screen.width < AppBreakpoints.mobileMax
+                        ? math.min(titleFontSize, 22)
+                        : titleFontSize,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...children,
+              ],
+            ),
+          ),
+        ),
+      );
+    },
   );
 }
 
@@ -1132,71 +975,105 @@ Widget _subjectRow({
   bool freePlanEnabled = true,
   bool hidePlans = false,
 }) {
-  // Figma order (left → right): name, green switch, plan capsule —
-  // centered as one compact group (no spaceBetween).
-  // Guest students have no plans at all: the capsule is replaced by a
-  // static "ضيف" label so the Admin only toggles access.
-  return SizedBox(
-    height: 56,
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: <Widget>[
-        // 1. Subject name, fixed width, right-aligned.
-        SizedBox(
-          width: 180,
-          child: Text(
-            title,
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontFamily: 'GoogleSansFlex',
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF111827),
-            ),
+  return LayoutBuilder(
+    builder: (BuildContext context, BoxConstraints constraints) {
+      final bool narrow = constraints.maxWidth < 460;
+      final Widget planWidget = hidePlans
+          ? Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(9999),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: const Text(
+                'Guest',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF6B7280),
+                ),
+              ),
+            )
+          : _PlanCapsule(
+              selected: plan,
+              enabled: enabled,
+              freePlanEnabled: freePlanEnabled,
+              onSelected: onPlanChanged,
+            );
+
+      if (narrow) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'GoogleSansFlex',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  CupertinoSwitch(
+                    value: enabled,
+                    onChanged: onChanged,
+                    activeTrackColor: const Color(0xFF10B981),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Align(alignment: Alignment.centerRight, child: planWidget),
+            ],
           ),
-        ),
-        const SizedBox(width: 36),
-        // 2. Green enable switch.
-        CupertinoSwitch(
-          value: enabled,
-          onChanged: onChanged,
-          activeTrackColor: const Color(0xFF10B981),
-        ),
-        const SizedBox(width: 24),
-        // 3. Triple plan capsule — hidden for Guest (no plans).
-        if (hidePlans)
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
-              borderRadius: BorderRadius.circular(9999),
-              border: Border.all(color: const Color(0xFFE5E7EB)),
-            ),
-            child: const Text(
-              'Guest',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF6B7280),
+        );
+      }
+
+      return SizedBox(
+        height: 56,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 200),
+                child: Text(
+                  title,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'GoogleSansFlex',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF111827),
+                  ),
+                ),
               ),
             ),
-          )
-        else
-          _PlanCapsule(
-            selected: plan,
-            enabled: enabled,
-            freePlanEnabled: freePlanEnabled,
-            onSelected: onPlanChanged,
-          ),
-      ],
-    ),
+            const SizedBox(width: 24),
+            CupertinoSwitch(
+              value: enabled,
+              onChanged: onChanged,
+              activeTrackColor: const Color(0xFF10B981),
+            ),
+            const SizedBox(width: 20),
+            planWidget,
+          ],
+        ),
+      );
+    },
   );
 }
 
@@ -1255,9 +1132,13 @@ Future<GradeSubjectsResult?> showGradeSubjectsDialog(
                               // Persisted state only: rows without an entry
                               // open OFF / gray, never default-ON.
                               enabled: toggles[subject.id] ?? false,
-                              onChanged: (bool value) => setState(
-                                () => toggles[subject.id] = value,
-                              ),
+                              onChanged: (bool value) => setState(() {
+                                toggles[subject.id] = value;
+                                if (value && !hidePlans) {
+                                  plans[subject.id] ??=
+                                      freePlanEnabled ? 'free' : 'pro';
+                                }
+                              }),
                               plan: plans[subject.id] ??
                                   (freePlanEnabled ? 'free' : 'pro'),
                               freePlanEnabled: freePlanEnabled,
@@ -1364,9 +1245,13 @@ Future<GradeSubjectsResult?> showOtherSubjectsDialog(
                         // Persisted state only: rows without an entry
                         // open OFF / gray, never default-ON.
                         enabled: toggles[subject.id] ?? false,
-                        onChanged: (bool value) => setState(
-                          () => toggles[subject.id] = value,
-                        ),
+                        onChanged: (bool value) => setState(() {
+                          toggles[subject.id] = value;
+                          if (value && !hidePlans) {
+                            plans[subject.id] ??=
+                                freePlanEnabled ? 'free' : 'pro';
+                          }
+                        }),
                         plan: plans[subject.id] ??
                             (freePlanEnabled ? 'free' : 'pro'),
                         freePlanEnabled: freePlanEnabled,

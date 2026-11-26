@@ -298,17 +298,25 @@ class _PaymentFormState extends State<_PaymentForm> {
   @override
   Widget build(BuildContext context) {
     final bool isEditing = widget._isEditing;
-    return Container(
-      width: 600,
-      height: isEditing ? 772 : 700,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
           // Header Y 24: title + close.
           Row(
             children: <Widget>[
@@ -436,7 +444,7 @@ class _PaymentFormState extends State<_PaymentForm> {
               ),
             ),
           ],
-          const Spacer(),
+          const SizedBox(height: 28),
           // Footer: Cancel 88 x 32 + Save 112 x 32.
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -502,13 +510,16 @@ class _PaymentFormState extends State<_PaymentForm> {
               ),
             ],
           ),
-        ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Label (136 px, 14 px) + 360 x 45 input row.
+/// Label (136 px, 14 px) + flexible input row (stacks on mobile).
 class _FieldRow extends StatelessWidget {
   final String label;
   final Widget child;
@@ -517,24 +528,47 @@ class _FieldRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: <Widget>[
-        SizedBox(
-          width: 136,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontFamily: AppTypography.fontFamily,
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              fontVariations: <FontVariation>[FontVariation('wght', 400)],
-              color: Color(0xFF111827),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.maxWidth < 460) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                  color: Color(0xFF111827),
+                ),
+              ),
+              const SizedBox(height: 6),
+              child,
+            ],
+          );
+        }
+        return Row(
+          children: <Widget>[
+            SizedBox(
+              width: 136,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                  color: Color(0xFF111827),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 24),
-        child,
-      ],
+            const SizedBox(width: 24),
+            Expanded(child: child),
+          ],
+        );
+      },
     );
   }
 }
@@ -561,7 +595,7 @@ class _DateBox extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
-        width: 360,
+        width: double.infinity,
         height: 45,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: _inputDecoration(),
@@ -600,7 +634,7 @@ class _StaticBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 360,
+      width: double.infinity,
       height: 45,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.centerLeft,
@@ -633,7 +667,7 @@ class _MethodBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 360,
+      width: double.infinity,
       height: 45,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: _inputDecoration(),
@@ -696,7 +730,7 @@ class _InputBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 360,
+      width: double.infinity,
       height: 45,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: _inputDecoration(radius: 12),

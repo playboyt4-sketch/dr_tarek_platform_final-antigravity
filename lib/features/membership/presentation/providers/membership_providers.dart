@@ -43,7 +43,17 @@ final entitlementDecisionProvider =
     FutureProvider.family<
       EntitlementDecision,
       ({String studentId, String subjectId, String featureKey})
-    >((ref, params) {
+    >((ref, params) async {
+      final subscription = await ref.watch(
+        activeSubscriptionProvider((
+          studentId: params.studentId,
+          subjectId: params.subjectId,
+        )).future,
+      );
+      if (subscription != null) {
+        await ref.watch(activePlanProvider(subscription.planId).future);
+        await ref.watch(planFeaturesProvider(subscription.planId).future);
+      }
       return ref
           .watch(entitlementResolverProvider)
           .resolve(
@@ -54,47 +64,47 @@ final entitlementDecisionProvider =
     });
 
 final activeSubscriptionProvider =
-    FutureProvider.family<
+    StreamProvider.family<
       MembershipSubscription?,
       ({String studentId, String subjectId})
     >((ref, params) {
       return ref
           .watch(membershipRepositoryProvider)
-          .getSubscription(
+          .watchSubscription(
             studentId: params.studentId,
             subjectId: params.subjectId,
           );
     });
 
-final activePlanProvider = FutureProvider.family<MembershipPlan?, String>((
+final activePlanProvider = StreamProvider.family<MembershipPlan?, String>((
   ref,
   planId,
 ) {
-  return ref.watch(membershipRepositoryProvider).getPlan(planId: planId);
+  return ref.watch(membershipRepositoryProvider).watchPlan(planId: planId);
 });
 
-final planFeaturesProvider = FutureProvider.family<List<PlanFeature>, String>((
+final planFeaturesProvider = StreamProvider.family<List<PlanFeature>, String>((
   ref,
   planId,
 ) {
   return ref
       .watch(membershipRepositoryProvider)
-      .getPlanFeatures(planId: planId);
+      .watchPlanFeatures(planId: planId);
 });
 
 final featureAccessProvider =
-    FutureProvider.family<bool, ({String planId, String featureKey})>((
+    StreamProvider.family<bool, ({String planId, String featureKey})>((
       ref,
       params,
-    ) async {
-      final features = await ref
+    ) {
+      return ref
           .watch(membershipRepositoryProvider)
-          .getPlanFeatures(planId: params.planId);
-
-      final feature = features.cast<PlanFeature?>().firstWhere(
-        (item) => item?.featureKey == params.featureKey,
-        orElse: () => null,
-      );
-
-      return feature?.enabled == true;
+          .watchPlanFeatures(planId: params.planId)
+          .map((features) {
+            final feature = features.cast<PlanFeature?>().firstWhere(
+              (item) => item?.featureKey == params.featureKey,
+              orElse: () => null,
+            );
+            return feature?.enabled == true;
+          });
     });

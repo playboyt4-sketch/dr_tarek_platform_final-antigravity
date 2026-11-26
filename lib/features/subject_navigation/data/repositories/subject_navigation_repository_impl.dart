@@ -16,4 +16,14 @@ class SubjectNavigationRepositoryImpl implements SubjectNavigationRepository {
   Future<List<LectureSummary>> getLectures(String sectionId) {
     return remoteDataSource.getLectures(sectionId);
   }
+
+  @override
+  Stream<List<LearningSection>> watchSections(String subjectId) {
+    return remoteDataSource.watchSections(subjectId);
+  }
+
+  @override
+  Stream<List<LectureSummary>> watchLectures(String sectionId) {
+    return remoteDataSource.watchLectures(sectionId);
+  }
 }

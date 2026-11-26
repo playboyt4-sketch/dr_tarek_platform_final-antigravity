@@ -71,13 +71,15 @@ class StudentHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<StudentHomeScreen> createState() => _StudentHomeScreenState();
 }
 
-class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
+class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
+    with WidgetsBindingObserver {
   int _currentTab = 0;
   int _currentSubject = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Poster warm-up: right after login lands on Home, resolve every
     // subject's lectures + display media and download the image bytes in
     // the background — subject pages then open instantly ("bullet").
@@ -85,7 +87,45 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(warmUpSubjectMedia(ref, context));
+      try {
+        unawaited(
+          ref
+              .read(notificationsRepositoryProvider)
+              .resetUnreadBadgeCount(userId: widget.user.id),
+        );
+      } catch (_) {}
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      unawaited(_refreshHomeData(evictImages: false));
+      try {
+        unawaited(
+          ref
+              .read(notificationsRepositoryProvider)
+              .resetUnreadBadgeCount(userId: widget.user.id),
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _refreshHomeData({bool evictImages = true}) async {
+    final currentSubjects = ref.read(dashboardSubjectsProvider).value;
+    final urls = evictImages && currentSubjects != null
+        ? currentSubjects.map((s) => s.thumbnailUrl)
+        : const <String?>[];
+    await refreshStudentLearningContent(ref, imageUrls: urls);
+    if (mounted) {
+      unawaited(warmUpSubjectMedia(ref, context));
+    }
   }
 
   String get _firstName {
@@ -184,6 +224,26 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AsyncValue<List<DashboardSubject>>>(
+      dashboardSubjectsProvider,
+      (previous, next) {
+        final prevList = previous?.value;
+        final nextList = next.value;
+        if (prevList == null || nextList == null) return;
+        final prevById = {for (final s in prevList) s.id: s};
+        for (final item in nextList) {
+          final prev = prevById[item.id];
+          if (prev != null &&
+              prev.updatedAt != item.updatedAt &&
+              item.thumbnailUrl != null &&
+              item.thumbnailUrl!.isNotEmpty) {
+            PaintingBinding.instance.imageCache.evict(
+              NetworkImage(item.thumbnailUrl!),
+            );
+          }
+        }
+      },
+    );
     final subjectsAsync = ref.watch(dashboardSubjectsProvider);
     final subjects = subjectsAsync.value;
     final semantic = AppSemanticColors.of(context);
@@ -206,12 +266,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
             Center(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        StudentProfileScreen(user: widget.user),
-                  ),
-                ),
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          StudentProfileScreen(user: widget.user),
+                    ),
+                  );
+                  if (mounted) {
+                    unawaited(_refreshHomeData(evictImages: false));
+                  }
+                },
                 child: Semantics(
                   button: true,
                   label: 'الملف الشخصي',
@@ -258,14 +323,20 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen> {
                             : _currentSubject.clamp(0, subjects.length - 1),
                         onPageChanged: (index) =>
                             setState(() => _currentSubject = index),
-                        onOpen: (subject) => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => SubjectNavigationScreen(
-                              subject: subject,
-                              grade: widget.user.grade,
+                        onRefresh: () => _refreshHomeData(),
+                        onOpen: (subject) async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => SubjectNavigationScreen(
+                                subject: subject,
+                                grade: widget.user.grade,
+                              ),
                             ),
-                          ),
-                        ),
+                          );
+                          if (mounted) {
+                            unawaited(_refreshHomeData(evictImages: false));
+                          }
+                        },
                       ),
                       _ => NotificationsScreen(
                         studentId: widget.user.id,
@@ -309,12 +380,14 @@ class _CarouselTab extends ConsumerStatefulWidget {
   final AsyncValue<List<DashboardSubject>> subjectsAsync;
   final int currentSubject;
   final ValueChanged<int> onPageChanged;
+  final Future<void> Function() onRefresh;
   final ValueChanged<DashboardSubject> onOpen;
 
   const _CarouselTab({
     required this.subjectsAsync,
     required this.currentSubject,
     required this.onPageChanged,
+    required this.onRefresh,
     required this.onOpen,
   });
 
@@ -344,7 +417,7 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
   @override
   Widget build(BuildContext context) {
     final semantic = AppSemanticColors.of(context);
-    return widget.subjectsAsync.when(
+    final Widget bodyContent = widget.subjectsAsync.when(
       loading: () => Center(
         child: CircularProgressIndicator(
           color: semantic.isDark ? semantic.primary : Colors.white,
@@ -447,7 +520,7 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
                     duration: const Duration(milliseconds: 250),
                     child: Text(
                       items[safeIndex].title,
-                      key: ValueKey(items[safeIndex].id),
+                      key: ValueKey('${items[safeIndex].id}|${items[safeIndex].title}'),
                       textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -507,6 +580,29 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
         );
       },
     );
+
+    return LayoutBuilder(
+      builder: (context, viewport) => RefreshIndicator(
+        color: semantic.isDark ? semantic.primary : Colors.white,
+        backgroundColor: semantic.isDark
+            ? semantic.glassCardFill
+            : semantic.inverseSurface,
+        onRefresh: widget.onRefresh,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: viewport.maxWidth,
+              minHeight: viewport.maxHeight,
+            ),
+            child: SizedBox(
+              width: viewport.maxWidth,
+              child: bodyContent,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -556,6 +652,9 @@ class _CoverCard extends StatelessWidget {
                 ? const _CoverPlaceholder()
                 : Image.network(
                     url,
+                    key: ValueKey(
+                      '${subject.id}|$url|${subject.updatedAt?.millisecondsSinceEpoch ?? 0}',
+                    ),
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) =>
                         const _CoverPlaceholder(),

@@ -28,6 +28,7 @@ class _StaffPasswordScreenState extends ConsumerState<StaffPasswordScreen> {
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   bool _obscurePassword = true;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -36,56 +37,68 @@ class _StaffPasswordScreenState extends ConsumerState<StaffPasswordScreen> {
   }
 
   Future<void> _login() async {
+    if (_isSubmitting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    await ref
-        .read(authProvider.notifier)
-        .staffLogin(
-          displayName: widget.displayName,
-          password: _passwordController.text,
-        );
+    setState(() => _isSubmitting = true);
+    try {
+      await ref
+          .read(authProvider.notifier)
+          .staffLogin(
+            displayName: widget.displayName,
+            password: _passwordController.text,
+          );
 
-    if (!mounted) return;
-    final authState = ref.read(authProvider);
-    if (authState.hasError || authState.value == null) return;
+      if (!mounted) return;
+      final authState = ref.read(authProvider);
+      if (authState.hasError || authState.value == null) return;
 
-    ref.invalidate(sessionProvider);
-    final session = await ref.read(sessionProvider.future);
-    if (!mounted) return;
+      var session = await ref.read(sessionProvider.future);
+      if (session is SessionUnauthenticated || session is SessionError) {
+        ref.invalidate(sessionProvider);
+        session = await ref.read(sessionProvider.future);
+      }
+      if (!mounted) return;
 
-    // Authenticated → role home (admin staff land on the admin home).
-    if (session is SessionAuthenticated) {
-      final dest =
-          authGateDestinationForRole(session.user.role) ==
-                  AuthGateDestination.admin
-              ? AppRoutes.adminHome
-              : AppRoutes.studentHome;
-      context.goNamed(dest);
-      return;
+      // Authenticated → role home (admin staff land on the admin home).
+      if (session is SessionAuthenticated) {
+        final dest =
+            authGateDestinationForRole(session.user.role) ==
+                    AuthGateDestination.admin
+                ? AppRoutes.adminHome
+                : AppRoutes.studentHome;
+        context.goNamed(dest);
+        return;
+      }
+      if (session is SessionError) return;
+      // Terminal non-error sessions stay here with a message instead of
+      // popping back to user-type selection on a successful sign-in.
+      final l10n = AppLocalizations.of(context);
+      final message = switch (session) {
+        SessionPendingApproval() => l10n.pendingApprovalMessage,
+        SessionRejected() => l10n.rejectedMessage,
+        SessionDisabled() => l10n.disabledMessage,
+        SessionUnauthorizedDevice() => l10n.unauthorizedDeviceMessage,
+        SessionRoleBlocked(:final role) =>
+          l10n.roleUnavailableMessage(role),
+        _ => l10n.sessionErrorTitle,
+      };
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
-    if (session is SessionError) return;
-    // Terminal non-error sessions stay here with a message instead of
-    // popping back to user-type selection on a successful sign-in.
-    final l10n = AppLocalizations.of(context);
-    final message = switch (session) {
-      SessionPendingApproval() => l10n.pendingApprovalMessage,
-      SessionRejected() => l10n.rejectedMessage,
-      SessionDisabled() => l10n.disabledMessage,
-      SessionUnauthorizedDevice() => l10n.unauthorizedDeviceMessage,
-      SessionRoleBlocked(:final role) =>
-        l10n.roleUnavailableMessage(role),
-      _ => l10n.sessionErrorTitle,
-    };
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
     final sessionState = ref.watch(sessionProvider);
-    final isLoading = authState.isLoading || sessionState.isLoading;
+    final isLoading =
+        _isSubmitting || authState.isLoading || sessionState.isLoading;
     final rs = context.rs;
 
     return Scaffold(

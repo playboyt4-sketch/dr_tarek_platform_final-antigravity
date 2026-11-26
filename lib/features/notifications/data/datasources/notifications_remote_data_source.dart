@@ -1,11 +1,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/app_notification_model.dart';
 
 class NotificationsRemoteDataSource {
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _firestoreOverride;
+  final FirebaseFunctions? _functionsOverride;
 
-  NotificationsRemoteDataSource({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+  NotificationsRemoteDataSource({
+    FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+  })  : _firestoreOverride = firestore,
+        _functionsOverride = functions;
+
+  FirebaseFirestore get _firestore =>
+      _firestoreOverride ?? FirebaseFirestore.instance;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ?? FirebaseFunctions.instance;
 
   CollectionReference<Map<String, dynamic>> get _notificationsRef =>
       _firestore.collection('notifications');
@@ -14,16 +25,13 @@ class NotificationsRemoteDataSource {
     required String userId,
     int limit = 50,
   }) async {
-    // NOTE: no server-side orderBy here on purpose — where(user_id) +
-    // orderBy(created_at) needs a composite index + deploy (نشر).
-    // Client-side sort below gives newest-first without any index.
     final snap = await _notificationsRef
         .where('user_id', isEqualTo: userId)
+        .orderBy('created_at', descending: true)
         .limit(limit)
         .get();
     final items =
         snap.docs.map(AppNotificationModel.fromFirestore).toList();
-    // Newest first: الأحدث فوق والأقدم تحت.
     items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return items.take(limit).toList();
   }
@@ -32,9 +40,9 @@ class NotificationsRemoteDataSource {
     required String userId,
     int limit = 50,
   }) {
-    // Same reason: keep the query index-free, sort locally newest-first.
     return _notificationsRef
         .where('user_id', isEqualTo: userId)
+        .orderBy('created_at', descending: true)
         .limit(limit)
         .snapshots()
         .map((snap) {
@@ -74,5 +82,17 @@ class NotificationsRemoteDataSource {
         .where('is_read', isEqualTo: false)
         .snapshots()
         .map((snap) => snap.docs.length);
+  }
+
+  Future<void> resetUnreadBadgeCount({required String userId}) async {
+    try {
+      await _functions.httpsCallable('resetUnreadNotificationsCount').call();
+    } catch (_) {
+      try {
+        await _firestore.collection('users').doc(userId).update({
+          'unread_notifications_count': 0,
+        });
+      } catch (_) {}
+    }
   }
 }

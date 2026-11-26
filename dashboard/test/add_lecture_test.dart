@@ -447,19 +447,20 @@ void main() {
       expect(find.text('09:00 AM'), findsOneWidget);
     });
 
-    testWidgets('9/11. Publish Now publishes; bottom Save does not',
+    testWidgets('9/11. bottom Save publishes immediately when no date is picked; Publish Now also publishes',
         (WidgetTester tester) async {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
       await _fillOrder(tester, '1');
       await _stageVideoResource(tester);
-      final Finder publishButton = find.text('Publish Now');
-      await tester.ensureVisible(publishButton);
+      final Finder saveButton = find.text('Save').last;
+      await tester.ensureVisible(saveButton);
       await tester.pumpAndSettle();
-      await tester.tap(publishButton);
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
       expect(fake.created.single['publishNow'], isTrue);
+      expect(fake.created.single['guestEnabled'], isFalse);
       expect(find.text('Add New Lecture'), findsNothing);
     });
 
@@ -511,21 +512,21 @@ void main() {
       expect(scheduled.minute, 0);
     });
 
-    testWidgets('12. guest toggle enables Available Minutes',
+    testWidgets('12. guest toggle defaults OFF and enables Available Minutes when turned ON',
         (WidgetTester tester) async {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       final Finder minutesFinder = find.byType(TextField).at(2);
-      expect(tester.widget<TextField>(minutesFinder).enabled, isTrue);
+      expect(tester.widget<TextField>(minutesFinder).enabled, isFalse);
       final Finder guestToggle = find.byType(CupertinoSwitch);
       await tester.ensureVisible(guestToggle);
       await tester.pumpAndSettle();
       await tester.tap(guestToggle);
       await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(minutesFinder).enabled, isFalse);
+      expect(tester.widget<TextField>(minutesFinder).enabled, isTrue);
       await tester.tap(guestToggle);
       await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(minutesFinder).enabled, isTrue);
+      expect(tester.widget<TextField>(minutesFinder).enabled, isFalse);
     });
 
     testWidgets('13. minutes reject zero/negative values',
@@ -533,6 +534,11 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
+      final Finder guestToggle = find.byType(CupertinoSwitch);
+      await tester.ensureVisible(guestToggle);
+      await tester.pumpAndSettle();
+      await tester.tap(guestToggle);
+      await tester.pumpAndSettle();
       final Finder minutesField = find.byType(TextField).at(2);
       await tester.ensureVisible(minutesField);
       await tester.pumpAndSettle();
@@ -553,6 +559,11 @@ void main() {
       final FakeLectureController fake = FakeLectureController();
       await _pumpForm(tester, fake);
       await _fillName(tester, 'Algebra');
+      final Finder guestToggle = find.byType(CupertinoSwitch);
+      await tester.ensureVisible(guestToggle);
+      await tester.pumpAndSettle();
+      await tester.tap(guestToggle);
+      await tester.pumpAndSettle();
       final Finder minutesField = find.byType(TextField).at(2);
       await tester.ensureVisible(minutesField);
       await tester.pumpAndSettle();
@@ -592,8 +603,15 @@ void main() {
           find.byType(TextField).evaluate().length;
       final Finder fields =
           find.byType(TextField);
+      final TextField videoDetailsField =
+          tester.widget<TextField>(fields.at(fieldCount - 3));
+      expect(videoDetailsField.minLines, 4);
+      expect(videoDetailsField.maxLines, 8);
+      expect(videoDetailsField.keyboardType, TextInputType.multiline);
+      expect(videoDetailsField.textInputAction, TextInputAction.newline);
+      expect(videoDetailsField.scrollPhysics, isA<BouncingScrollPhysics>());
       await tester.enterText(
-          fields.at(fieldCount - 3), 'Part 01');
+          fields.at(fieldCount - 3), 'Part 01\nLine 2\nLine 3\nLine 4');
       await tester.enterText(
         fields.at(fieldCount - 1),
         '22222222-2222-4222-8222-222222222222',

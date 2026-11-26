@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cached_pdfview/flutter_cached_pdfview.dart';
@@ -68,7 +69,54 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
   void initState() {
     super.initState();
     _initializationFuture = _initializeData();
-    _checkDownloadPermission();
+  }
+
+  static const Set<String> _transientFunctionCodes = {
+    'unavailable',
+    'deadline-exceeded',
+    'aborted',
+    'internal',
+    'unknown',
+    'unauthenticated',
+  };
+
+  bool _isTransientPdfError(Object error) {
+    if (error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException) {
+      return true;
+    }
+    if (error is FirebaseFunctionsException) {
+      return _transientFunctionCodes.contains(error.code.toLowerCase());
+    }
+    if (error is FirebaseException) {
+      return _transientFunctionCodes.contains(error.code.toLowerCase()) ||
+          error.code == 'network-request-failed';
+    }
+    return false;
+  }
+
+  Future<T> _runWithSilentRetry<T>(
+    Future<T> Function() action, {
+    int maxSilentRetries = 2,
+    Future<void> Function(Object error, int attempt)? onRetry,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt <= maxSilentRetries; attempt++) {
+      try {
+        return await action();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxSilentRetries || !_isTransientPdfError(error)) {
+          rethrow;
+        }
+        if (onRetry != null) {
+          await onRetry(error, attempt);
+        }
+        await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
+      }
+    }
+    throw lastError!;
   }
 
   @override
@@ -104,17 +152,30 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
     // global device gate exists here. A Guest device receives limited
     // online preview and is never issued protected offline keys.
 
-    // 2. Validate subscription & features
-    final subscriptionAsync = ref.read(activeSubscriptionProvider((
+    // 2. Validate subscription & features (await .future so first-open does not
+    // race while activeSubscriptionProvider is still AsyncLoading).
+    final subArgs = (
       studentId: userId,
       subjectId: widget.subjectId ?? '',
-    )));
-    final subscription = subscriptionAsync.value;
+    );
+    final subscription = await _runWithSilentRetry(
+      () => ref.read(activeSubscriptionProvider(subArgs).future),
+      maxSilentRetries: 1,
+      onRetry: (_, _) async {
+        ref.invalidate(activeSubscriptionProvider(subArgs));
+      },
+    );
     if (subscription == null) {
       throw Exception('لا يوجد اشتراك نشط لهذه المادة.');
     }
 
-    final features = await ref.read(planFeaturesProvider(subscription.planId).future);
+    final features = await _runWithSilentRetry(
+      () => ref.read(planFeaturesProvider(subscription.planId).future),
+      maxSilentRetries: 1,
+      onRetry: (_, _) async {
+        ref.invalidate(planFeaturesProvider(subscription.planId));
+      },
+    );
     final accessFeature = features.where((f) => f.featureKey == 'pdf.access').firstOrNull;
     if (accessFeature == null || !accessFeature.enabled) {
       throw Exception('ليس لديك صلاحية لمشاهدة هذا الملف.');
@@ -126,6 +187,8 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
       final valueStr = offlineMaxFeature.featureValue?.toString();
       _offlineMaxLimit = int.tryParse(valueStr?.replaceAll(RegExp(r'[^0-9]'), '') ?? '') ?? 5;
     }
+    final downloadFeature = features.where((f) => f.featureKey == 'pdf.download').firstOrNull;
+    final hasDownloadPlanFeature = downloadFeature?.enabled == true;
 
     // Load progress
     PlaybackProgressRecord? record;
@@ -151,8 +214,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
     if (hasLocal && offlineSubject != null) {
       // Revalidate pdf.offline entitlement
       final offlineFeature = features.where((f) => f.featureKey == 'pdf.offline').firstOrNull;
-      final downloadFeature = features.where((f) => f.featureKey == 'pdf.download').firstOrNull;
-      final canOffline = offlineFeature != null && offlineFeature.enabled && downloadFeature != null && downloadFeature.enabled;
+      final canOffline = offlineFeature != null && offlineFeature.enabled && hasDownloadPlanFeature;
 
       if (!canOffline) {
         // Entitlement revoked -> purge this Subject's local cache immediately
@@ -163,18 +225,57 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
         if (bytes != null) {
           final tempPath = await _writeDecryptedToTemp(bytes);
           _isOfflineEnabled = true;
+          if (mounted) {
+            setState(() {
+              _canDownload = hasDownloadPlanFeature;
+              _downloadChecked = true;
+            });
+          }
           return (urlResult: null, progress: record, tempFilePath: tempPath);
         }
       }
     }
 
     // 4. If not offline/cached, fetch signed URL (requires internet)
-    final connectivityResult = await Connectivity().checkConnectivity();
+    var connectivityResult = await Connectivity().checkConnectivity();
+    if (connectivityResult.contains(ConnectivityResult.none)) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      connectivityResult = await Connectivity().checkConnectivity();
+    }
     if (connectivityResult.contains(ConnectivityResult.none)) {
       throw Exception('لا يوجد اتصال بالإنترنت والملف غير متوفر في الذاكرة المؤقتة.');
     }
 
-    final urlResult = await _dataSource.getViewUrl(widget.resourceId, storageProvider: widget.storageProvider);
+    // Ensure auth token is warm before the first protected callable request.
+    try {
+      await FirebaseAuth.instance.currentUser?.getIdToken();
+    } catch (_) {}
+
+    final urlResult = await _runWithSilentRetry(
+      () => _dataSource.getViewUrl(
+        widget.resourceId,
+        storageProvider: widget.storageProvider,
+      ),
+      maxSilentRetries: 2,
+      onRetry: (error, _) async {
+        if (error is FirebaseFunctionsException &&
+            error.code.toLowerCase() == 'unauthenticated') {
+          try {
+            await FirebaseAuth.instance.currentUser?.getIdToken(true);
+          } catch (_) {}
+        }
+      },
+    );
+
+    if (hasDownloadPlanFeature) {
+      unawaited(_checkDownloadPermission());
+    } else if (mounted) {
+      setState(() {
+        _canDownload = false;
+        _downloadChecked = true;
+      });
+    }
+
     return (urlResult: urlResult, progress: record, tempFilePath: null);
   }
 
@@ -351,94 +452,28 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
   }
 
   void _showMainMenu(BuildContext context) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      clipBehavior: Clip.antiAlias,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Container(
-              color: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFe5e7eb),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  ListTile(
-                    leading: const Icon(Icons.search, color: Color(0xFF6b7280)),
-                    title: const Text(
-                      'البحث والفهرس',
-                      style: TextStyle(fontWeight: FontWeight.w500),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showToast('ميزة البحث والفهرس ستكون متاحة قريباً.');
-                    },
-                  ),
-                  const Divider(color: Color(0xFFe5e7eb)),
-                  ListTile(
-                    leading: const Icon(Icons.edit_document, color: Color(0xFF6b7280)),
-                    title: const Text(
-                      'الملاحظات الشخصية',
-                      style: TextStyle(fontWeight: FontWeight.w500),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showNotesCreator(context);
-                    },
-                  ),
-                  const Divider(color: Color(0xFFe5e7eb)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.offline_pin_outlined, color: Color(0xFF6b7280)),
-                            SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Offline mode',
-                                  style: TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
-                                ),
-                                Text(
-                                  'متاح داخل التطبيق فقط',
-                                  style: TextStyle(color: Color(0xFF6b7280), fontSize: 11),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        Switch(
-                          value: _isOfflineEnabled,
-                          activeThumbColor: const Color(0xFF10b981),
-                          activeTrackColor: const Color(0xFF10b981).withValues(alpha: 0.5),
-                          onChanged: (value) async {
-                            Navigator.pop(context);
-                            await _toggleOfflineMode(value);
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
+      builder: (BuildContext modalContext) {
+        return PdfViewerMainMenuSheet(
+          isOfflineEnabled: _isOfflineEnabled,
+          onSearchTap: () {
+            Navigator.pop(modalContext);
+            _showToast('ميزة البحث والفهرس ستكون متاحة قريباً.');
+          },
+          onNotesTap: () {
+            Navigator.pop(modalContext);
+            _showNotesCreator(this.context);
+          },
+          onOfflineChanged: (bool value) async {
+            Navigator.pop(modalContext);
+            await _toggleOfflineMode(value);
           },
         );
       },
@@ -795,14 +830,26 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
                         ],
                       ),
                     ),
-                    errorWidget: (_) => const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.error_outline, size: 48, color: AppColors.error),
-                          SizedBox(height: 12),
-                          Text('فشل عرض الملف. يرجى المحاولة مرة أخرى.', textAlign: TextAlign.center),
-                        ],
+                    errorWidget: (_) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+                            const SizedBox(height: 12),
+                            const Text('فشل عرض الملف. يرجى المحاولة مرة أخرى.', textAlign: TextAlign.center),
+                            const SizedBox(height: 16),
+                            OutlinedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _initializationFuture = _initializeData();
+                                });
+                              },
+                              child: const Text('إعادة المحاولة'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -831,7 +878,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
 
           // Render appropriate layout based on viewMode
           // (`docs/pdf viewer.html`: split = video 40% + pdf 60%;
-          // floating = fullscreen video + 180x260 pdf card).
+          // floating = fullscreen video + draggable/resizable pdf card).
           Widget content;
           if (_viewMode == 1 && hasVideo) {
             // Split screen mode
@@ -845,27 +892,26 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
               ],
             );
           } else if (_viewMode == 2 && hasVideo) {
-            // Floating PDF mode
+            // Floating PDF mode (draggable + resizable within SafeArea bounds)
             content = Stack(
               fit: StackFit.expand,
               children: [
                 Positioned.fill(
                   child: VideoSurface(controller: widget.videoController!),
                 ),
-                Positioned(
-                  bottom: context.rsV(24),
-                  left: context.rs(16),
-                  child: Card(
-                    elevation: 12,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    clipBehavior: Clip.antiAlias,
-                    child: Container(
-                      width: context.rs(180),
-                      height: context.rsV(260),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: const Color(0xFFe5e7eb), width: 2),
-                      ),
-                      child: buildPdfReader(),
+                Positioned.fill(
+                  child: SafeArea(
+                    top: false,
+                    child: LayoutBuilder(
+                      builder: (BuildContext context, BoxConstraints constraints) {
+                        return ResizableFloatingPdfWindow(
+                          areaWidth: constraints.maxWidth,
+                          areaHeight: constraints.maxHeight,
+                          initialWidth: context.rs(180),
+                          initialHeight: context.rsV(260),
+                          child: buildPdfReader(),
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -876,28 +922,32 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
             content = buildPdfReader();
           }
 
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              content,
-              if (hasVideo)
-                Positioned(
-                  bottom: context.rsV(24),
-                  right: context.rs(24),
-                  child: FloatingActionButton(
-                    onPressed: _switchViewMode,
-                    backgroundColor: const Color(0xFF2563eb),
-                    foregroundColor: Colors.white,
-                    child: Icon(
-                      _viewMode == 0
-                          ? Icons.splitscreen
-                          : _viewMode == 1
-                              ? Icons.picture_in_picture_outlined
-                              : Icons.fullscreen,
+          return SafeArea(
+            top: false,
+            bottom: false,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                content,
+                if (hasVideo)
+                  Positioned(
+                    bottom: media.padding.bottom + context.rsV(24),
+                    right: media.padding.right + context.rs(24),
+                    child: FloatingActionButton(
+                      onPressed: _switchViewMode,
+                      backgroundColor: const Color(0xFF2563eb),
+                      foregroundColor: Colors.white,
+                      child: Icon(
+                        _viewMode == 0
+                            ? Icons.splitscreen
+                            : _viewMode == 1
+                                ? Icons.picture_in_picture_outlined
+                                : Icons.fullscreen,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -980,4 +1030,335 @@ class _LockedPageOverlay extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Scrollable, SafeArea-aware main menu bottom sheet for the PDF viewer.
+class PdfViewerMainMenuSheet extends StatelessWidget {
+  final bool isOfflineEnabled;
+  final VoidCallback onSearchTap;
+  final VoidCallback onNotesTap;
+  final ValueChanged<bool> onOfflineChanged;
+
+  const PdfViewerMainMenuSheet({
+    super.key,
+    required this.isOfflineEnabled,
+    required this.onSearchTap,
+    required this.onNotesTap,
+    required this.onOfflineChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final double maxHeight = MediaQuery.sizeOf(context).height * 0.7;
+    return SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFe5e7eb),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(Icons.search, color: Color(0xFF6b7280)),
+                title: const Text(
+                  'البحث والفهرس',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                onTap: onSearchTap,
+              ),
+              const Divider(color: Color(0xFFe5e7eb)),
+              ListTile(
+                leading: const Icon(Icons.edit_document, color: Color(0xFF6b7280)),
+                title: const Text(
+                  'الملاحظات الشخصية',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                onTap: onNotesTap,
+              ),
+              const Divider(color: Color(0xFFe5e7eb)),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Expanded(
+                      child: Row(
+                        children: [
+                          Icon(Icons.offline_pin_outlined, color: Color(0xFF6b7280)),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Offline mode',
+                                  style: TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+                                ),
+                                Text(
+                                  'متاح داخل التطبيق فقط',
+                                  style: TextStyle(color: Color(0xFF6b7280), fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: isOfflineEnabled,
+                      activeThumbColor: const Color(0xFF10b981),
+                      activeTrackColor: const Color(0xFF10b981).withValues(alpha: 0.5),
+                      onChanged: onOfflineChanged,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Draggable and resizable floating PDF window for PiP/floating mode.
+///
+/// Moving is handled by the top drag bar and resizing by the bottom-right
+/// corner handle so neither conflicts with PDF internal scroll/zoom gestures.
+class ResizableFloatingPdfWindow extends StatefulWidget {
+  final double areaWidth;
+  final double areaHeight;
+  final double initialWidth;
+  final double initialHeight;
+  final Widget child;
+
+  const ResizableFloatingPdfWindow({
+    super.key,
+    required this.areaWidth,
+    required this.areaHeight,
+    required this.initialWidth,
+    required this.initialHeight,
+    required this.child,
+  });
+
+  @override
+  State<ResizableFloatingPdfWindow> createState() =>
+      _ResizableFloatingPdfWindowState();
+}
+
+class _ResizableFloatingPdfWindowState
+    extends State<ResizableFloatingPdfWindow> {
+  static const double _edgeMargin = 8.0;
+  static const double _minWidthBase = 140.0;
+  static const double _minHeightBase = 180.0;
+
+  late double _left;
+  late double _top;
+  late double _width;
+  late double _height;
+  bool _initialized = false;
+
+  double get _minWidth =>
+      math.min(_minWidthBase, math.max(80.0, widget.areaWidth - _edgeMargin * 2));
+
+  double get _minHeight => math.min(
+      _minHeightBase, math.max(100.0, widget.areaHeight - _edgeMargin * 2));
+
+  double get _maxWidth =>
+      math.max(_minWidth, widget.areaWidth - _edgeMargin * 2);
+
+  double get _maxHeight =>
+      math.max(_minHeight, widget.areaHeight - _edgeMargin * 2);
+
+  void _ensureBounds({bool resetIfUninitialized = false}) {
+    if (!_initialized && resetIfUninitialized) {
+      _width = widget.initialWidth.clamp(_minWidth, _maxWidth);
+      _height = widget.initialHeight.clamp(_minHeight, _maxHeight);
+      final double maxLeft =
+          math.max(_edgeMargin, widget.areaWidth - _width - _edgeMargin);
+      final double maxTop =
+          math.max(_edgeMargin, widget.areaHeight - _height - _edgeMargin);
+      _left = (_edgeMargin + 8.0).clamp(_edgeMargin, maxLeft);
+      _top = (widget.areaHeight - _height - 24.0).clamp(_edgeMargin, maxTop);
+      _initialized = true;
+      return;
+    }
+
+    _width = _width.clamp(_minWidth, _maxWidth);
+    _height = _height.clamp(_minHeight, _maxHeight);
+    final double maxLeft =
+        math.max(_edgeMargin, widget.areaWidth - _width - _edgeMargin);
+    final double maxTop =
+        math.max(_edgeMargin, widget.areaHeight - _height - _edgeMargin);
+    _left = _left.clamp(_edgeMargin, maxLeft);
+    _top = _top.clamp(_edgeMargin, maxTop);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _ensureBounds(resetIfUninitialized: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant ResizableFloatingPdfWindow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.areaWidth != widget.areaWidth ||
+        oldWidget.areaHeight != widget.areaHeight) {
+      _ensureBounds();
+    }
+  }
+
+  void _onMoveDrag(DragUpdateDetails details) {
+    setState(() {
+      final double maxLeft =
+          math.max(_edgeMargin, widget.areaWidth - _width - _edgeMargin);
+      final double maxTop =
+          math.max(_edgeMargin, widget.areaHeight - _height - _edgeMargin);
+      _left = (_left + details.delta.dx).clamp(_edgeMargin, maxLeft);
+      _top = (_top + details.delta.dy).clamp(_edgeMargin, maxTop);
+    });
+  }
+
+  void _onResizeDrag(DragUpdateDetails details) {
+    setState(() {
+      final double maxWidthAtPos =
+          math.max(_minWidth, widget.areaWidth - _edgeMargin - _left);
+      final double maxHeightAtPos =
+          math.max(_minHeight, widget.areaHeight - _edgeMargin - _top);
+      _width = (_width + details.delta.dx).clamp(_minWidth, maxWidthAtPos);
+      _height = (_height + details.delta.dy).clamp(_minHeight, maxHeightAtPos);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned(
+          key: const Key('floating-pdf-window'),
+          left: _left,
+          top: _top,
+          width: _width,
+          height: _height,
+          child: Material(
+            elevation: 12,
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            color: Colors.white,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE5E7EB), width: 2),
+              ),
+              child: Stack(
+                children: [
+                  Column(
+                    children: [
+                      GestureDetector(
+                        key: const Key('floating-pdf-drag-handle'),
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: _onMoveDrag,
+                        child: Container(
+                          height: 28,
+                          width: double.infinity,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFF8FAFC),
+                            border: Border(
+                              bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: 36,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF9CA3AF),
+                                borderRadius: BorderRadius.circular(9999),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(child: widget.child),
+                    ],
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: GestureDetector(
+                      key: const Key('floating-pdf-resize-handle'),
+                      behavior: HitTestBehavior.opaque,
+                      onPanUpdate: _onResizeDrag,
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.bottomRight,
+                        padding: const EdgeInsets.all(4),
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: const Color(0xE6FFFFFF),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFD1D5DB)),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x1A000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: CustomPaint(
+                            painter: _ResizeCornerPainter(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResizeCornerPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = const Color(0xFF374151)
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(
+      Offset(size.width * 0.42, size.height * 0.78),
+      Offset(size.width * 0.78, size.height * 0.42),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.62, size.height * 0.78),
+      Offset(size.width * 0.78, size.height * 0.62),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ResizeCornerPainter oldDelegate) => false;
 }

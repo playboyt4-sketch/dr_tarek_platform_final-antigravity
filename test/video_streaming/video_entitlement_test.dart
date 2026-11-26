@@ -18,14 +18,28 @@ class _FakeMembershipRepository implements MembershipRepository {
   Future<MembershipPlan?> getPlan({required String planId}) async => plan;
 
   @override
+  Stream<MembershipPlan?> watchPlan({required String planId}) =>
+      Stream.value(plan);
+
+  @override
   Future<List<PlanFeature>> getPlanFeatures({required String planId}) async =>
       features;
+
+  @override
+  Stream<List<PlanFeature>> watchPlanFeatures({required String planId}) =>
+      Stream.value(features);
 
   @override
   Future<MembershipSubscription?> getSubscription({
     required String studentId,
     required String subjectId,
   }) async => subscription;
+
+  @override
+  Stream<MembershipSubscription?> watchSubscription({
+    required String studentId,
+    required String subjectId,
+  }) => Stream.value(subscription);
 
   @override
   Future<MembershipSubscription> activateFreePlan({

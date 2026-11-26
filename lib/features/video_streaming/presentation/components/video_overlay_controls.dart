@@ -22,6 +22,10 @@ class VideoOverlayControls extends StatelessWidget {
   /// FINAL_DECISIONS §11: opens the membership/plans flow when the Public
   /// Free preview wall is shown.
   final VoidCallback? onUpgradeTap;
+  final VoidCallback? onDownloadTap;
+  final bool isDownloading;
+  final bool isDownloaded;
+  final double downloadProgress;
 
   /// Section-aware toolbar label (Lectures / Revisions / Finals / Online).
   final String sectionButtonLabel;
@@ -36,6 +40,10 @@ class VideoOverlayControls extends StatelessWidget {
     required this.onToggleControls,
     this.onBookmarkTap,
     this.onUpgradeTap,
+    this.onDownloadTap,
+    this.isDownloading = false,
+    this.isDownloaded = false,
+    this.downloadProgress = 0.0,
     this.sectionButtonLabel = 'Lectures',
     super.key,
   });
@@ -120,6 +128,10 @@ class VideoOverlayControls extends StatelessWidget {
                 onQualityTap: onQualityTap,
                 onNextTap: onNextTap,
                 onBookmarkTap: onBookmarkTap,
+                onDownloadTap: onDownloadTap,
+                isDownloading: isDownloading,
+                isDownloaded: isDownloaded,
+                downloadProgress: downloadProgress,
                 sectionButtonLabel: sectionButtonLabel,
               ),
             ],
@@ -139,8 +151,6 @@ class VideoOverlayControls extends StatelessWidget {
               onBack: onBack,
             ),
           ),
-        if (controller.showResumePrompt && controller.resumeRecord != null)
-          VideoResumePrompt(controller: controller),
         if (controller.showUpgradePrompt)
           VideoUpgradePrompt(
             controller: controller,

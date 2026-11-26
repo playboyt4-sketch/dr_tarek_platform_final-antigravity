@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/responsive/responsive.dart';
 import '../../core/theme/app_typography.dart';
 
 /// Route keys emitted by the full menu. The shell maps them to sections.
@@ -15,41 +16,13 @@ abstract final class DashboardMenuRoutes {
   static const String auditLogs = 'auditLogs';
   static const String payments = 'payments';
   static const String systemSettings = 'systemSettings';
+  static const String archive = 'archive';
 }
 
-/// Full-menu overlay — pixel-faithful to `# dashboard - full menu`
-/// (DASHBOARD_FULL_MENU_SPEC.md):
-///
-/// - canvas 1280 x 800, pure white #FFFFFF, clipped (antiAlias);
-/// - brand 540 x 80 at (370, 24), Google Sans Flex 48
-///   (Regular 400 + Thin 100, black, letter spacing 0);
-/// - master column at X 370: Home (370, 164, 250 x 40), Grades
-///   (370, 228, 250 x 40), Management (370, 402, 250 x 49) —
-///   32 px Regular 400 black;
-/// - sub column at X 660 (290 gap): Frame 30 grades list at
-///   (660, 236) and Frame 31 management list at (660, 410), vertical
-///   auto-layout with 12 px gaps, 20 px Light 300 black rows
-///   (247 x 24 each).
-///
-/// The unified [DashboardShell] draws the single fixed menu button at
-/// (80, 24, 80 x 80) in its top layer, so this overlay no longer draws
-/// its own button — the X/close control never shifts a pixel between
-/// home and menu. [onClose] is kept for API compatibility (the shell's
-/// fixed button owns the toggle).
-///
-/// Tapping any entry fires [onNavigate]; the shell closes the overlay with
-/// a smooth animation and shows the target section.
-class DashboardFullMenu extends StatelessWidget {
-  final VoidCallback? onClose;
-  final ValueChanged<String> onNavigate;
-
-  const DashboardFullMenu({
-    super.key,
-    this.onClose,
-    required this.onNavigate,
-  });
-
-  static const List<({String label, String route})> _grades =
+/// Shared menu entry definitions used by both [DashboardFullMenu] (tablet /
+/// desktop) and the mobile [Drawer] in [DashboardShell].
+abstract final class DashboardMenuData {
+  static const List<({String label, String route})> grades =
       <({String label, String route})>[
     (label: 'Grade One', route: DashboardMenuRoutes.gradeOne),
     (label: 'Grade Two', route: DashboardMenuRoutes.gradeTwo),
@@ -57,7 +30,7 @@ class DashboardFullMenu extends StatelessWidget {
     (label: 'Grade Four', route: DashboardMenuRoutes.gradeFour),
   ];
 
-  static const List<({String label, String route})> _management =
+  static const List<({String label, String route})> management =
       <({String label, String route})>[
     (label: 'Subscription', route: DashboardMenuRoutes.subscription),
     (label: 'Admins', route: DashboardMenuRoutes.admins),
@@ -65,148 +38,272 @@ class DashboardFullMenu extends StatelessWidget {
     (label: 'Audit Logs', route: DashboardMenuRoutes.auditLogs),
     (label: 'Payments', route: DashboardMenuRoutes.payments),
     (label: 'System Settings', route: DashboardMenuRoutes.systemSettings),
+    (label: 'Archive', route: DashboardMenuRoutes.archive),
   ];
+}
+
+/// Full-menu overlay for Tablet and Desktop viewports.
+///
+/// Expands to fill the available screen without rigid canvas dimensions or
+/// scaling, and scrolls vertically if the viewport height is short.
+class DashboardFullMenu extends StatelessWidget {
+  final VoidCallback? onClose;
+  final ValueChanged<String> onNavigate;
+  final VoidCallback? onSignOut;
+
+  const DashboardFullMenu({
+    super.key,
+    this.onClose,
+    required this.onNavigate,
+    this.onSignOut,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: const Color(0xFFFFFFFF),
-      child: SingleChildScrollView(
-        clipBehavior: Clip.antiAlias,
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          clipBehavior: Clip.antiAlias,
-          child: ClipRect(
-            clipBehavior: Clip.antiAlias,
-            child: SizedBox(
-              width: 1280,
-              height: 800,
-              child: Stack(
-                children: <Widget>[
-                  // Brand 540 x 80 at (370, 24), hit-transparent.
-                  // The shell's fixed top-layer button at (80, 24, 80 x 80)
-                  // stays on top so open/close never shifts a pixel.
-                  const Positioned(
-                    left: 370,
-                    top: 24,
-                    width: 540,
-                    height: 80,
-                    child: IgnorePointer(child: _BrandLockup()),
-                  ),
-                  // T Home 250 x 40 at (370, 164).
-                  Positioned(
-                    left: 370,
-                    top: 164,
-                    width: 250,
-                    height: 40,
-                    child: _HoverEntry(
-                      label: 'Home',
-                      style: AppTypography.menuItem(),
-                      onTap: () =>
-                          onNavigate(DashboardMenuRoutes.home),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final double width = constraints.maxWidth;
+          final bool isCompact = width < AppBreakpoints.mobileMax;
+          final double horizontalPadding =
+              width > AppBreakpoints.desktopMin ? 80 : 32;
+
+          return SizedBox.expand(
+            child: SingleChildScrollView(
+              clipBehavior: Clip.antiAlias,
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                24,
+                horizontalPadding,
+                40,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 64).clamp(0.0, 2000.0),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    const ResponsiveScreenHeader(),
+                    SizedBox(height: isCompact ? 24 : 48),
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 920),
+                        child: isCompact
+                            ? _CompactMenuBody(
+                                onNavigate: onNavigate,
+                                onSignOut: onSignOut,
+                              )
+                            : _WideMenuBody(
+                                onNavigate: onNavigate,
+                                onSignOut: onSignOut,
+                              ),
+                      ),
                     ),
-                  ),
-                  // T Grades 250 x 40 at (370, 228) — 64 below Home.
-                  Positioned(
-                    left: 370,
-                    top: 228,
-                    width: 250,
-                    height: 40,
-                    child: Text(
-                      'Grades',
-                      style: AppTypography.menuSection(),
-                      maxLines: 1,
-                    ),
-                  ),
-                  // T Management 250 x 49 at (370, 402) — 174 below Grades.
-                  Positioned(
-                    left: 370,
-                    top: 402,
-                    width: 250,
-                    height: 49,
-                    child: Text(
-                      'Management',
-                      style: AppTypography.menuSection(),
-                      maxLines: 1,
-                    ),
-                  ),
-                  // Frame 30 — grades list 250 wide at (660, 236),
-                  // 8 px below the Grades cap, 12 px gaps.
-                  Positioned(
-                    left: 660,
-                    top: 236,
-                    width: 250,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        for (int i = 0; i < _grades.length; i++) ...<Widget>[
-                          if (i > 0) const SizedBox(height: 12),
-                          _HoverEntry(
-                            label: _grades[i].label,
-                            style: AppTypography.menuSubItem(),
-                            onTap: () =>
-                                onNavigate(_grades[i].route),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  // Frame 31 — management list 250 wide at (660, 410),
-                  // 8 px below the Management cap, 12 px gaps.
-                  Positioned(
-                    left: 660,
-                    top: 410,
-                    width: 250,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        for (int i = 0; i < _management.length; i++) ...<Widget>[
-                          if (i > 0) const SizedBox(height: 12),
-                          _HoverEntry(
-                            label: _management[i].label,
-                            style: AppTypography.menuSubItem(),
-                            onTap: () =>
-                                onNavigate(_management[i].route),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-/// Brand lockup 540 x 80: 48 px Regular 400 + Thin 100, black, no tracking.
-class _BrandLockup extends StatelessWidget {
-  const _BrandLockup();
+class _WideMenuBody extends StatelessWidget {
+  final ValueChanged<String> onNavigate;
+  final VoidCallback? onSignOut;
+
+  const _WideMenuBody({
+    required this.onNavigate,
+    this.onSignOut,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.centerLeft,
-      child: Text.rich(
-        TextSpan(
-          children: <TextSpan>[
-            TextSpan(
-              text: 'Tarek el araby ',
-              style: AppTypography.homeBrandHeavy(fontSize: 48),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _HoverEntry(
+          label: 'Home',
+          style: AppTypography.menuItem(),
+          onTap: () => onNavigate(DashboardMenuRoutes.home),
+        ),
+        const SizedBox(height: 28),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              flex: 2,
+              child: Text(
+                'Grades',
+                style: AppTypography.menuSection(),
+                maxLines: 1,
+              ),
             ),
-            TextSpan(
-              text: 'Platform',
-              style: AppTypography.homeBrandLight(fontSize: 48),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  for (int i = 0;
+                      i < DashboardMenuData.grades.length;
+                      i++) ...<Widget>[
+                    if (i > 0) const SizedBox(height: 12),
+                    _HoverEntry(
+                      label: DashboardMenuData.grades[i].label,
+                      style: AppTypography.menuSubItem(),
+                      onTap: () =>
+                          onNavigate(DashboardMenuData.grades[i].route),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
-        maxLines: 1,
+        const SizedBox(height: 40),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              flex: 2,
+              child: Text(
+                'Management',
+                style: AppTypography.menuSection(),
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  for (int i = 0;
+                      i < DashboardMenuData.management.length;
+                      i++) ...<Widget>[
+                    if (i > 0) const SizedBox(height: 12),
+                    _HoverEntry(
+                      label: DashboardMenuData.management[i].label,
+                      style: AppTypography.menuSubItem(),
+                      onTap: () =>
+                          onNavigate(DashboardMenuData.management[i].route),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 44),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        const SizedBox(height: 24),
+        _SignOutMenuAction(onTap: onSignOut),
+      ],
+    );
+  }
+}
+
+class _CompactMenuBody extends StatelessWidget {
+  final ValueChanged<String> onNavigate;
+  final VoidCallback? onSignOut;
+
+  const _CompactMenuBody({
+    required this.onNavigate,
+    this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _HoverEntry(
+          label: 'Home',
+          style: AppTypography.menuItem(),
+          onTap: () => onNavigate(DashboardMenuRoutes.home),
+        ),
+        const SizedBox(height: 24),
+        Text('Grades', style: AppTypography.menuSection()),
+        const SizedBox(height: 12),
+        for (final item in DashboardMenuData.grades) ...<Widget>[
+          _HoverEntry(
+            label: item.label,
+            style: AppTypography.menuSubItem(),
+            onTap: () => onNavigate(item.route),
+          ),
+          const SizedBox(height: 10),
+        ],
+        const SizedBox(height: 20),
+        Text('Management', style: AppTypography.menuSection()),
+        const SizedBox(height: 12),
+        for (final item in DashboardMenuData.management) ...<Widget>[
+          _HoverEntry(
+            label: item.label,
+            style: AppTypography.menuSubItem(),
+            onTap: () => onNavigate(item.route),
+          ),
+          const SizedBox(height: 10),
+        ],
+        const SizedBox(height: 16),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        const SizedBox(height: 16),
+        _SignOutMenuAction(onTap: onSignOut),
+      ],
+    );
+  }
+}
+
+/// Red Sign Out entry at the bottom of the dashboard menu.
+class _SignOutMenuAction extends StatefulWidget {
+  final VoidCallback? onTap;
+
+  const _SignOutMenuAction({this.onTap});
+
+  @override
+  State<_SignOutMenuAction> createState() => _SignOutMenuActionState();
+}
+
+class _SignOutMenuActionState extends State<_SignOutMenuAction> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedOpacity(
+          opacity: _hovered ? 0.72 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const <Widget>[
+              Icon(
+                Icons.logout_rounded,
+                size: 20,
+                color: Color(0xFFDC2626),
+              ),
+              SizedBox(width: 10),
+              Text(
+                'Sign Out',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFFDC2626),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -245,9 +342,10 @@ class _HoverEntryState extends State<_HoverEntry> {
         child: InkWell(
           onTap: widget.onTap,
           borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            width: master ? 250 : 247,
-            height: master ? 40 : 24,
+          child: Container(
+            constraints: BoxConstraints(minHeight: master ? 44 : 32),
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             child: Text(
               widget.label,
               style: widget.style,

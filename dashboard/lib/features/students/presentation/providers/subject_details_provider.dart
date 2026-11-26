@@ -12,6 +12,7 @@ import '../../../applications/presentation/providers/application_decision_provid
     show DecisionFailure;
 import '../../data/bunny_association_gateway.dart';
 import '../../domain/bunny_library_association.dart';
+import '../../domain/live_student.dart' show isArchivedData;
 
 /// Data layer for the Dashboard Subject Details page.
 ///
@@ -561,8 +562,10 @@ final tabLecturesProvider =
         .where('is_deleted', isEqualTo: false)
         .snapshots()
         .listen((QuerySnapshot<Map<String, dynamic>> snap) {
-      sections =
-          snap.docs.map(SubjectSection.fromDoc).toList(growable: false);
+      sections = snap.docs
+          .where((doc) => !isArchivedData(doc.data()))
+          .map(SubjectSection.fromDoc)
+          .toList(growable: false);
       final Set<String> liveIds =
           sections.map((SubjectSection s) => s.id).toSet();
       for (final String stale in subs.keys.toList()) {
@@ -580,6 +583,7 @@ final tabLecturesProvider =
             .snapshots()
             .listen((QuerySnapshot<Map<String, dynamic>> lecturesSnap) {
           cache[section.id] = lecturesSnap.docs
+              .where((doc) => !isArchivedData(doc.data()))
               .map(SubjectLecture.fromDoc)
               .toList(growable: false);
           emit();
@@ -609,8 +613,10 @@ final sectionLecturesProvider =
       .where('is_deleted', isEqualTo: false)
       .snapshots()
       .map((QuerySnapshot<Map<String, dynamic>> snapshot) {
-    final List<SubjectLecture> lectures =
-        snapshot.docs.map(SubjectLecture.fromDoc).toList();
+    final List<SubjectLecture> lectures = snapshot.docs
+        .where((doc) => !isArchivedData(doc.data()))
+        .map(SubjectLecture.fromDoc)
+        .toList();
     lectures.sort((SubjectLecture a, SubjectLecture b) =>
         a.displayOrder.compareTo(b.displayOrder));
     return lectures;
@@ -706,14 +712,19 @@ class SubjectDetailsController {
   }
 
   Future<void> deleteLecture(String lectureId) {
+    final String actorId = resolveActorId(null);
     return _db.collection('lectures').doc(lectureId).update(
       <String, Object?>{
+        'is_archived': true,
         'is_deleted': true,
+        'deleted_at': FieldValue.serverTimestamp(),
+        'archived_by': actorId,
         'status': 'archived',
         // The archived lecture leaves student listings; its denormalized
         // pointer must not survive it.
         'first_video': null,
         'updated_at': FieldValue.serverTimestamp(),
+        'updated_by': actorId,
       },
     );
   }
@@ -744,6 +755,7 @@ class SubjectDetailsController {
           .get();
       for (final QueryDocumentSnapshot<Map<String, dynamic>> lecture
           in lecturesSnap.docs) {
+        if (isArchivedData(lecture.data())) continue;
         final int order =
             (lecture.data()['display_order'] as num?)?.toInt() ?? 0;
         if (order > maxOrder) maxOrder = order;

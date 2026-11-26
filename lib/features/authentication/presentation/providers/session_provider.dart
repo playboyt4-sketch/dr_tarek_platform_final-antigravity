@@ -26,15 +26,14 @@ class SessionController extends AsyncNotifier<SessionState> {
   }
 
   Future<SessionState> _bootstrap() async {
-    final claims = await ref.watch(customClaimsProvider.future);
+    // Run claims resolution and user profile loading in parallel instead of
+    // paying two sequential round-trips on login / cold start.
+    final (claims, user) = await (
+      ref.watch(customClaimsProvider.future),
+      ref.watch(authProvider.future),
+    ).wait;
 
-    if (claims == null) {
-      return const SessionUnauthenticated();
-    }
-
-    final user = await ref.watch(authProvider.future);
-
-    if (user == null) {
+    if (claims == null || user == null) {
       return const SessionUnauthenticated();
     }
 

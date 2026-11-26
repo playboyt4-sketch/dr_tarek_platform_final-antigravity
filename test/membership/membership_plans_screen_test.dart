@@ -72,10 +72,10 @@ Future<void> _pumpPlans(
           (ref, arg) async => plans,
         ),
         planFeaturesProvider.overrideWith(
-          (ref, arg) async => const <PlanFeature>[],
+          (ref, arg) => Stream.value(const <PlanFeature>[]),
         ),
         dashboardSubjectsProvider.overrideWith(
-          (ref) async => const [],
+          (ref) => Stream.value(const []),
         ),
       ],
       child: MaterialApp(

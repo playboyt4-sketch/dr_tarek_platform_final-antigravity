@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../archive/presentation/providers/archive_provider.dart';
+import '../../../archive/presentation/widgets/archive_confirm_dialog.dart';
 import '../providers/grade_students_provider.dart';
 import '../providers/student_profile_grade_provider.dart';
 import 'grade_students_screen.dart' show gradeAccent;
@@ -14,7 +17,6 @@ import 'student_profile_payments_tab.dart';
 import 'student_profile_device_tab.dart';
 import 'student_profile_security_tab.dart';
 import 'student_profile_subjects_tab.dart';
-import '../widgets/dashboard_brand_lockup.dart';
 import '../widgets/grade_theme.dart';
 
 /// "Grade One - Student Profile Overview" screen — the "View" destination
@@ -336,156 +338,149 @@ class _StudentProfileOverviewScreenState
       color: Colors.white,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
-          final Widget canvas = Center(
-            child: SizedBox(
-              width: 1280,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  // Header Y 24: hamburger 80 x 80 at X 80 + brand
-                  // 540 x 80 at X 370 (gap 210).
-                  Padding(
-                    padding: const EdgeInsets.only(left: 80, right: 80, top: 24),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const <Widget>[
-                        _HamburgerIcon(),
-                        SizedBox(width: 210),
-                        IgnorePointer(child: DashboardBrandLockup()),
-                      ],
-                    ),
+          final DashboardBreakpoint breakpoint =
+              breakpointForWidth(constraints.maxWidth);
+          final bool isMobile = breakpoint == DashboardBreakpoint.mobile;
+          final double horizontalPadding = switch (breakpoint) {
+            DashboardBreakpoint.mobile => 16,
+            DashboardBreakpoint.tablet => 28,
+            DashboardBreakpoint.desktop => 48,
+          };
+
+          return SingleChildScrollView(
+            clipBehavior: Clip.antiAlias,
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              isMobile ? 12 : 20,
+              horizontalPadding,
+              32,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const ResponsiveScreenHeader(),
+                SizedBox(height: isMobile ? 8 : 20),
+                Center(
+                  child: _ProfileGradeNav(
+                    gradeKey: _gradeKey,
+                    onGradeSelected: selectGrade,
                   ),
-                  // 24 + 80 = 104; gap 28 → grade nav Y 132.
-                  const SizedBox(height: 28),
-                  Center(
-                    child: _ProfileGradeNav(
-                      gradeKey: _gradeKey,
-                      onGradeSelected: selectGrade,
-                    ),
+                ),
+                const SizedBox(height: 14),
+                Center(
+                  child: _ProfileCategoryTabs(
+                    studentsActive: _studentsActive,
+                    accent: _accent,
+                    onSelect: _selectCategory,
                   ),
-                  // 132 + 40 = 172; gap 18 → category Y 190.
-                  // Persistent header: category switcher, hero card and
-                  // sub-nav stay mounted for EVERY tab (Overview,
-                  // Subjects, …). Only the dynamic body at Y 456 swaps:
-                  // data rows for Overview, subjects table for Subjects.
-                  const SizedBox(height: 18),
-                  Center(
-                    child: _ProfileCategoryTabs(
-                      studentsActive: _studentsActive,
-                      accent: _accent,
-                      onSelect: _selectCategory,
-                    ),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: _StudentHeroBar(
+                    student: widget.student,
+                    gradeLabel: _gradeLabel,
+                    accent: _accent,
+                    avatarUrl: widget.avatarUrl,
+                    deviceLabel: widget.deviceLabel,
                   ),
-                  // 190 + 40 = 230; gap 18 → hero Y 248.
-                  const SizedBox(height: 18),
-                  Center(
-                    child: _StudentHeroBar(
-                      student: widget.student,
-                      gradeLabel: _gradeLabel,
-                      accent: _accent,
-                      avatarUrl: widget.avatarUrl,
-                      deviceLabel: widget.deviceLabel,
-                    ),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: _ProfileSubNav(
+                    selected: _nav,
+                    accent: _accent,
+                    onSelect: selectNav,
                   ),
-                  // 248 + 132 = 380; gap 18 → sub-nav Y 398.
-                  const SizedBox(height: 18),
-                  Center(
-                    child: _ProfileSubNav(
-                      selected: _nav,
-                      accent: _accent,
-                      onSelect: selectNav,
-                    ),
+                ),
+                const SizedBox(height: 20),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: _buildActiveTabBody(),
                   ),
-                  // 398 + 40 = 438; gap 18 → dynamic body Y 456.
-                  // Overview → data rows; Subjects → subjects table;
-                  // Memberships → type pill + memberships table;
-                  // Payments → invoiced table + summary strip + history;
-                  // Device → subject device-authorization table + reset;
-                  // Security → status + password cards with event-log and
-                  // change-password overlays.
-                  const SizedBox(height: 18),
-                  if (_nav == 'Subjects')
-                    Center(
-                      child: SizedBox(
-                        width: 830,
-                        child: StudentProfileSubjectsTab(
-                          student: widget.student,
-                          gradeKey: _gradeKey,
-                        ),
-                      ),
-                    )
-                  else if (_nav == 'Memberships') ...<Widget>[
-                    Center(
-                      child: _StudentTypePill(
-                        accent: _accent,
-                        onTap: _showStudentTypeOverlay,
-                      ),
-                    ),
-                    // 456 + 40 = 496; gap 18 → table Y 514.
-                    const SizedBox(height: 18),
-                    Center(
-                      child: SizedBox(
-                        width: 830,
-                        child: StudentProfileMembershipsTab(
-                          student: widget.student,
-                          gradeKey: _gradeKey,
-                        ),
-                      ),
-                    ),
-                  ] else if (_nav == 'Payments')
-                    Center(
-                      child: SizedBox(
-                        width: 830,
-                        child: StudentProfilePaymentsTab(
-                          student: widget.student,
-                          gradeKey: _gradeKey,
-                        ),
-                      ),
-                    )
-                  else if (_nav == 'Device')
-                    Center(
-                      child: SizedBox(
-                        width: 830,
-                        child: StudentProfileDeviceTab(
-                          student: widget.student,
-                          gradeKey: _gradeKey,
-                        ),
-                      ),
-                    )
-                  else if (_nav == 'Security')
-                    Center(
-                      child: SizedBox(
-                        width: 830,
-                        child: StudentProfileSecurityTab(
-                          student: widget.student,
-                          gradeKey: _gradeKey,
-                        ),
-                      ),
-                    )
-                  else
-                    Center(child: _OverviewRows(state: this)),
-                  const SizedBox(height: 24),
-                ],
-              ),
+                ),
+              ],
             ),
           );
-          final Widget vertical = SingleChildScrollView(
-            clipBehavior: Clip.antiAlias,
-            child: canvas,
-          );
-          // Fixed 1280 canvas: center it on wider viewports, scroll
-          // horizontally on narrower ones so nothing ever overflows.
-          if (constraints.maxWidth < 1280) {
-            return SingleChildScrollView(
-              clipBehavior: Clip.antiAlias,
-              scrollDirection: Axis.horizontal,
-              child: vertical,
-            );
-          }
-          return vertical;
         },
       ),
     );
+  }
+
+  Widget _buildActiveTabBody() {
+    if (_nav == 'Subjects') {
+      return StudentProfileSubjectsTab(
+        student: widget.student,
+        gradeKey: _gradeKey,
+      );
+    }
+    if (_nav == 'Memberships') {
+      return Column(
+        children: <Widget>[
+          Center(
+            child: _StudentTypePill(
+              accent: _accent,
+              onTap: _showStudentTypeOverlay,
+            ),
+          ),
+          const SizedBox(height: 18),
+          StudentProfileMembershipsTab(
+            student: widget.student,
+            gradeKey: _gradeKey,
+          ),
+        ],
+      );
+    }
+    if (_nav == 'Payments') {
+      return StudentProfilePaymentsTab(
+        student: widget.student,
+        gradeKey: _gradeKey,
+      );
+    }
+    if (_nav == 'Device') {
+      return StudentProfileDeviceTab(
+        student: widget.student,
+        gradeKey: _gradeKey,
+      );
+    }
+    if (_nav == 'Security') {
+      return StudentProfileSecurityTab(
+        student: widget.student,
+        gradeKey: _gradeKey,
+      );
+    }
+    return _OverviewRows(state: this);
+  }
+
+  Future<void> _archiveStudent() async {
+    final bool confirmed = await showArchiveConfirmDialog(
+      context: context,
+      entityLabel: 'Student',
+      itemTitle: widget.student.name,
+      extraNote:
+          'While archived, the student account is temporarily disabled and cannot sign in.',
+    );
+    if (!confirmed || !mounted) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(archiveControllerProvider)
+          .archiveStudent(widget.student.id);
+      if (!mounted) return;
+      invalidateArchiveDependents(ref);
+      messenger.showSnackBar(
+        SnackBar(content: Text('${widget.student.name} moved to Archive.')),
+      );
+      widget.onBack?.call();
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFDC2626),
+          content: Text(_failureMessage(e)),
+        ),
+      );
+    }
   }
 
   void _showGradesOverlay() {
@@ -516,53 +511,60 @@ class _StudentProfileOverviewScreenState
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setOverlayState) {
             return Center(
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: 677,
-                  height: 220,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      const Text(
-                        'Grades',
-                        style: TextStyle(
-                          fontFamily: AppTypography.fontFamily,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w400,
-                          color: Color(0xFF111827),
-                        ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Material(
+                  color: Colors.transparent,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 677),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 24,
                       ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: 660,
-                        height: 40,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: <Widget>[
-                            for (int i = 0;
-                                i < GradeTheme.allGrades.length;
-                                i++) ...<Widget>[
-                              if (i > 0) const SizedBox(width: 4),
-                              _OverlayOption(
-                                label: GradeTheme.allGrades[i].title,
-                                isActive: temp ==
-                                    GradeTheme.allGrades[i].gradeId,
-                                accent: _accent,
-                                onTap: saving
-                                    ? () {}
-                                    : () => setOverlayState(() => temp =
-                                        GradeTheme.allGrades[i].gradeId),
-                              ),
-                            ],
-                          ],
-                        ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
                       ),
-                      const SizedBox(height: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          const Text(
+                            'Grades',
+                            style: TextStyle(
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w400,
+                              color: Color(0xFF111827),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: <Widget>[
+                                for (int i = 0;
+                                    i < GradeTheme.allGrades.length;
+                                    i++) ...<Widget>[
+                                  if (i > 0) const SizedBox(width: 4),
+                                  _OverlayOption(
+                                    label: GradeTheme.allGrades[i].title,
+                                    isActive: temp ==
+                                        GradeTheme.allGrades[i].gradeId,
+                                    accent: _accent,
+                                    onTap: saving
+                                        ? () {}
+                                        : () => setOverlayState(() => temp =
+                                            GradeTheme.allGrades[i].gradeId),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
                       _SaveButton(
                         accent: _accent,
                         isLoading: saving,
@@ -624,6 +626,8 @@ class _StudentProfileOverviewScreenState
                   ),
                 ),
               ),
+            ),
+            ),
             );
           },
         );
@@ -666,66 +670,75 @@ class _StudentProfileOverviewScreenState
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setOverlayState) {
             return Center(
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: 380,
-                  height: 220,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      const Text(
-                        'Student Type',
-                        style: TextStyle(
-                          fontFamily: AppTypography.fontFamily,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w400,
-                          color: Color(0xFF111827),
-                        ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Material(
+                  color: Colors.transparent,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 380),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 24,
                       ),
-                      const SizedBox(height: 24),
-                      Container(
-                        width: 332,
-                        height: 40,
-                        // 332 - 2 (border) - 6 (padding) = 324 for
-                        // 2 x 160 options + 4 gap.
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(
-                            color: const Color(0xFF979797),
-                            width: 1,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: <Widget>[
+                          const Text(
+                            'Student Type',
+                            style: TextStyle(
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w400,
+                              color: Color(0xFF111827),
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: <Widget>[
-                            _OverlayOption(
-                              label: 'Center',
-                              isActive: temp,
-                              accent: _accent,
-                              onTap: saving
-                                  ? () {}
-                                  : () => setOverlayState(() => temp = true),
+                          const SizedBox(height: 20),
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(28),
+                              border: Border.all(
+                                color: const Color(0xFF979797),
+                                width: 1,
+                              ),
                             ),
-                            const SizedBox(width: 4),
-                            _OverlayOption(
-                              label: 'Guest',
-                              isActive: !temp,
-                              accent: _accent,
-                              onTap: saving
-                                  ? () {}
-                                  : () => setOverlayState(() => temp = false),
+                            child: Row(
+                              children: <Widget>[
+                                Expanded(
+                                  child: _OverlayOption(
+                                    label: 'Center',
+                                    isActive: temp,
+                                    accent: _accent,
+                                    onTap: saving
+                                        ? () {}
+                                        : () =>
+                                            setOverlayState(() => temp = true),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: _OverlayOption(
+                                    label: 'Guest',
+                                    isActive: !temp,
+                                    accent: _accent,
+                                    onTap: saving
+                                        ? () {}
+                                        : () =>
+                                            setOverlayState(() => temp = false),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
+                          ),
+                          const SizedBox(height: 20),
                       _SaveButton(
                         accent: _accent,
                         isLoading: saving,
@@ -800,6 +813,8 @@ class _StudentProfileOverviewScreenState
                   ),
                 ),
               ),
+            ),
+            ),
             );
           },
         );
@@ -850,49 +865,7 @@ class _StudentTypePill extends StatelessWidget {
   }
 }
 
-/// Hamburger visual from the Figma header (80 x 80 at left 80 / top 24):
-/// two full-width 1 px black bars, radius 9999, 10 px apart.
-///
-/// Static visual only — the dashboard shell overlays its functional menu
-/// button on this exact spot, so taps are handled there.
-class _HamburgerIcon extends StatelessWidget {
-  const _HamburgerIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 80,
-      height: 80,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          Container(
-            width: 80,
-            height: 1,
-            decoration: BoxDecoration(
-              color: const Color(0xFF000000),
-              borderRadius: BorderRadius.circular(9999),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            width: 80,
-            height: 1,
-            decoration: BoxDecoration(
-              color: const Color(0xFF000000),
-              borderRadius: BorderRadius.circular(9999),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Grade navigation bar from the Figma frame (660 x 40, border #979797,
-/// radius 28): 4 tabs 160 x 32 with 4 px gaps. The active pill fills the
-/// grade's own accent; labels are two-run 24 px ("Grade " Regular +
-/// suffix Thin), white when active, black otherwise.
+/// Grade navigation bar: scrollable on mobile, expanding capsule on desktop.
 class _ProfileGradeNav extends StatelessWidget {
   final String gradeKey;
   final ValueChanged<String> onGradeSelected;
@@ -905,32 +878,33 @@ class _ProfileGradeNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final GradeTheme active = GradeTheme.fromKey(gradeKey);
-    return Container(
-      width: 660,
-      height: 40,
-      // 660 - 2 (1 px border each side) - 6 (3 px padding) = 652 for
-      // 4 x 160 tabs + 3 x 4 gaps; height 40 - 2 - 6 = 32 for the tabs.
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFF979797), width: 1),
-      ),
-      child: Row(
-        children: <Widget>[
-          for (int i = 0; i < GradeTheme.allGrades.length; i++) ...<Widget>[
-            if (i > 0) const SizedBox(width: 4),
-            _GradeNavTab(
-              grade: GradeTheme.allGrades[i],
-              isActive: GradeTheme.allGrades[i].gradeId == active.gradeId,
-              onTap: () {
-                if (GradeTheme.allGrades[i].gradeId != active.gradeId) {
-                  onGradeSelected(GradeTheme.allGrades[i].gradeId);
-                }
-              },
-            ),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: const Color(0xFF979797), width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (int i = 0; i < GradeTheme.allGrades.length; i++) ...<Widget>[
+              if (i > 0) const SizedBox(width: 4),
+              _GradeNavTab(
+                grade: GradeTheme.allGrades[i],
+                isActive: GradeTheme.allGrades[i].gradeId == active.gradeId,
+                onTap: () {
+                  if (GradeTheme.allGrades[i].gradeId != active.gradeId) {
+                    onGradeSelected(GradeTheme.allGrades[i].gradeId);
+                  }
+                },
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -952,11 +926,14 @@ class _GradeNavTab extends StatelessWidget {
     final String suffix = grade.title.startsWith('Grade ')
         ? grade.title.substring('Grade '.length)
         : grade.title;
+    final bool compact = context.isMobileViewport;
+    final double fontSize = compact ? 16 : 22;
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 160,
-        height: 32,
+        constraints: BoxConstraints(minWidth: compact ? 104 : 150),
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: isActive ? grade.primaryColor : Colors.transparent,
           borderRadius: BorderRadius.circular(28),
@@ -969,7 +946,7 @@ class _GradeNavTab extends StatelessWidget {
                 text: 'Grade ',
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
-                  fontSize: 24,
+                  fontSize: fontSize,
                   fontWeight: FontWeight.w400,
                   fontVariations: const <FontVariation>[
                     FontVariation('wght', 400),
@@ -981,7 +958,7 @@ class _GradeNavTab extends StatelessWidget {
                 text: suffix,
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
-                  fontSize: 24,
+                  fontSize: fontSize,
                   fontWeight: FontWeight.w100,
                   fontVariations: const <FontVariation>[
                     FontVariation('wght', 100),
@@ -999,9 +976,7 @@ class _GradeNavTab extends StatelessWidget {
   }
 }
 
-/// Primary category switcher from the Figma frame (336 x 40, radius 28):
-/// 2 tabs 160 x 32 with a 4 px gap. The active tab renders its 24 px
-/// Regular label in the grade accent; the inactive tab stays black.
+/// Primary category switcher: Students / Subjects.
 class _ProfileCategoryTabs extends StatelessWidget {
   final bool studentsActive;
   final Color accent;
@@ -1015,28 +990,27 @@ class _ProfileCategoryTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 336,
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-      ),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 336),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          _CategoryTab(
-            label: 'Students',
-            isActive: studentsActive,
-            accent: accent,
-            onTap: () => onSelect(true),
+          Expanded(
+            child: _CategoryTab(
+              label: 'Students',
+              isActive: studentsActive,
+              accent: accent,
+              onTap: () => onSelect(true),
+            ),
           ),
-          const SizedBox(width: 4),
-          _CategoryTab(
-            label: 'Subjects',
-            isActive: !studentsActive,
-            accent: accent,
-            onTap: () => onSelect(false),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _CategoryTab(
+              label: 'Subjects',
+              isActive: !studentsActive,
+              accent: accent,
+              onTap: () => onSelect(false),
+            ),
           ),
         ],
       ),
@@ -1062,15 +1036,14 @@ class _CategoryTab extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 160,
-        height: 32,
+        height: 36,
         color: Colors.transparent,
         alignment: Alignment.center,
         child: Text(
           label,
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
-            fontSize: 24,
+            fontSize: context.isMobileViewport ? 20 : 24,
             fontWeight: FontWeight.w400,
             fontVariations: const <FontVariation>[
               FontVariation('wght', 400),
@@ -1089,9 +1062,7 @@ class _CategoryTab extends StatelessWidget {
   }
 }
 
-/// Student hero summary bar from the Figma frame (540 x 132 stadium,
-/// 4 px accent border, white fill): 100 x 100 avatar at (16, 16), name
-/// at (132, 24), metadata row at (132, 80) with 8 px spacing.
+/// Student hero summary bar: responsive Row layout up to 580px wide.
 class _StudentHeroBar extends StatelessWidget {
   final GradeStudent student;
   final String gradeLabel;
@@ -1111,143 +1082,107 @@ class _StudentHeroBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final String phone = student.phone ?? '—';
     final String date = student.lastSignIn;
-    return Container(
-      width: 540,
-      height: 132,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(9999),
-        border: Border.all(color: accent, width: 4),
-      ),
-      child: Stack(
-        children: <Widget>[
-          Positioned(
-            left: 16,
-            top: 16,
-            child: _HeroAvatar(avatarUrl: avatarUrl),
-          ),
-          Positioned(
-            left: 132,
-            top: 24,
-            child: SizedBox(
-              width: 392,
-              height: 48,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  student.name,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w500,
-                    fontVariations: <FontVariation>[
-                      FontVariation('wght', 500),
-                    ],
-                    color: Color(0xFF111827),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 132,
-            top: 76,
-            right: 16,
-            child: Row(
-              children: <Widget>[
-                Text(
-                  phone,
-                  style: const TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    fontVariations: <FontVariation>[
-                      FontVariation('wght', 400),
-                    ],
-                    color: Color(0xFF6B7280),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    gradeLabel,
-                    style: const TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      fontVariations: <FontVariation>[
-                        FontVariation('wght', 400),
-                      ],
-                      color: Color(0xFF6B7280),
-                    ),
-                    maxLines: 1,
+    final bool compact = context.isMobileViewport;
+    final double avatarSize = compact ? 68 : 96;
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 580),
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(compact ? 14 : 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(compact ? 32 : 9999),
+          border: Border.all(color: accent, width: compact ? 2.5 : 4),
+        ),
+        child: Row(
+          children: <Widget>[
+            _HeroAvatar(avatarUrl: avatarUrl, size: avatarSize),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    student.name,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  date,
-                  style: const TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    fontVariations: <FontVariation>[
-                      FontVariation('wght', 400),
-                    ],
-                    color: Color(0xFF6B7280),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (deviceLabel != null && deviceLabel!.isNotEmpty) ...<Widget>[
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      deviceLabel!,
-                      style: const TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        fontVariations: <FontVariation>[
-                          FontVariation('wght', 400),
-                        ],
-                        color: Color(0xFF6B7280),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: compact ? 18 : 24,
+                      fontWeight: FontWeight.w500,
+                      fontVariations: const <FontVariation>[
+                        FontVariation('wght', 500),
+                      ],
+                      color: const Color(0xFF111827),
                     ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 4,
+                    children: <Widget>[
+                      Text(
+                        phone,
+                        style: const TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: 12,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      Text(
+                        gradeLabel,
+                        style: const TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: 13,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      Text(
+                        date,
+                        style: const TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: 13,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      if (deviceLabel != null && deviceLabel!.isNotEmpty)
+                        Text(
+                          deviceLabel!,
+                          style: const TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 13,
+                            color: Color(0xFF6B7280),
+                          ),
+                        ),
+                    ],
                   ),
                 ],
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Hero avatar (100 x 100 circle): clean light-neutral fill, 1 px
-/// #E5E7EB ring, subtle ambient shadow, `Frame.svg` (56 x 56, #9CA3AF
-/// silhouette) centered. A network image covers the circle when
-/// [avatarUrl] is set, falling back to the frame graphic on error.
+/// Hero avatar circle.
 class _HeroAvatar extends StatelessWidget {
   final String? avatarUrl;
+  final double size;
 
-  const _HeroAvatar({this.avatarUrl});
+  const _HeroAvatar({this.avatarUrl, this.size = 96});
 
   @override
   Widget build(BuildContext context) {
-    const Widget fallback = Center(
-      child: _FrameIcon(),
+    final Widget fallback = Center(
+      child: _FrameIcon(size: size * 0.56),
     );
     return Container(
-      width: 100,
-      height: 100,
+      width: size,
+      height: size,
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
         color: Color(0xFFF3F4F6),
@@ -1267,8 +1202,8 @@ class _HeroAvatar extends StatelessWidget {
             ? fallback
             : Image.network(
                 avatarUrl!,
-                width: 100,
-                height: 100,
+                width: size,
+                height: size,
                 fit: BoxFit.cover,
                 errorBuilder: (
                   BuildContext context,
@@ -1282,49 +1217,42 @@ class _HeroAvatar extends StatelessWidget {
   }
 }
 
-/// Sharp 56 x 56 user-silhouette fallback, tinted #9CA3AF.
-///
-/// Fail-safe by construction: while the vector asset is loading
-/// ([placeholderBuilder]) or if it ever fails to load ([errorBuilder],
-/// e.g. a stale web bundle that predates the asset), a Material
-/// [Icons.person] glyph renders instead — the circle is never empty.
 class _FrameIcon extends StatelessWidget {
-  const _FrameIcon();
+  final double size;
+
+  const _FrameIcon({this.size = 56});
 
   @override
   Widget build(BuildContext context) {
     return SvgPicture.asset(
       'assets/images/Frame.svg',
-      width: 56,
-      height: 56,
+      width: size,
+      height: size,
       colorFilter: const ColorFilter.mode(
         Color(0xFF9CA3AF),
         BlendMode.srcIn,
       ),
       semanticsLabel: 'Student avatar',
-      placeholderBuilder: (BuildContext context) => const Icon(
+      placeholderBuilder: (BuildContext context) => Icon(
         Icons.person,
-        size: 56,
-        color: Color(0xFF9CA3AF),
+        size: size,
+        color: const Color(0xFF9CA3AF),
       ),
       errorBuilder: (
         BuildContext context,
         Object error,
         StackTrace? stackTrace,
       ) =>
-          const Icon(
+          Icon(
         Icons.person,
-        size: 56,
-        color: Color(0xFF9CA3AF),
+        size: size,
+        color: const Color(0xFF9CA3AF),
       ),
     );
   }
 }
 
-/// Sub-navigation tabs from the Figma frame (652 x 40, border #979797,
-/// radius 28): 6 tabs 104 x 32 with 4 px gaps. The active pill fills the
-/// grade accent (radius 9999) with 14 px Regular white text; inactive
-/// tabs render 14 px Regular #6B7280.
+/// Sub-navigation tabs: horizontally scrollable on mobile, compact row on desktop.
 class _ProfileSubNav extends StatelessWidget {
   final String selected;
   final Color accent;
@@ -1338,34 +1266,35 @@ class _ProfileSubNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 652,
-      height: 40,
-      // 652 - 2 (border) - 6 (padding) = 644 for 6 x 104 tabs + 5 x 4
-      // gaps; height 40 - 2 - 6 = 32 for the tabs.
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFF979797), width: 1),
-      ),
-      child: Row(
-        children: <Widget>[
-          for (int i = 0;
-              i < _StudentProfileOverviewScreenState.navItems.length;
-              i++) ...<Widget>[
-            if (i > 0) const SizedBox(width: 4),
-            _SubNavTab(
-              label: _StudentProfileOverviewScreenState.navItems[i],
-              isActive:
-                  _StudentProfileOverviewScreenState.navItems[i] == selected,
-              accent: accent,
-              onTap: () => onSelect(
-                _StudentProfileOverviewScreenState.navItems[i],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: const Color(0xFF979797), width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (int i = 0;
+                i < _StudentProfileOverviewScreenState.navItems.length;
+                i++) ...<Widget>[
+              if (i > 0) const SizedBox(width: 4),
+              _SubNavTab(
+                label: _StudentProfileOverviewScreenState.navItems[i],
+                isActive:
+                    _StudentProfileOverviewScreenState.navItems[i] == selected,
+                accent: accent,
+                onTap: () => onSelect(
+                  _StudentProfileOverviewScreenState.navItems[i],
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1389,8 +1318,9 @@ class _SubNavTab extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 104,
-        height: 32,
+        constraints: const BoxConstraints(minWidth: 100),
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: isActive ? accent : Colors.transparent,
           borderRadius: BorderRadius.circular(9999),
@@ -1415,8 +1345,7 @@ class _SubNavTab extends StatelessWidget {
   }
 }
 
-/// Overview data rows from the Figma frame (814 wide at left 233,
-/// top 456): 4 rows x 56 with 16 px vertical gaps.
+/// Overview data rows: stacked on mobile, horizontal flexible rows on tablet/desktop.
 class _OverviewRows extends StatelessWidget {
   final _StudentProfileOverviewScreenState state;
 
@@ -1424,8 +1353,8 @@ class _OverviewRows extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 814,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 814),
       child: Column(
         children: <Widget>[
           _TextRow(
@@ -1460,6 +1389,25 @@ class _OverviewRows extends StatelessWidget {
             state: state,
             onEdit: state._showStudentTypeOverlay,
           ),
+          const SizedBox(height: 28),
+          const Divider(height: 1, color: Color(0xFFE5E7EB)),
+          const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: state._archiveStudent,
+              icon: const Icon(Icons.archive_outlined, size: 18),
+              label: const Text('Archive Student'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFDC2626),
+                side: const BorderSide(color: Color(0xFFFCA5A5)),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9999),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1487,58 +1435,92 @@ class _TextRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 814,
-      height: 56,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          SizedBox(
-            width: 176,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 28,
-                fontWeight: FontWeight.w400,
-                fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Colors.black,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool compact = constraints.maxWidth < AppBreakpoints.mobileMax;
+        final Widget field = _DataField(
+          state: state,
+          isEditing: isEditing,
+          child: TextField(
+            controller: controller,
+            focusNode: focusNode,
+            enabled: isEditing,
+            keyboardType: keyboardType,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: compact ? 18 : 22,
+              fontWeight: FontWeight.w400,
+              fontVariations: const <FontVariation>[FontVariation('wght', 400)],
+              color: const Color(0xFF1F2937),
+            ),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
           ),
-          const SizedBox(width: 40),
-          _DataField(
-            state: state,
-            isEditing: isEditing,
-            child: TextField(
-              controller: controller,
-              focusNode: focusNode,
-              enabled: isEditing,
-              keyboardType: keyboardType,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 24,
-                fontWeight: FontWeight.w400,
-                fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Color(0xFF1F2937),
+        );
+        final Widget action = _ActionButton(
+          label: isEditing ? 'Done' : 'Edit',
+          state: state,
+          compact: compact,
+          onTap: onToggle,
+        );
+
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151),
+                ),
               ),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 12),
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Expanded(child: field),
+                  const SizedBox(width: 10),
+                  action,
+                ],
               ),
-            ),
+            ],
+          );
+        }
+
+        return SizedBox(
+          height: 56,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              SizedBox(
+                width: 176,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w400,
+                    fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                    color: Colors.black,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 24),
+              Expanded(child: field),
+              const SizedBox(width: 24),
+              action,
+            ],
           ),
-          const SizedBox(width: 40),
-          _ActionButton(
-              label: isEditing ? 'Done' : 'Edit',
-              state: state,
-              onTap: onToggle),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1558,51 +1540,91 @@ class _DropdownRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 814,
-      height: 56,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          SizedBox(
-            width: 176,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 28,
-                fontWeight: FontWeight.w400,
-                fontVariations: <FontVariation>[FontVariation('wght', 400)],
-                color: Colors.black,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 40),
-          _DataField(
-            state: state,
-            child: Center(
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool compact = constraints.maxWidth < AppBreakpoints.mobileMax;
+        final Widget field = _DataField(
+          state: state,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
-                  fontSize: 24,
+                  fontSize: compact ? 18 : 22,
                   fontWeight: FontWeight.w400,
-                  fontVariations: <FontVariation>[
+                  fontVariations: const <FontVariation>[
                     FontVariation('wght', 400),
                   ],
-                  color: Color(0xFF1F2937),
+                  color: const Color(0xFF1F2937),
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ),
-          const SizedBox(width: 40),
-          _ActionButton(label: 'Edit', state: state, onTap: onEdit),
-        ],
-      ),
+        );
+        final Widget action = _ActionButton(
+          label: 'Edit',
+          state: state,
+          compact: compact,
+          onTap: onEdit,
+        );
+
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Expanded(child: field),
+                  const SizedBox(width: 10),
+                  action,
+                ],
+              ),
+            ],
+          );
+        }
+
+        return SizedBox(
+          height: 56,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              SizedBox(
+                width: 176,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w400,
+                    fontVariations: <FontVariation>[FontVariation('wght', 400)],
+                    color: Colors.black,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 24),
+              Expanded(child: field),
+              const SizedBox(width: 24),
+              action,
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1621,7 +1643,6 @@ class _DataField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 405,
       height: 48,
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1641,11 +1662,13 @@ class _ActionButton extends StatelessWidget {
   final String label;
   final _StudentProfileOverviewScreenState state;
   final VoidCallback onTap;
+  final bool compact;
 
   const _ActionButton({
     required this.label,
     required this.state,
     required this.onTap,
+    this.compact = false,
   });
 
   @override
@@ -1654,7 +1677,7 @@ class _ActionButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(9999),
       child: Container(
-        width: 144,
+        width: compact ? 88 : 132,
         height: 48,
         decoration: BoxDecoration(
           color: state._accent,
@@ -1663,11 +1686,11 @@ class _ActionButton extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: AppTypography.fontFamily,
-            fontSize: 24,
+            fontSize: compact ? 16 : 22,
             fontWeight: FontWeight.w400,
-            fontVariations: <FontVariation>[FontVariation('wght', 400)],
+            fontVariations: const <FontVariation>[FontVariation('wght', 400)],
             color: Colors.white,
           ),
         ),
@@ -1695,8 +1718,9 @@ class _OverlayOption extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(28),
       child: Container(
-        width: 160,
-        height: 32,
+        constraints: const BoxConstraints(minWidth: 112),
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           color: isActive ? accent : Colors.transparent,
           borderRadius: BorderRadius.circular(28),
@@ -1706,7 +1730,7 @@ class _OverlayOption extends StatelessWidget {
           label,
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
-            fontSize: 24,
+            fontSize: 18,
             fontWeight: FontWeight.w400,
             fontVariations: const <FontVariation>[
               FontVariation('wght', 400),

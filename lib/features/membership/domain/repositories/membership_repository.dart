@@ -5,9 +5,18 @@ abstract class MembershipRepository {
 
   Future<MembershipPlan?> getPlan({required String planId});
 
+  Stream<MembershipPlan?> watchPlan({required String planId});
+
   Future<List<PlanFeature>> getPlanFeatures({required String planId});
 
+  Stream<List<PlanFeature>> watchPlanFeatures({required String planId});
+
   Future<MembershipSubscription?> getSubscription({
+    required String studentId,
+    required String subjectId,
+  });
+
+  Stream<MembershipSubscription?> watchSubscription({
     required String studentId,
     required String subjectId,
   });

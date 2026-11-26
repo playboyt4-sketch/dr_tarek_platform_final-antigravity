@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../archive/presentation/providers/archive_provider.dart';
+import '../../../archive/presentation/widgets/archive_confirm_dialog.dart';
 import '../providers/subject_details_provider.dart';
 import '../widgets/add_lecture_overlay.dart';
-import '../widgets/dashboard_brand_lockup.dart';
 import '../widgets/edit_subject_overlay.dart';
 import '../widgets/grade_capsule_button.dart';
 import '../widgets/grade_nav_bar.dart';
@@ -65,144 +67,143 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
 
     return Material(
       color: const Color(0xFFFFFFFF),
-      child: SizedBox(
-        width: 1280,
-        height: 800,
-        child: Stack(
-          children: <Widget>[
-            const Positioned(
-              left: 370,
-              top: 24,
-              width: 540,
-              height: 80,
-              child: IgnorePointer(child: DashboardBrandLockup()),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final DashboardBreakpoint breakpoint =
+              breakpointForWidth(constraints.maxWidth);
+          final bool isMobile = breakpoint == DashboardBreakpoint.mobile;
+          final double horizontalPadding = switch (breakpoint) {
+            DashboardBreakpoint.mobile => 16,
+            DashboardBreakpoint.tablet => 28,
+            DashboardBreakpoint.desktop => 48,
+          };
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              isMobile ? 12 : 20,
+              horizontalPadding,
+              32,
             ),
-            Positioned(
-              left: 310,
-              top: 136,
-              width: 660,
-              height: 42,
-              child: GradeNavBar(
-                gradeKey: widget.gradeKey,
-                onGradeSelected: (String key) =>
-                    widget.onGradeSelected?.call(key),
-              ),
-            ),
-            Positioned(
-              left: 474,
-              top: 190,
-              width: 332,
-              height: 40,
-              child: StudentsSubjectsTabs(
-                studentsActive: false,
-                accent: _accent,
-                onStudentsTap: widget.onStudentsTab,
-                onSubjectsTap: widget.onSubjectsTab,
-              ),
-            ),
-            Positioned(
-              left: 320,
-              top: 252,
-              width: 640,
-              height: 56,
-              child: detailsAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (Object error, StackTrace stackTrace) => const Center(
-                  child: Text(
-                    'Could not load subject.',
-                    style: TextStyle(
-                      fontFamily: 'Google Sans Flex',
-                      fontSize: 14,
-                      color: Color(0xFF6B7280),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const ResponsiveScreenHeader(),
+                SizedBox(height: isMobile ? 8 : 20),
+                GradeNavBar(
+                  gradeKey: widget.gradeKey,
+                  onGradeSelected: (String key) =>
+                      widget.onGradeSelected?.call(key),
+                ),
+                const SizedBox(height: 14),
+                StudentsSubjectsTabs(
+                  studentsActive: false,
+                  accent: _accent,
+                  onStudentsTap: widget.onStudentsTab,
+                  onSubjectsTap: widget.onSubjectsTab,
+                ),
+                const SizedBox(height: 20),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: detailsAsync.when(
+                      loading: () => const SizedBox(
+                        height: 56,
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                      error: (Object error, StackTrace stackTrace) =>
+                          const SizedBox(
+                        height: 56,
+                        child: Center(
+                          child: Text(
+                            'Could not load subject.',
+                            style: TextStyle(
+                              fontFamily: 'Google Sans Flex',
+                              fontSize: 14,
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                        ),
+                      ),
+                      data: (SubjectDetails details) => _SubjectHeaderCard(
+                        title: details.title,
+                        isVisible: details.isVisible,
+                        accent: _accent,
+                        onToggle: (bool value) => ref
+                            .read(subjectDetailsControllerProvider)
+                            .setSubjectVisible(widget.subjectId, value),
+                      ),
                     ),
                   ),
                 ),
-                data: (SubjectDetails details) => _SubjectHeaderCard(
-                  title: details.title,
-                  isVisible: details.isVisible,
-                  accent: _accent,
-                  onToggle: (bool value) => ref
-                      .read(subjectDetailsControllerProvider)
-                      .setSubjectVisible(widget.subjectId, value),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              top: 324,
-              width: 1280,
-              height: 36,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  GradeCapsuleButton(
-                    label: 'Edit',
-                    gradeColor: _accent,
-                    textColor: Colors.white,
-                    width: 90,
-                    height: 36,
-                    onPressed: () =>
-                        _openEditSubject(context, detailsAsync.value),
-                  ),
-                  const SizedBox(width: 14),
-                  GradeCapsuleButton(
-                    label: 'Add Lecture',
-                    gradeColor: _accent,
-                    textColor: Colors.white,
-                    width: 130,
-                    height: 36,
-                    onPressed: () => _openAddLecture(context),
-                  ),
-                  const SizedBox(width: 14),
-                  GradeCapsuleButton(
-                    label: 'Delete Subject',
-                    gradeColor: _accent,
-                    textColor: Colors.white,
-                    width: 130,
-                    height: 36,
-                    onPressed: () =>
-                        _confirmDeleteSubject(context, detailsAsync.value),
-                  ),
-                ],
-              ),
-            ),
-            Positioned(
-              left: 224,
-              top: 396,
-              width: 831,
-              height: 32,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  for (final SubjectContentTab tab
-                      in SubjectContentTab.values) ...<Widget>[
-                    if (tab != SubjectContentTab.values.first)
-                      const SizedBox(width: 48),
-                    _ContentTab(
-                      label: tab.label,
-                      active: tab == _tab,
-                      accent: _accent,
-                      onTap: () => setState(() => _tab = tab),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  alignment: WrapAlignment.center,
+                  children: <Widget>[
+                    GradeCapsuleButton(
+                      label: 'Edit',
+                      gradeColor: _accent,
+                      textColor: Colors.white,
+                      width: 90,
+                      height: 36,
+                      onPressed: () =>
+                          _openEditSubject(context, detailsAsync.value),
+                    ),
+                    GradeCapsuleButton(
+                      label: 'Add Lecture',
+                      gradeColor: _accent,
+                      textColor: Colors.white,
+                      width: 130,
+                      height: 36,
+                      onPressed: () => _openAddLecture(context),
+                    ),
+                    GradeCapsuleButton(
+                      label: 'Delete Subject',
+                      gradeColor: _accent,
+                      textColor: Colors.white,
+                      width: 130,
+                      height: 36,
+                      onPressed: () =>
+                          _confirmDeleteSubject(context, detailsAsync.value),
                     ),
                   ],
-                ],
-              ),
+                ),
+                const SizedBox(height: 28),
+                Center(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        for (final SubjectContentTab tab
+                            in SubjectContentTab.values) ...<Widget>[
+                          if (tab != SubjectContentTab.values.first)
+                            SizedBox(width: isMobile ? 24 : 48),
+                          _ContentTab(
+                            label: tab.label,
+                            active: tab == _tab,
+                            accent: _accent,
+                            onTap: () => setState(() => _tab = tab),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _LecturesTable(
+                  subjectId: widget.subjectId,
+                  gradeKey: widget.gradeKey,
+                  tab: _tab,
+                  accent: _accent,
+                  onGradeFill: Colors.white,
+                ),
+              ],
             ),
-            Positioned(
-              left: 80,
-              top: 440,
-              width: 1120,
-              height: 251,
-              child: _LecturesTable(
-                subjectId: widget.subjectId,
-                gradeKey: widget.gradeKey,
-                tab: _tab,
-                accent: _accent,
-                onGradeFill: Colors.white,
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -271,34 +272,16 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
     BuildContext context,
     SubjectDetails? details,
   ) async {
-    final bool? confirmed = await showDialog<bool>(
+    final bool confirmed = await showArchiveConfirmDialog(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.25),
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Delete Subject'),
-        content: Text(
-          'Delete "${details?.title ?? 'this subject'}"? '
-          'It will be archived and hidden from students.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFDC2626),
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      entityLabel: 'Subject',
+      itemTitle: details?.title ?? 'this subject',
     );
-    if (confirmed == true && mounted) {
+    if (confirmed && mounted) {
       await ref
           .read(subjectDetailsControllerProvider)
           .deleteSubject(widget.subjectId);
+      invalidateArchiveDependents(ref);
       widget.onSubjectDeleted?.call();
     }
   }
@@ -323,9 +306,9 @@ class _SubjectHeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 640,
+      width: double.infinity,
       height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(9999),
@@ -437,126 +420,133 @@ class _LecturesTable extends ConsumerWidget {
     );
 
     return Container(
-      width: 1120,
-      height: 251,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Column(
-        children: <Widget>[
-          SizedBox(
-            height: 32,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: <Widget>[
-                  const SizedBox(
-                    width: 80,
-                    child: Text(
-                      'No.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontWeight: FontWeight.w400,
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      tab.contentNameLabel,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontWeight: FontWeight.w400,
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(
-                    width: 100,
-                    child: Text(
-                      'Status',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontWeight: FontWeight.w400,
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                  ),
-                  // Centered over the Edit/Del button group below (same
-                  // 160px column + same 16px row padding on both sides),
-                  // so headers and rows share one alignment.
-                  const SizedBox(
-                    width: 160,
-                    child: Text(
-                      'Action',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontWeight: FontWeight.w400,
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          Expanded(
-            child: lecturesAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (Object error, StackTrace stackTrace) => Center(
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 720,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SizedBox(
+              height: 36,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Could not load lectures.',
-                      style: TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
+                  children: <Widget>[
+                    const SizedBox(
+                      width: 80,
+                      child: Text(
+                        'No.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
                       ),
                     ),
-                    TextButton(
-                      onPressed: () => ref.invalidate(
-                        tabLecturesProvider((subjectId: subjectId, tab: tab)),
+                    Expanded(
+                      child: Text(
+                        tab.contentNameLabel,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
                       ),
-                      child: const Text('Retry'),
+                    ),
+                    const SizedBox(
+                      width: 100,
+                      child: Text(
+                        'Status',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(
+                      width: 160,
+                      child: Text(
+                        'Action',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
+            ),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            lecturesAsync.when(
+              loading: () => const SizedBox(
+                height: 180,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (Object error, StackTrace stackTrace) => SizedBox(
+                height: 180,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Could not load lectures.',
+                        style: TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => ref.invalidate(
+                          tabLecturesProvider((subjectId: subjectId, tab: tab)),
+                        ),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               data: (List<SubjectLecture> lectures) {
                 if (lectures.isEmpty) {
-                  return Center(
-                    child: Text(
-                      tab.emptyStateLabel,
-                      style: const TextStyle(
-                        fontFamily: 'Google Sans Flex',
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
+                  return SizedBox(
+                    height: 180,
+                    child: Center(
+                      child: Text(
+                        tab.emptyStateLabel,
+                        style: const TextStyle(
+                          fontFamily: 'Google Sans Flex',
+                          fontSize: 14,
+                          color: Color(0xFF6B7280),
+                        ),
                       ),
                     ),
                   );
                 }
                 return ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
                   itemCount: lectures.length,
                   itemBuilder: (BuildContext context, int index) {
                     final SubjectLecture lecture = lectures[index];
                     return SizedBox(
                       height: 44,
                       child: Padding(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Row(
                           children: <Widget>[
                             SizedBox(
@@ -592,14 +582,10 @@ class _LecturesTable extends ConsumerWidget {
                                 child: _LectureStatusPill(lecture: lecture),
                               ),
                             ),
-                            // Centered (not edge-flush) so Del is never
-                            // clipped by the table border; mirrors the
-                            // centered Action header above.
                             SizedBox(
                               width: 160,
                               child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: <Widget>[
                                   GradeCapsuleButton(
                                     label: 'Edit',
@@ -608,18 +594,12 @@ class _LecturesTable extends ConsumerWidget {
                                     width: 64,
                                     height: 28,
                                     fontSize: 13,
-                                    // Full edit on the same Add page:
-                                    // name, order, resources (+add),
-                                    // publish state, guest access and
-                                    // per-student access — prefilled.
-                                    onPressed: () =>
-                                        AddLectureOverlay.show(
+                                    onPressed: () => AddLectureOverlay.show(
                                       context,
                                       subjectId: subjectId,
                                       gradeKey: gradeKey,
                                       tab: tab,
-                                      initialOrder:
-                                          lecture.displayOrder,
+                                      initialOrder: lecture.displayOrder,
                                       gradeColor: accent,
                                       lectureId: lecture.id,
                                     ),
@@ -649,8 +629,8 @@ class _LecturesTable extends ConsumerWidget {
                 );
               },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -660,34 +640,16 @@ class _LecturesTable extends ConsumerWidget {
     WidgetRef ref,
     SubjectLecture lecture,
   ) async {
-    final bool? confirmed = await showDialog<bool>(
+    final bool confirmed = await showArchiveConfirmDialog(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.25),
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Delete Lecture'),
-        content: Text(
-          'Delete "${lecture.title}"? '
-          'It will be archived and hidden from students.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFDC2626),
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      entityLabel: 'Lecture',
+      itemTitle: lecture.title,
     );
-    if (confirmed == true && context.mounted) {
+    if (confirmed && context.mounted) {
       await ref
           .read(subjectDetailsControllerProvider)
           .deleteLecture(lecture.id);
+      invalidateArchiveDependents(ref);
     }
   }
 }

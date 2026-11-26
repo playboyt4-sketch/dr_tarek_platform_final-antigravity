@@ -15,10 +15,11 @@ final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
   );
 });
 
-final dashboardSubjectsProvider = FutureProvider<List<DashboardSubject>>((ref) {
+final dashboardSubjectsProvider =
+    StreamProvider<List<DashboardSubject>>((ref) {
   final studentId = FirebaseAuth.instance.currentUser?.uid;
-  if (studentId == null) return const <DashboardSubject>[];
+  if (studentId == null) return Stream.value(const <DashboardSubject>[]);
   return ref
       .watch(dashboardRepositoryProvider)
-      .getAccessibleSubjects(studentId: studentId);
+      .watchAccessibleSubjects(studentId: studentId);
 });

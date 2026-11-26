@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../students/presentation/providers/subject_details_provider.dart';
@@ -97,96 +98,37 @@ class DashboardHomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Centered 1280 canvas → 1120 content ⇒ 80 px offset each side.
-    // Inner left padding is 0 so the pie card (top) and the upload card
-    // (bottom) both start at canvas X: 80px, exactly under the shell's
-    // fixed menu button at left: 80, top: 24, 80 x 80.
-    return SingleChildScrollView(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const _HomeHeader(),
-                // 24 + 80 = 104; gap 32 → analytics Y 136.
-                const SizedBox(height: 32),
-                _TopAnalytics(onNavigate: onNavigate),
-                // 136 + 304 = 440; gap 32 → bottom Y 472.
-                const SizedBox(height: 32),
-                const _BottomSection(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width = constraints.maxWidth;
+        final DashboardBreakpoint breakpoint = breakpointForWidth(width);
+        final double horizontalPadding = switch (breakpoint) {
+          DashboardBreakpoint.mobile => 16,
+          DashboardBreakpoint.tablet => 28,
+          DashboardBreakpoint.desktop => 48,
+        };
+        final double verticalGap =
+            breakpoint == DashboardBreakpoint.mobile ? 20 : 28;
 
-// ---------------------------------------------------------------- header
-
-class _HomeHeader extends StatelessWidget {
-  const _HomeHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    // Centered-canvas geometry (shell provides fixed 1280 x 800,
-    // centered): content is 1120 wide → 80 px centering offset on each
-    // side. Header is 80 (shell button spacer) + 210 (gap) + 540
-    // (brand) = 830. Brand X = 80 (centering) + 80 + 210 = 370,
-    // Y = 24 (outer padding) — matches the unified (370, 24) in all
-    // fixed-canvas screens. No outer left margin is added here so the
-    // shell's centering is never pushed left.
-    // Both the gap and the brand flex down proportionally on narrow
-    // viewports (e.g. 811 px with DevTools open) so the Row never
-    // overflows; at full width the 210/540 caps restore exact positions.
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        // Spacer matching the shell's fixed button: X 80 / Y 24, 80 x 80.
-        const SizedBox(width: 80, height: 80),
-        // 80 + 80 = 160; gap 210 → logo X 370.
-        Flexible(
-          flex: 210,
-          child: ConstrainedBox(
-            constraints:
-                const BoxConstraints(maxWidth: 210, minWidth: 8),
-            child: const SizedBox(width: double.infinity, height: 80),
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            breakpoint == DashboardBreakpoint.mobile ? 12 : 20,
+            horizontalPadding,
+            32,
           ),
-        ),
-        // 540 x 80 brand, 48 px, scales down gracefully when squeezed.
-        Flexible(
-          flex: 540,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 540),
-            child: SizedBox(
-              height: 80,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text.rich(
-                  TextSpan(
-                    children: <TextSpan>[
-                      TextSpan(
-                        text: 'Tarek el araby ',
-                        style: AppTypography.homeBrandHeavy(fontSize: 48),
-                      ),
-                      TextSpan(
-                        text: 'Platform',
-                        style: AppTypography.homeBrandLight(fontSize: 48),
-                      ),
-                    ],
-                  ),
-                  maxLines: 1,
-                ),
-              ),
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const ResponsiveScreenHeader(),
+              SizedBox(height: verticalGap),
+              _TopAnalytics(onNavigate: onNavigate),
+              SizedBox(height: verticalGap),
+              const _BottomSection(),
+            ],
           ),
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -257,40 +199,75 @@ class _TopAnalyticsSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 30,
-      runSpacing: 24,
-      crossAxisAlignment: WrapCrossAlignment.start,
-      children: <Widget>[
-        Container(
-          width: 250,
-          height: 304,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width = constraints.maxWidth;
+        final Widget pieSkeleton = Container(
+          height: width < AppBreakpoints.mobileMax ? 260 : 304,
           decoration: BoxDecoration(
             color: const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(28),
           ),
-        ),
-        SizedBox(
-          width: 810,
-          child: Wrap(
-            spacing: 20,
-            runSpacing: 24,
-            children: <Widget>[
-              for (int i = 0; i < 4; i++)
-                Container(
-                  width: 395,
-                  height: 140,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(28),
+        );
+        final bool twoCol = width >= 540;
+        final Widget cardsGrid = twoCol
+            ? Column(
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(child: _skeletonCard()),
+                      const SizedBox(width: 16),
+                      Expanded(child: _skeletonCard()),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: <Widget>[
+                      Expanded(child: _skeletonCard()),
+                      const SizedBox(width: 16),
+                      Expanded(child: _skeletonCard()),
+                    ],
+                  ),
+                ],
+              )
+            : Column(
+                children: <Widget>[
+                  for (int i = 0; i < 4; i++) ...<Widget>[
+                    if (i > 0) const SizedBox(height: 12),
+                    _skeletonCard(),
+                  ],
+                ],
+              );
+
+        if (width < 900) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              pieSkeleton,
+              const SizedBox(height: 16),
+              cardsGrid,
             ],
-          ),
-        ),
-      ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(width: 260, child: pieSkeleton),
+            const SizedBox(width: 24),
+            Expanded(child: cardsGrid),
+          ],
+        );
+      },
     );
   }
+
+  Widget _skeletonCard() => Container(
+        height: 140,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(28),
+        ),
+      );
 }
 
 class _TopAnalyticsContent extends StatelessWidget {
@@ -309,17 +286,16 @@ class _TopAnalyticsContent extends StatelessWidget {
       for (final grade in analytics.grades)
         GradeBreakdown.fromAnalytics(grade),
     ];
-    return Wrap(
-      spacing: 30,
-      runSpacing: 24,
-      crossAxisAlignment: WrapCrossAlignment.start,
-      children: <Widget>[
-        // Pie chart card: first in the Wrap at content X: 0
-        // ⇒ canvas X: 80px, same vertical line as the menu button
-        // and the upload card. # Frame 42: 250 x 304, radius 28.
-        Container(
-          width: 250,
-          height: 304,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width = constraints.maxWidth;
+        final bool isMobile = width < AppBreakpoints.mobileMax;
+        final bool sideBySide = width >= 900;
+        final bool twoColCards = width >= 540;
+
+        final Widget pieCard = Container(
+          height: isMobile ? 276 : 304,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(28),
@@ -328,38 +304,86 @@ class _TopAnalyticsContent extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
-              _PieChart(analytics: analytics),
+              _PieChart(
+                analytics: analytics,
+                diameter: isMobile ? 176 : 200,
+              ),
               const SizedBox(height: 8),
               _PieTotal(total: analytics.totalStudents),
             ],
           ),
-        ),
-        // 2 x 2 grade grid: 395 x 140 each (790 + 304 + gaps ≈ 1120).
-        SizedBox(
-          width: 810,
-          child: Wrap(
-            spacing: 20,
-            runSpacing: 24,
+        );
+
+        Widget buildCard(GradeBreakdown grade) => _GradeCard(
+              data: grade,
+              compact: isMobile,
+              onTap: onNavigate == null
+                  ? null
+                  : () => onNavigate!(grade.gradeKey),
+            );
+
+        final Widget gradeGrid;
+        if (!twoColCards) {
+          gradeGrid = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              for (final grade in grades)
-                _GradeCard(
-                  data: grade,
-                  onTap: onNavigate == null
-                      ? null
-                      : () => onNavigate!(grade.gradeKey),
-                ),
+              for (int i = 0; i < grades.length; i++) ...<Widget>[
+                if (i > 0) const SizedBox(height: 12),
+                buildCard(grades[i]),
+              ],
             ],
-          ),
-        ),
-      ],
+          );
+        } else {
+          final double gap = isMobile ? 12 : 20;
+          gradeGrid = Column(
+            children: <Widget>[
+              for (int row = 0; row < grades.length; row += 2) ...<Widget>[
+                if (row > 0) SizedBox(height: gap),
+                Row(
+                  children: <Widget>[
+                    Expanded(child: buildCard(grades[row])),
+                    SizedBox(width: gap),
+                    Expanded(
+                      child: row + 1 < grades.length
+                          ? buildCard(grades[row + 1])
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          );
+        }
+
+        if (!sideBySide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              pieCard,
+              const SizedBox(height: 16),
+              gradeGrid,
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(width: 260, child: pieCard),
+            const SizedBox(width: 24),
+            Expanded(child: gradeGrid),
+          ],
+        );
+      },
     );
   }
 }
 
 class _PieChart extends StatelessWidget {
   final HomeAnalytics analytics;
+  final double diameter;
 
-  const _PieChart({required this.analytics});
+  const _PieChart({required this.analytics, this.diameter = 200});
 
   int _countFor(String gradeKey) {
     for (final GradeAnalytics grade in analytics.grades) {
@@ -370,9 +394,7 @@ class _PieChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Reference diameter 242; rendered slightly smaller so the total
-    // caption below still fits the 304 card.
-    const double size = 200;
+    final double size = diameter;
 
     // Real per-grade student counts (100% dynamic, no fixed shares).
     final int gradeOneCount = _countFor('grade_one');
@@ -447,7 +469,7 @@ class _PieChart extends StatelessWidget {
       child: Stack(
         children: <Widget>[
           CustomPaint(
-            size: const Size(size, size),
+            size: Size(size, size),
             painter: _PiePainter(fractions: fractions, colors: colors),
           ),
           for (final label in labelsPos)
@@ -529,23 +551,30 @@ class _PieTotal extends StatelessWidget {
 
 class _GradeCard extends StatelessWidget {
   final GradeBreakdown data;
+  final bool compact;
 
   /// Tap destination for the whole card. Null keeps the card static.
   final VoidCallback? onTap;
 
-  const _GradeCard({required this.data, this.onTap});
+  const _GradeCard({
+    required this.data,
+    this.compact = false,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final Widget card = Container(
-      width: 395,
-      height: 140,
+      constraints: BoxConstraints(minHeight: compact ? 132 : 140),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: data.accent, width: 1.5),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 18 : 22,
+        vertical: compact ? 14 : 16,
+      ),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -553,35 +582,57 @@ class _GradeCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
-                Text(data.title, style: AppTypography.gradeTitle()),
+                Text(
+                  data.title,
+                  style: AppTypography.gradeTitle(
+                    fontSize: compact ? 20 : 22,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text('Total Students', style: AppTypography.gradeLabel()),
-                Text('${data.total}', style: AppTypography.gradeValue()),
+                Text(
+                  '${data.total}',
+                  style: AppTypography.gradeValue(
+                    fontSize: compact ? 22 : 24,
+                  ),
+                ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Text('Pending ${data.pending}',
-                  style: AppTypography.gradeLabel()),
-              const SizedBox(height: 6),
-              Text('Center ${data.center} (${data.centerShare})',
-                  style: AppTypography.gradeValue(fontSize: 13)),
-              const SizedBox(height: 6),
-              Text('Guest ${data.guest} (${data.guestShare})',
-                  style: AppTypography.gradeValue(fontSize: 13)),
-            ],
+          const SizedBox(width: 12),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Text(
+                  'Pending ${data.pending}',
+                  style: AppTypography.gradeLabel(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Center ${data.center} (${data.centerShare})',
+                  style: AppTypography.gradeValue(fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Guest ${data.guest} (${data.guestShare})',
+                  style: AppTypography.gradeValue(fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
     final VoidCallback? tap = onTap;
-    // No interaction configured → exact legacy static card.
     if (tap == null) return card;
-    // Interaction-only wrapper: identical visuals, whole card tappable
-    // with a click cursor and button semantics for assistive tech.
     return Semantics(
       button: true,
       label: data.title,
@@ -604,45 +655,79 @@ class _BottomSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Fixed 1120 split: 250 + 24 + 250 + 24 + remainder. Each card clips
-    // its own content, so announcement text can never bleed into the
-    // activity chart.
-    return SizedBox(
-      width: 1120,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          _QuickActionCard(
-            icon: SvgPicture.asset(
-              'assets/images/Upload.svg',
-              width: 24,
-              height: 24,
-              semanticsLabel: 'Upload icon',
-            ),
-            title: 'Quick Upload',
-            description: 'Add new video, PDFs & assign to grades',
-            buttonText: '+ Upload Now',
-            onTap: () => _openQuickAdd(context),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width = constraints.maxWidth;
+        final DashboardBreakpoint breakpoint = breakpointForWidth(width);
+
+        final Widget uploadCard = _QuickActionCard(
+          icon: SvgPicture.asset(
+            'assets/images/Upload.svg',
+            width: 24,
+            height: 24,
+            semanticsLabel: 'Upload icon',
           ),
-          const SizedBox(width: 24),
-          _QuickActionCard(
-            icon: SvgPicture.asset(
-              'assets/images/notifications.svg',
-              width: 24,
-              height: 24,
-              semanticsLabel: 'Notifications icon',
-            ),
-            title: 'Send Announcement',
-            description: 'Broadcast notifications to students',
-            buttonText: 'Send Notice ->',
-            onTap: () => showQuickAnnouncementDialog(context),
+          title: 'Quick Upload',
+          description: 'Add new video, PDFs & assign to grades',
+          buttonText: '+ Upload Now',
+          onTap: () => _openQuickAdd(context),
+        );
+        final Widget announcementCard = _QuickActionCard(
+          icon: SvgPicture.asset(
+            'assets/images/notifications.svg',
+            width: 24,
+            height: 24,
+            semanticsLabel: 'Notifications icon',
           ),
-          const SizedBox(width: 24),
-          const Expanded(
-            child: _StudentActivityCard(),
-          ),
-        ],
-      ),
+          title: 'Send Announcement',
+          description: 'Broadcast notifications to students',
+          buttonText: 'Send Notice ->',
+          onTap: () => showQuickAnnouncementDialog(context),
+        );
+        const Widget activityCard = _StudentActivityCard();
+
+        if (breakpoint == DashboardBreakpoint.mobile) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              uploadCard,
+              const SizedBox(height: 14),
+              announcementCard,
+              const SizedBox(height: 16),
+              activityCard,
+            ],
+          );
+        }
+
+        if (breakpoint == DashboardBreakpoint.tablet) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(child: uploadCard),
+                  const SizedBox(width: 20),
+                  Expanded(child: announcementCard),
+                ],
+              ),
+              const SizedBox(height: 20),
+              activityCard,
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(flex: 2, child: uploadCard),
+            const SizedBox(width: 24),
+            Expanded(flex: 2, child: announcementCard),
+            const SizedBox(width: 24),
+            const Expanded(flex: 4, child: activityCard),
+          ],
+        );
+      },
     );
   }
 
@@ -662,12 +747,7 @@ class _BottomSection extends ConsumerWidget {
   }
 }
 
-/// Unified quick-action card (250 x 210) used for both Quick Upload
-/// and Send Announcement.
-///
-/// Single `Column` geometry so both buttons sit at the exact same
-/// vertical offset: icon 24x24 → gap 12 → title → gap 6 → description
-/// → gap 16 → pill button. No `Stack`/`Positioned`, no per-card gaps.
+/// Unified quick-action card used for both Quick Upload and Send Announcement.
 class _QuickActionCard extends StatelessWidget {
   final Widget icon;
   final String title;
@@ -686,8 +766,7 @@ class _QuickActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 250,
-      height: 210,
+      constraints: const BoxConstraints(minHeight: 200),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.actionCardFill,
@@ -701,9 +780,9 @@ class _QuickActionCard extends StatelessWidget {
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 22),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           SizedBox(width: 24, height: 24, child: icon),
@@ -726,13 +805,13 @@ class _QuickActionCard extends StatelessWidget {
             description,
             style: const TextStyle(
               fontFamily: AppTypography.fontFamily,
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.w400,
               fontVariations: <FontVariation>[FontVariation('wght', 400)],
               color: Color(0xFF6B7280),
             ),
             textAlign: TextAlign.center,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 16),
@@ -744,8 +823,9 @@ class _QuickActionCard extends StatelessWidget {
                 button: true,
                 label: buttonText,
                 child: Container(
+                  constraints: const BoxConstraints(minHeight: 42),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
+                    horizontal: 22,
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
@@ -862,15 +942,16 @@ class _ActivityCardContent extends StatelessWidget {
     final int maxVal = weeklyActivity.fold(0, math.max);
     final List<int> yTicks = yTicksForMax(maxVal);
     return Container(
-      height: 306,
+      constraints: const BoxConstraints(minHeight: 306),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: AppColors.inputStroke, width: 1),
       ),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
@@ -905,13 +986,11 @@ class _ActivityCardContent extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: _ActivityChart(
-              weeklyActivity: weeklyActivity,
-              activeToday: activeToday,
-              yTicks: yTicks,
-            ),
+          const SizedBox(height: 12),
+          _ActivityChart(
+            weeklyActivity: weeklyActivity,
+            activeToday: activeToday,
+            yTicks: yTicks,
           ),
         ],
       ),
@@ -959,7 +1038,7 @@ class _ActivityChart extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: <Widget>[
                         SizedBox(
-                          width: 36,
+                          width: 32,
                           child: Text(
                             '$tick',
                             textAlign: TextAlign.right,
@@ -971,7 +1050,7 @@ class _ActivityChart extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Container(
                             height: 1,
@@ -983,10 +1062,10 @@ class _ActivityChart extends StatelessWidget {
                 ],
               ),
               // Real-data curve over the grid, starting where the grid
-              // lines start (X: 48 = 36 number + 12 gap).
+              // lines start (X: 40 = 32 number + 8 gap).
               if (showCurve)
                 Positioned(
-                  left: 48,
+                  left: 40,
                   right: 0,
                   top: 0,
                   bottom: 0,
@@ -1004,18 +1083,23 @@ class _ActivityChart extends StatelessWidget {
         // Weekdays fully below the grid, aligned with the lines.
         const SizedBox(height: 12),
         Padding(
-          padding: const EdgeInsets.only(left: 48),
+          padding: const EdgeInsets.only(left: 40),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
               for (final day in HomeFigmaData.weekDays)
-                Text(
-                  day,
-                  style: const TextStyle(
-                    fontFamily: 'GoogleSansFlex',
-                    fontSize: 12,
-                    height: 1.0,
-                    color: Color(0xFF6B7280),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      day,
+                      style: const TextStyle(
+                        fontFamily: 'GoogleSansFlex',
+                        fontSize: 12,
+                        height: 1.0,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
                   ),
                 ),
             ],

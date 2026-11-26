@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../applications/presentation/providers/application_decision_provider.dart'
@@ -68,6 +69,13 @@ class _StudentProfileSubjectsTabState
     StudentSubjectRegistration row,
     bool enabled,
   ) async {
+    // Enabling an assignment that has no active subscription would immediately
+    // leave the row in the broken "بدون خطة نشطة" state; require/attach the
+    // subscription atomically via grantSubjectAccessWithPlan in the same action.
+    if (enabled && row.planLabel.isEmpty) {
+      await _repairRow(row);
+      return;
+    }
     try {
       await ref
           .read(studentProfileSubjectsControllerProvider)
@@ -76,6 +84,7 @@ class _StudentProfileSubjectsTabState
             subjectId: row.subjectId,
             enabled: enabled,
           );
+      ref.invalidate(gradeStudentsProvider(_gradeKey));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -161,6 +170,7 @@ class _StudentProfileSubjectsTabState
   }
 
   Future<void> _pickGradeSubjects(
+    List<StudentSubjectRegistration> existingRows,
     Set<String> alreadyRegistered,
     Map<String, bool> persistedToggles,
     Map<String, String> persistedPlans,
@@ -181,10 +191,17 @@ class _StudentProfileSubjectsTabState
       hidePlans: _isGuest,
     );
     if (updated == null || !mounted) return;
-    await _commitAdditions(updated, alreadyRegistered, scope);
+    await _commitAdditions(
+      updated,
+      alreadyRegistered,
+      scope,
+      existingRows: existingRows,
+      freePlanEnabled: freeEnabled,
+    );
   }
 
   Future<void> _pickOtherSubjects(
+    List<StudentSubjectRegistration> existingRows,
     Set<String> alreadyRegistered,
     Map<String, bool> persistedToggles,
     Map<String, String> persistedPlans,
@@ -206,35 +223,75 @@ class _StudentProfileSubjectsTabState
       hidePlans: _isGuest,
     );
     if (updated == null || !mounted) return;
-    await _commitAdditions(updated, alreadyRegistered, scope);
+    await _commitAdditions(
+      updated,
+      alreadyRegistered,
+      scope,
+      existingRows: existingRows,
+      freePlanEnabled: freeEnabled,
+    );
   }
 
   Future<void> _commitAdditions(
     GradeSubjectsResult updated,
     Set<String> alreadyRegistered,
-    List<SubjectOption> scope,
-  ) async {
-    // Guest students have no plans: force every picked row to 'free'
-    // (which the backend resolves to the guest plan document) regardless
-    // of any stale plan value carried in the dialog result.
-    // The commit scope is the same subject list the overlay displayed,
-    // but only explicitly toggled-ON rows enter the write request via
-    // [buildNewStudentSubjects]. Untouched/OFF rows produce NO write —
-    // never a disabled assignment row — so saving with nothing enabled
-    // is a no-op (early return below, no summary dialog).
-    final Map<String, String> effectivePlans =
-        _isGuest
-            ? <String, String>{
-              for (final String id in updated.toggles.keys) id: 'free',
-            }
-            : updated.plans;
+    List<SubjectOption> scope, {
+    List<StudentSubjectRegistration> existingRows =
+        const <StudentSubjectRegistration>[],
+    bool freePlanEnabled = true,
+  }) async {
+    final String defaultPlan =
+        _isGuest ? 'free' : (freePlanEnabled ? 'free' : 'pro');
+    final Map<String, String> effectivePlans = _isGuest
+        ? <String, String>{
+            for (final String id in updated.toggles.keys) id: 'free',
+          }
+        : updated.plans;
     final List<NewStudentSubject> picked = buildNewStudentSubjects(
       scope: scope,
       toggles: updated.toggles,
       plans: effectivePlans,
       alreadyRegistered: alreadyRegistered,
+      defaultPlan: defaultPlan,
     );
-    if (picked.isEmpty || !mounted) return;
+
+    // Also handle already-registered subjects modified inside the overlay
+    // (e.g. re-enabled from OFF -> ON, repaired from missing plan, or plan tier changed).
+    final Map<String, StudentSubjectRegistration> existingById =
+        <String, StudentSubjectRegistration>{
+      for (final r in existingRows) r.subjectId: r,
+    };
+    final List<({String subjectId, String title, bool enable, String plan})>
+        existingChanges =
+        <({String subjectId, String title, bool enable, String plan})>[];
+    for (final SubjectOption s in scope) {
+      if (!alreadyRegistered.contains(s.id)) continue;
+      final StudentSubjectRegistration? prev = existingById[s.id];
+      if (prev == null) continue;
+      final bool nextEnabled = updated.toggles[s.id] ?? prev.enabled;
+      final String chosenPlan =
+          (effectivePlans[s.id] ??
+                  (prev.planLabel.isNotEmpty
+                      ? prev.planLabel.toLowerCase()
+                      : defaultPlan))
+              .toLowerCase();
+      final bool planChanged = !_isGuest &&
+          nextEnabled &&
+          (prev.planLabel.isEmpty ||
+              prev.planLabel.toLowerCase() != chosenPlan);
+      final bool toggleChanged = nextEnabled != prev.enabled;
+      if (toggleChanged || planChanged) {
+        existingChanges.add((
+          subjectId: s.id,
+          title: s.title,
+          enable: nextEnabled,
+          plan: chosenPlan,
+        ));
+      }
+    }
+
+    if (picked.isEmpty && existingChanges.isEmpty) return;
+    if (!mounted) return;
     final Map<String, String> titles = <String, String>{
       for (final SubjectOption s in scope) s.id: s.title,
     };
@@ -242,18 +299,53 @@ class _StudentProfileSubjectsTabState
     final Map<String, String> pickedPlans = <String, String>{
       for (final NewStudentSubject p in picked)
         p.subjectId: _isGuest ? 'guest' : p.plan,
+      for (final c in existingChanges)
+        c.subjectId: _isGuest ? 'guest' : (c.enable ? c.plan : 'off'),
     };
-    late final List<SubjectGrantOutcome> outcomes;
+    final List<SubjectGrantOutcome> outcomes = <SubjectGrantOutcome>[];
+    final controller = ref.read(studentProfileSubjectsControllerProvider);
     try {
-      outcomes = await ref
-          .read(studentProfileSubjectsControllerProvider)
-          .addSubjects(
+      if (picked.isNotEmpty) {
+        outcomes.addAll(
+          await controller.addSubjects(
             studentId: widget.student.id,
             isCenter: widget.student.isCenter,
             subjects: picked,
             alreadyRegistered: alreadyRegistered,
             subjectTitles: titles,
-          );
+          ),
+        );
+      }
+      for (final change in existingChanges) {
+        try {
+          if (change.enable) {
+            await controller.changePlan(
+              studentId: widget.student.id,
+              isCenter: widget.student.isCenter,
+              subjectId: change.subjectId,
+              plan: change.plan,
+            );
+          } else {
+            await controller.setAccess(
+              studentId: widget.student.id,
+              subjectId: change.subjectId,
+              enabled: false,
+            );
+          }
+          outcomes.add(SubjectGrantOutcome(
+            subjectId: change.subjectId,
+            subjectName: change.title,
+            success: true,
+          ));
+        } catch (e) {
+          outcomes.add(SubjectGrantOutcome(
+            subjectId: change.subjectId,
+            subjectName: change.title,
+            success: false,
+            errorMessage: _failureMessage(e),
+          ));
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -274,14 +366,9 @@ class _StudentProfileSubjectsTabState
     );
   }
 
-  /// Re-triggers the atomic grant for ONE broken row
-  /// (enabled assignment but no active subscription — see the plan
-  /// column warning) with an explicitly chosen plan. Never silent:
-  /// the Admin picks the plan in [showStudentPlanDialog]-equivalent
-  /// [showRepairPlanDialog] below and the outcome surfaces via snackbar.
-  ///
-  /// Guest students have no plans: repair re-grants at the guest tier
-  /// directly with no plan picker.
+  /// Re-triggers the atomic grant for ONE broken row (or edits an existing
+  /// row's plan) via [showRepairPlanDialog], updating `subject_access_assignments`
+  /// and `subscriptions` together in one server transaction.
   Future<void> _repairRow(StudentSubjectRegistration row) async {
     if (_isGuest) {
       try {
@@ -305,10 +392,16 @@ class _StudentProfileSubjectsTabState
       }
       return;
     }
+    final bool isEdit = row.planLabel.isNotEmpty;
+    final bool freeEnabled = await _freshFreePlanEnabled();
+    if (!mounted) return;
     final String? plan = await showRepairPlanDialog(
       context,
       accent: _accent,
       subjectTitle: row.title,
+      freePlanEnabled: freeEnabled,
+      initialPlan: isEdit ? row.planLabel : null,
+      isEdit: isEdit,
     );
     if (plan == null || !mounted) return;
     try {
@@ -322,7 +415,13 @@ class _StudentProfileSubjectsTabState
       ref.invalidate(gradeStudentsProvider(_gradeKey));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم إصلاح "${row.title}" ($plan).')),
+        SnackBar(
+          content: Text(
+            isEdit
+                ? 'تم تحديث خطة "${row.title}" (${plan.toUpperCase()}).'
+                : 'تم إصلاح "${row.title}" (${plan.toUpperCase()}).',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -343,7 +442,7 @@ class _StudentProfileSubjectsTabState
         ref.watch(studentProfileSubjectsProvider(widget.student.id));
 
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: rowsAsync.when(
         loading: () => const SizedBox(
           height: 200,
@@ -417,36 +516,38 @@ class _SubjectsTableBlock extends StatelessWidget {
           row.subjectId: row.planLabel.toLowerCase(),
     };
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           _SubjectsTable(state: state, rows: rows),
           const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
             children: <Widget>[
               _AddButton(
                 label: 'Add Subject',
                 accent: state._accent,
                 onTap: () => state._pickGradeSubjects(
+                  rows,
                   registered,
                   persistedToggles,
                   persistedPlans,
                 ),
               ),
-              if (state._previousGradeKeys.isNotEmpty) ...<Widget>[
-                const SizedBox(width: 40),
+              if (state._previousGradeKeys.isNotEmpty)
                 _AddButton(
                   label: 'Add Other Subject',
                   accent: state._accent,
                   onTap: () => state._pickOtherSubjects(
+                    rows,
                     registered,
                     persistedToggles,
                     persistedPlans,
                   ),
                 ),
-              ],
             ],
           ),
         ],
@@ -476,7 +577,7 @@ class _SubjectsTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 830,
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
@@ -489,30 +590,33 @@ class _SubjectsTable extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        children: <Widget>[
-          const _SubjectsHeaderRow(),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (rows.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'لا توجد مواد مسجلة لهذا الطالب بعد.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 830,
+        child: Column(
+          children: <Widget>[
+            const _SubjectsHeaderRow(),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'لا توجد مواد مسجلة لهذا الطالب بعد.',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            )
-          else
-            for (int i = 0; i < rows.length; i++)
-              _SubjectDataRow(
-                state: state,
-                index: i,
-                row: rows[i],
-              ),
-        ],
+              )
+            else
+              for (int i = 0; i < rows.length; i++)
+                _SubjectDataRow(
+                  state: state,
+                  index: i,
+                  row: rows[i],
+                ),
+          ],
+        ),
       ),
     );
   }
@@ -652,29 +756,63 @@ class _SubjectDataRow extends StatelessWidget {
                     ),
                   )
                 : missingPlan
-                    ? const Text(
-                        'بدون خطة نشطة',
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: AppTypography.fontFamily,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFDC2626),
+                    ? InkWell(
+                        onTap: () => state._repairRow(row),
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            'بدون خطة نشطة',
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFDC2626),
+                            ),
+                          ),
                         ),
                       )
-                    : Text(
-                        row.planLabel.isEmpty ? '—' : row.planLabel,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontFamily: AppTypography.fontFamily,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                          fontVariations: <FontVariation>[
-                            FontVariation('wght', 400),
-                          ],
-                          color: Colors.black,
+                    : Center(
+                        child: InkWell(
+                          onTap: () => state._repairRow(row),
+                          borderRadius: BorderRadius.circular(9999),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF9FAFB),
+                              borderRadius: BorderRadius.circular(9999),
+                              border: Border.all(
+                                color: const Color(0xFFE5E7EB),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Text(
+                                  row.planLabel.isEmpty ? '—' : row.planLabel,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontFamily: AppTypography.fontFamily,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(
+                                  Icons.edit_outlined,
+                                  size: 13,
+                                  color: state._accent,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
           ),
@@ -1145,16 +1283,22 @@ Future<void> showSubjectGrantSummary(
   );
 }
 
-/// Repair-plan picker (Fix 5): lets the Admin explicitly choose the plan
-/// for ONE broken row (enabled access, no active subscription). Returns
-/// the lowercase plan key, or null on dismiss. Never auto-assigns.
+/// Plan picker for repairing a broken row OR changing an existing row's plan
+/// (`FREE` / `PRO` / `MAX`). Honors [freePlanEnabled] and never auto-assigns
+/// without user confirmation.
 Future<String?> showRepairPlanDialog(
   BuildContext context, {
     required Color accent,
     required String subjectTitle,
+    bool freePlanEnabled = true,
+    String? initialPlan,
+    bool isEdit = false,
   }) {
-  const List<String> plans = <String>['FREE', 'PRO', 'MAX'];
-  String temp = 'PRO';
+  final List<String> plans = freePlanEnabled
+      ? const <String>['FREE', 'PRO', 'MAX']
+      : const <String>['PRO', 'MAX'];
+  final String normalizedInitial = (initialPlan ?? '').trim().toUpperCase();
+  String temp = plans.contains(normalizedInitial) ? normalizedInitial : 'PRO';
   return showGeneralDialog<String>(
     context: context,
     barrierColor: const Color(0x40000000),
@@ -1193,9 +1337,9 @@ Future<String?> showRepairPlanDialog(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    const Text(
-                      'إصلاح الخطة',
-                      style: TextStyle(
+                    Text(
+                      isEdit ? 'تعديل الخطة' : 'إصلاح الخطة',
+                      style: const TextStyle(
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 20,
                         fontWeight: FontWeight.w600,
@@ -1204,7 +1348,9 @@ Future<String?> showRepairPlanDialog(
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'اختر خطة "$subjectTitle" — لا يتم تعيين أي خطة تلقائياً.',
+                      isEdit
+                          ? 'اختر الخطة الجديدة لمادة "$subjectTitle".'
+                          : 'اختر خطة "$subjectTitle" لتفعيل الاشتراك وحل المشكلة.',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontFamily: AppTypography.fontFamily,

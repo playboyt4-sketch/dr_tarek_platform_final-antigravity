@@ -30,7 +30,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          dashboardSubjectsProvider.overrideWith((ref) async => const []),
+          dashboardSubjectsProvider.overrideWith((ref) => Stream.value(const [])),
         ],
         child: MaterialApp(
           locale: const Locale('ar'),
@@ -146,7 +146,7 @@ void main() {
           overrides: [
             initialLocaleProvider.overrideWithValue(const Locale('ar')),
             sessionProvider.overrideWith(() => controller),
-            dashboardSubjectsProvider.overrideWith((ref) async => const []),
+            dashboardSubjectsProvider.overrideWith((ref) => Stream.value(const [])),
           ],
           child: MaterialApp(
             locale: const Locale('ar'),

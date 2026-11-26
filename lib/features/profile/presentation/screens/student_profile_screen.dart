@@ -7,8 +7,10 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../authentication/domain/entities/auth_user.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
+import '../../../membership/presentation/widgets/center_phone_actions.dart';
 import '../../../student_dashboard/domain/entities/dashboard_subject.dart';
 import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
+import '../../../video_streaming/presentation/components/video_states.dart';
 import '../../domain/entities/delete_account_result.dart';
 import '../providers/profile_providers.dart';
 import '../widgets/change_password_dialog.dart';
@@ -165,6 +167,90 @@ class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
     if (key.endsWith('_guest') || key == 'guest') return 'GUEST';
     if (key.endsWith('_free') || key == 'free') return 'FREE';
     return '—';
+  }
+
+  static bool _isUpgradeEligible(String? planKey) {
+    final label = _planLabel(planKey);
+    return label == 'FREE' || label == 'PRO';
+  }
+
+  static void _showSubjectUpgradeSheet(
+    BuildContext context, {
+    required DashboardSubject subject,
+    required String planLabel,
+  }) {
+    final nextTierText = planLabel == 'FREE'
+        ? 'يمكنك الترقية إلى باقة Pro أو Max لهذه المادة.'
+        : 'يمكنك الترقية إلى باقة Max لهذه المادة.';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.workspace_premium_rounded,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'ترقية اشتراك المادة',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'إغلاق',
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    subject.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'الباقة الحالية: $planLabel — $nextTierText',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'لترقية اشتراكك وتفعيله فوراً بعد تأكيد الدفع، تواصل مع إدارة المنصة:',
+                    style: TextStyle(fontSize: 14, height: 1.5),
+                  ),
+                  const SizedBox(height: 12),
+                  const CenterPhoneActions(phoneNumber: kGuestWallContact),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Opens the "profile edit" bottom sheet (Figma 58258:1891). Persisted
@@ -813,65 +899,121 @@ class _SubjectsPanel extends StatelessWidget {
                     children: [
                       for (int i = 0; i < items.length; i++) ...[
                         if (i > 0) SizedBox(height: context.rsV(10)),
-                        Row(
-                          mainAxisSize: MainAxisSize.max,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          textDirection: TextDirection.ltr,
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              child: Text(
-                                items[i].title,
-                                // Arabic titles need RTL paragraph direction
-                                // for correct shaping; kept physically
-                                // left-anchored (Figma: title LEFT).
-                                // maxLines 4 + wrap shows full names instead
-                                // of eating them with a 2-line ellipsis.
-                                textDirection:
-                                    RegExp(r'[\u0600-\u06FF]').hasMatch(
-                                      items[i].title,
-                                    )
-                                    ? TextDirection.rtl
-                                    : TextDirection.ltr,
-                                maxLines: 4,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: true,
-                                textAlign: TextAlign.left,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: context.rsFont(14),
-                                  fontWeight: FontWeight.w400,
-                                  height: 1.5,
+                            Row(
+                              mainAxisSize: MainAxisSize.max,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              textDirection: TextDirection.ltr,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    items[i].title,
+                                    // Arabic titles need RTL paragraph direction
+                                    // for correct shaping; kept physically
+                                    // left-anchored (Figma: title LEFT).
+                                    // maxLines 4 + wrap shows full names instead
+                                    // of eating them with a 2-line ellipsis.
+                                    textDirection:
+                                        RegExp(r'[\u0600-\u06FF]').hasMatch(
+                                          items[i].title,
+                                        )
+                                        ? TextDirection.rtl
+                                        : TextDirection.ltr,
+                                    maxLines: 4,
+                                    overflow: TextOverflow.ellipsis,
+                                    softWrap: true,
+                                    textAlign: TextAlign.left,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: context.rsFont(14),
+                                      fontWeight: FontWeight.w400,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: context.rs(12)),
+                                // Plan badge: flex 0 so it only takes its
+                                // intrinsic width (FREE/PRO/MAX) and the title
+                                // keeps the full row width.
+                                Flexible(
+                                  flex: 0,
+                                  child: Text(
+                                    _StudentProfileScreenState._planLabel(
+                                      items[i].planKey,
+                                    ),
+                                    textDirection: TextDirection.ltr,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.visible,
+                                    textAlign: TextAlign.right,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: context.rsFont(14),
+                                      fontWeight: FontWeight.w400,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_StudentProfileScreenState._isUpgradeEligible(
+                              items[i].planKey,
+                            )) ...[
+                              SizedBox(height: context.rsV(6)),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Material(
+                                  key: ValueKey(
+                                    'upgrade_subject_${items[i].id}',
+                                  ),
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                  shape: const StadiumBorder(
+                                    side: BorderSide(color: Color(0x80FFFFFF)),
+                                  ),
+                                  child: InkWell(
+                                    customBorder: const StadiumBorder(),
+                                    onTap: () => _StudentProfileScreenState
+                                        ._showSubjectUpgradeSheet(
+                                      context,
+                                      subject: items[i],
+                                      planLabel: _StudentProfileScreenState
+                                          ._planLabel(items[i].planKey),
+                                    ),
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: context.rs(12),
+                                        vertical: context.rsV(6),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.arrow_upward_rounded,
+                                            size: context.rsFont(14),
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(width: context.rs(4)),
+                                          Text(
+                                            'Upgrade',
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: context.rsFont(12),
+                                              fontWeight: FontWeight.w700,
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                            SizedBox(width: context.rs(12)),
-                            // Plan badge: flex 0 so it only takes its
-                            // intrinsic width (FREE/PRO/MAX) and the title
-                            // keeps the full row width. (Flexible defaults
-                            // to flex:1 which split the row 50/50, squeezing
-                            // Arabic titles into ~140px on the left, forcing
-                            // wrap + ellipsis that ate the names.)
-                            // Top-aligned with the first title line so
-                            // multi-line titles never push/clip it.
-                            Flexible(
-                              flex: 0,
-                              child: Text(
-                                _StudentProfileScreenState._planLabel(
-                                  items[i].planKey,
-                                ),
-                                textDirection: TextDirection.ltr,
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.visible,
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: context.rsFont(14),
-                                  fontWeight: FontWeight.w400,
-                                  height: 1.5,
-                                ),
-                              ),
-                            ),
+                            ],
                           ],
                         ),
                       ],

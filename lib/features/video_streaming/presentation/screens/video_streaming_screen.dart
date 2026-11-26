@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
+import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
 import '../../../bookmarks/presentation/providers/bookmarks_providers.dart';
 import '../../data/repositories/playback_repository.dart';
@@ -16,6 +17,7 @@ import '../components/video_documents_sheet.dart';
 import '../components/video_player_layout.dart';
 import '../components/video_lecture_panel.dart';
 import '../components/video_quality_sheet.dart';
+import '../../data/services/video_download_service.dart';
 import '../../../lecture/presentation/screens/pdf_viewer_screen.dart';
 import '../../../membership/presentation/screens/membership_plans_screen.dart';
 
@@ -27,6 +29,7 @@ class VideoStreamingScreen extends ConsumerStatefulWidget {
   final List<LearningSection> seasons;
   final Future<List<LectureSummary>> Function(String sectionId)? loadEpisodes;
   final PlaybackRepository? playbackRepositoryOverride;
+  final bool preferOffline;
 
   const VideoStreamingScreen({
     required this.subjectId,
@@ -36,6 +39,7 @@ class VideoStreamingScreen extends ConsumerStatefulWidget {
     this.loadEpisodes,
     this.playbackRepositoryOverride,
     this.studentId,
+    this.preferOffline = false,
     super.key,
   });
 
@@ -95,6 +99,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         episode: widget.initialEpisode,
         watchWindowGateway: ref.watch(watchWindowGatewayProvider),
         sessionGateway: ref.read(playbackSessionGatewayProvider),
+        preferOffline: widget.preferOffline,
       );
       // NOTE: a temporary DIAGNOSIS-ONLY forced token refresh
       // (`getIdTokenResult(true)`) lived here during the permission-denied
@@ -109,6 +114,12 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
       // restore). Orientation calls are idempotent.
       controller.fullscreen = true;
       unawaited(controller.initialize());
+      unawaited(
+        ref.read(videoDownloadControllerProvider.notifier).syncLectureStatus(
+              subjectId: widget.subjectId,
+              lectureId: controller.lectureId,
+            ),
+      );
       _scheduleHideControls();
       setState(() {});
     });
@@ -117,6 +128,16 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
   void _onControllerChanged() {
     if (!mounted) return;
     if (_controller?.isPlaying == true) _scheduleHideControls();
+    final currentLectureId = _controller?.lectureId;
+    if (currentLectureId != null &&
+        ref.read(videoDownloadControllerProvider)[currentLectureId] == null) {
+      unawaited(
+        ref.read(videoDownloadControllerProvider.notifier).syncLectureStatus(
+              subjectId: widget.subjectId,
+              lectureId: currentLectureId,
+            ),
+      );
+    }
     setState(() {});
   }
 
@@ -226,6 +247,12 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         final watermarkText = (phone != null && phone.isNotEmpty)
             ? phone
             : _controller!.userId;
+        final downloadState = ref.watch(
+              videoDownloadControllerProvider.select(
+                (map) => map[_controller!.lectureId],
+              ),
+            ) ??
+            const LectureDownloadState();
 
         return Scaffold(
           backgroundColor: Colors.black,
@@ -233,6 +260,10 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
             controller: _controller!,
             watermarkText: watermarkText,
             sectionButtonLabel: _sectionButtonLabel(),
+            onDownloadTap: () => _handlePlayerDownloadTap(downloadState),
+            isDownloading: downloadState.isDownloading,
+            isDownloaded: downloadState.isDownloaded,
+            downloadProgress: downloadState.progress,
           onBack: () {
             Navigator.pop(context);
           },
@@ -282,7 +313,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
                 if (documents.length == 1 && documents.single.isPdf) {
                   final pdf = documents.single;
                   if (mounted) {
-                    unawaited(navigator.push(
+                    await navigator.push(
                       MaterialPageRoute(
                         builder: (_) => PdfViewerScreen(
                           resourceId: pdf.resourceId,
@@ -293,7 +324,10 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
                           videoController: _controller,
                         ),
                       ),
-                    ));
+                    );
+                    if (mounted) {
+                      ref.invalidate(dashboardSubjectsProvider);
+                    }
                   }
                   return;
                 }
@@ -330,6 +364,76 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         );
       },
     );
+  }
+
+  Future<void> _handlePlayerDownloadTap(LectureDownloadState downloadState) async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (downloadState.isDownloading) return;
+
+    final userId = widget.studentId ?? FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى تسجيل الدخول أولاً.')),
+      );
+      return;
+    }
+
+    if (downloadState.isDownloaded) {
+      final shouldDelete = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(controller.episodeTitle),
+          content: const Text(
+            'هذه المحاضرة محملة للمشاهدة بدون إنترنت. هل تريد حذفها من التنزيلات؟',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إغلاق'),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('حذف التحميل'),
+            ),
+          ],
+        ),
+      );
+      if (shouldDelete == true && mounted) {
+        await ref
+            .read(videoDownloadControllerProvider.notifier)
+            .deleteDownloadedLecture(
+              subjectId: controller.subjectId,
+              lectureId: controller.lectureId,
+            );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم حذف المحاضرة من التنزيلات.')),
+          );
+        }
+      }
+      return;
+    }
+
+    final currentLecture = controller.episodes.cast<LectureSummary?>().firstWhere(
+          (item) => item?.id == controller.lectureId,
+          orElse: () => null,
+        ) ??
+        widget.initialEpisode;
+
+    final outcome = await ref
+        .read(videoDownloadControllerProvider.notifier)
+        .downloadLecture(
+          userId: userId,
+          subjectId: controller.subjectId,
+          lecture: currentLecture,
+          preferredQuality: controller.selectedQuality,
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(outcome.message)));
   }
 
   /// Persists a bookmark for the current lecture at the current position.

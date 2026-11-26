@@ -37,7 +37,7 @@ abstract final class _NotificationDesign {
 ///
 /// [embedded] renders the bare sheet (for the Student Home tab, above the
 /// shared pill nav); otherwise a standalone Scaffold with an AppBar.
-class NotificationsScreen extends ConsumerWidget {
+class NotificationsScreen extends ConsumerStatefulWidget {
   final String studentId;
 
   /// When true the sheet renders without its own Scaffold/AppBar so it can
@@ -50,7 +50,25 @@ class NotificationsScreen extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NotificationsScreen> createState() =>
+      _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref
+          .read(notificationsRepositoryProvider)
+          .resetUnreadBadgeCount(userId: widget.studentId);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final studentId = widget.studentId;
     final body = ref
         .watch(userNotificationsStreamProvider(studentId))
         .when(
@@ -138,7 +156,7 @@ class NotificationsScreen extends ConsumerWidget {
       ),
     );
 
-    if (embedded) return sheet;
+    if (widget.embedded) return sheet;
     return Scaffold(
       appBar: AppBar(title: const Text('الإشعارات')),
       body: SafeArea(child: sheet),

@@ -5,7 +5,11 @@ import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/grade.dart';
 import '../../data/mock_students.dart';
 import '../../domain/live_student.dart';
-import 'student_profile_subjects_provider.dart' show planDisplayForKey;
+import 'student_profile_subjects_provider.dart'
+    show
+        extractSubscriptionPlanId,
+        planDisplayForKey,
+        resolvePlanDisplayLabel;
 
 /// Honest per-student plan summary for the grade Students list.
 ///
@@ -317,11 +321,15 @@ Future<Map<String, StudentPlanSummary>> _fetchPlanSummaries(
         .get();
     for (final doc in subSnap.docs) {
       final Map<String, dynamic> data = doc.data();
-      if (data['status'] != 'active' || data['is_deleted'] == true) continue;
+      final status = data['status'];
+      if ((status != 'active' && status != 'trial') ||
+          data['is_deleted'] == true) {
+        continue;
+      }
       subs.add((
-        studentId: (data['student_id'] as String?) ?? '',
-        subjectId: (data['subject_id'] as String?) ?? doc.id,
-        planId: (data['plan_id'] as String?) ?? '',
+        studentId: ((data['student_id'] as String?) ?? '').trim(),
+        subjectId: ((data['subject_id'] as String?) ?? doc.id).trim(),
+        planId: extractSubscriptionPlanId(data),
       ));
     }
     final QuerySnapshot<Map<String, dynamic>> assignSnap = await db
@@ -341,7 +349,9 @@ Future<Map<String, StudentPlanSummary>> _fetchPlanSummaries(
       await db.collection('plans').get();
   final Map<String, String> planLabels = <String, String>{
     for (final doc in plansSnap.docs)
-      doc.id: planDisplayForKey(doc.data()['plan_key'] as String?),
+      doc.id: planDisplayForKey(
+        (doc.data()['plan_key'] as String?) ?? doc.id,
+      ),
   };
   // Live non-deleted subject catalog: same authority as the Subjects tab
   // join (which skips assignments whose subject document is gone).
@@ -351,7 +361,10 @@ Future<Map<String, StudentPlanSummary>> _fetchPlanSummaries(
         .collection('subjects')
         .where('is_deleted', isEqualTo: false)
         .get();
-    validSubjectIds = <String>{for (final doc in subjectsSnap.docs) doc.id};
+    validSubjectIds = <String>{
+      for (final doc in subjectsSnap.docs)
+        if (!isArchivedData(doc.data())) doc.id,
+    };
   } catch (_) {
     validSubjectIds = null;
   }
@@ -443,7 +456,10 @@ Map<String, StudentPlanSummary> buildStudentPlanSummaries({
     final Set<String>? registered = registeredByStudent[sub.studentId];
     if (registered == null || !registered.contains(sub.subjectId)) continue;
     (planByStudentSubject.putIfAbsent(sub.studentId, () => <String, String>{}))
-        [sub.subjectId] = planLabels[sub.planId] ?? '';
+        [sub.subjectId] = resolvePlanDisplayLabel(
+      planId: sub.planId,
+      planLabels: planLabels,
+    );
   }
   final Map<String, StudentPlanSummary> out = <String, StudentPlanSummary>{};
   for (final MapEntry<String, Set<String>> entry

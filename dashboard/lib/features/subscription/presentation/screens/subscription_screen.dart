@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../providers/subscription_matrix_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -516,11 +517,18 @@ class _SubscriptionFeatureMatrixScreenState
             Expanded(
               child: KeyedSubtree(
                 key: ValueKey<String>('matrix-$_activePlan'),
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 80, vertical: 32),
-                  child: _buildSections(null, matrix),
+                child: Builder(
+                  builder: (BuildContext context) {
+                    final double hPad = context.dashboardHorizontalPadding;
+                    return SingleChildScrollView(
+                      controller: _scrollController,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: hPad,
+                        vertical: 24,
+                      ),
+                      child: _buildSections(null, matrix),
+                    );
+                  },
                 ),
               ),
             ),
@@ -531,9 +539,10 @@ class _SubscriptionFeatureMatrixScreenState
   }
 
   Widget _buildBody(WidgetRef ref, Map<String, PlanFeatureState> matrix) {
+    final double hPad = context.dashboardHorizontalPadding;
     return SingleChildScrollView(
       controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 32),
+      padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 24),
       child: _buildSections(ref, matrix),
     );
   }
@@ -659,50 +668,18 @@ class _SubscriptionFeatureMatrixScreenState
   }
 
   Widget _buildTopHeader() {
-    return const SizedBox(
-      height: 80,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(width: 370),
-          SizedBox(
-            width: 540,
-            height: 80,
-            child: Align(
-              alignment: Alignment.center,
-              child: Text.rich(
-                textAlign: TextAlign.center,
-                TextSpan(
-                  style: TextStyle(
-                    fontFamily: 'Google Sans Flex',
-                    fontSize: 48,
-                    color: Color(0xFF000000),
-                    letterSpacing: 0,
-                    height: 1.0,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'Tarek el araby ',
-                      style: TextStyle(fontWeight: FontWeight.w400),
-                    ),
-                    TextSpan(
-                      text: 'Platform',
-                      style: TextStyle(fontWeight: FontWeight.w100),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16),
+      child: ResponsiveScreenHeader(),
     );
   }
 
   Widget _buildPlanSelectorTabs(List<SubscriptionPlan> plans) {
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 692),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 692),
         child: Container(
           height: 48,
           padding: const EdgeInsets.all(4),
@@ -753,6 +730,7 @@ class _SubscriptionFeatureMatrixScreenState
               );
             }).toList(),
           ),
+          ),
         ),
       ),
     );
@@ -768,8 +746,10 @@ class _SubscriptionFeatureMatrixScreenState
       {'key': 'profile_account', 'label': 'Profile & Account'},
     ];
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1120),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1120),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Container(
@@ -819,6 +799,7 @@ class _SubscriptionFeatureMatrixScreenState
               }).toList(),
             ),
           ),
+          ),
         ),
       ),
     );
@@ -831,8 +812,8 @@ class _SubscriptionFeatureMatrixScreenState
       {required GlobalKey key, required List<Widget> children}) {
     return Container(
       key: key,
-      width: 1120,
-      padding: const EdgeInsets.symmetric(vertical: 24),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 20),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(16),

@@ -92,7 +92,7 @@ class _StudentProfileSecurityTabState
     final bool canReset = _canReset(permissionAsync);
 
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[

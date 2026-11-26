@@ -75,6 +75,9 @@ class InMemoryNotificationsRepository implements NotificationsRepository {
       _notifications.where((n) => n.userId == userId && !n.isRead).length,
     );
   }
+
+  @override
+  Future<void> resetUnreadBadgeCount({required String userId}) async {}
 }
 
 void main() {

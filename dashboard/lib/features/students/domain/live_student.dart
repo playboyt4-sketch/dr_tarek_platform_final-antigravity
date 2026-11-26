@@ -5,8 +5,12 @@
 /// disabled. The approved lifecycle (soft delete + audit retention) keeps
 /// the historical row in `users`, so every read path must exclude it here
 /// rather than assuming the row was removed.
+bool isArchivedData(Map<String, dynamic> data) {
+  return data['is_archived'] == true || data['is_deleted'] == true;
+}
+
 bool isLiveStudent(Map<String, dynamic> data) {
-  if (data['is_deleted'] == true) return false;
+  if (isArchivedData(data)) return false;
   if (data['account_status'] == 'disabled') return false;
   return true;
 }

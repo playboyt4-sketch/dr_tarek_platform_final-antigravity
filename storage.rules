@@ -88,6 +88,14 @@ service firebase.storage {
       allow delete: if canManageContent();
     }
 
+    // ===== Subject covers (uploaded from Web Dashboard under subjects/covers/) =====
+
+    match /subjects/covers/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if canManageContent()
+        && isImageWithinLimit(10 * 1024 * 1024);
+    }
+
     // ===== Everything else: fully denied =====
     match /{allPaths=**} {
       allow read, write: if false;

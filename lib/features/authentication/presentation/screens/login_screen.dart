@@ -132,6 +132,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
   }
 
+  bool _isSubmitting = false;
+
   /// Terminal non-error session message (pending/rejected/disabled/…).
   /// Shown inline in the error slot; such sessions stay on this screen
   /// instead of navigating anywhere.
@@ -202,89 +204,108 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     };
   }
 
+  Future<SessionState> _resolveSessionAfterAuth() async {
+    var session = await ref.read(sessionProvider.future);
+    if (session is SessionUnauthenticated || session is SessionError) {
+      ref.invalidate(sessionProvider);
+      session = await ref.read(sessionProvider.future);
+    }
+    return session;
+  }
+
   Future<void> _login() async {
-    setState(() => _terminalMessage = null);
+    if (_isSubmitting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    // Persist the choice first so a cold start during this very session
-    // already honors it, then apply it to the Firebase session (web-native
-    // persistence; mobile is enforced at cold start). Both best-effort:
-    // login must never fail because of them.
-    unawaited(saveRememberMeChoice(_rememberMe));
-    unawaited(ref
-        .read(authProvider.notifier)
-        .applyRememberMePersistence(_rememberMe));
+    setState(() {
+      _terminalMessage = null;
+      _isSubmitting = true;
+    });
 
-    await ref.read(authProvider.notifier).login(
-          phoneNumber: _phoneController.text.trim(),
-          password: _passwordController.text,
-        );
+    try {
+      // Persist the choice first so a cold start during this very session
+      // already honors it, then apply it to the Firebase session (web-native
+      // persistence; mobile is enforced at cold start). Both best-effort:
+      // login must never fail because of them.
+      unawaited(saveRememberMeChoice(_rememberMe));
+      unawaited(ref
+          .read(authProvider.notifier)
+          .applyRememberMePersistence(_rememberMe));
 
-    if (!mounted) return;
-    final authState = ref.read(authProvider);
-    if (authState.hasError || authState.value == null) return;
-
-    ref.invalidate(sessionProvider);
-    final session = await ref.read(sessionProvider.future);
-    if (!mounted) return;
-
-    // Authenticated → role home. The GoRouter session redirect guards the
-    // same invariant for deep links / restored URLs.
-    if (session is SessionAuthenticated) {
-      if (_rememberMe) {
-        unawaited(saveRememberedPhone(
-          rememberMe: true,
-          phone: _phoneController.text.trim(),
-        ));
-        unawaited(saveRememberedPassword(
-          rememberMe: true,
-          password: _passwordController.text,
-        ));
-      } else {
-        unawaited(clearRememberedCredentials());
-      }
-      if (!mounted) return;
-      TextInput.finishAutofillContext(shouldSave: true);
-      unawaited(_flushPendingPhoto(session.user));
-      if (!mounted) return;
-      try { context.goNamed(_homeRouteForRole(session.user.role)); } catch (_) {}
-      return;
-    }
-    // Error sessions surface inline via the watched providers below.
-    if (session is SessionError) return;
-    // Forced password change → mandatory dialog (same flow as AuthGate);
-    // on success the session re-resolves and an authenticated session
-    // routes home.
-    if (session is SessionForcePasswordChange) {
-      final changed = await showForcedPasswordChangeDialog(
-        context,
-        studentName: session.user.fullName,
-      );
-      if (!mounted) return;
-      if (changed == true) {
-        ref.invalidate(sessionProvider);
-        final retry = await ref.read(sessionProvider.future);
-        if (!mounted) return;
-        if (retry is SessionAuthenticated) {
-          await saveRememberedPhone(
-            rememberMe: _rememberMe,
-            phone: _phoneController.text.trim(),
+      await ref.read(authProvider.notifier).login(
+            phoneNumber: _phoneController.text.trim(),
+            password: _passwordController.text,
           );
-          if (!mounted) return;
-          TextInput.finishAutofillContext(shouldSave: true);
-          try { context.goNamed(_homeRouteForRole(retry.user.role)); } catch (_) {}
-          return;
+
+      if (!mounted) return;
+      final authState = ref.read(authProvider);
+      if (authState.hasError || authState.value == null) return;
+
+      final session = await _resolveSessionAfterAuth();
+      if (!mounted) return;
+
+      // Authenticated → role home. The GoRouter session redirect guards the
+      // same invariant for deep links / restored URLs.
+      if (session is SessionAuthenticated) {
+        if (_rememberMe) {
+          unawaited(saveRememberedPhone(
+            rememberMe: true,
+            phone: _phoneController.text.trim(),
+          ));
+          unawaited(saveRememberedPassword(
+            rememberMe: true,
+            password: _passwordController.text,
+          ));
+        } else {
+          unawaited(clearRememberedCredentials());
         }
-        if (retry is! SessionError) {
-          setState(() => _terminalMessage = _messageFor(retry));
-        }
+        if (!mounted) return;
+        TextInput.finishAutofillContext(shouldSave: true);
+        unawaited(_flushPendingPhoto(session.user));
+        if (!mounted) return;
+        try { context.goNamed(_homeRouteForRole(session.user.role)); } catch (_) {}
+        return;
       }
-      return;
+      // Error sessions surface inline via the watched providers below.
+      if (session is SessionError) return;
+      // Forced password change → mandatory dialog (same flow as AuthGate);
+      // on success the session re-resolves and an authenticated session
+      // routes home.
+      if (session is SessionForcePasswordChange) {
+        final changed = await showForcedPasswordChangeDialog(
+          context,
+          studentName: session.user.fullName,
+        );
+        if (!mounted) return;
+        if (changed == true) {
+          ref.invalidate(sessionProvider);
+          final retry = await ref.read(sessionProvider.future);
+          if (!mounted) return;
+          if (retry is SessionAuthenticated) {
+            await saveRememberedPhone(
+              rememberMe: _rememberMe,
+              phone: _phoneController.text.trim(),
+            );
+            if (!mounted) return;
+            TextInput.finishAutofillContext(shouldSave: true);
+            try { context.goNamed(_homeRouteForRole(retry.user.role)); } catch (_) {}
+            return;
+          }
+          if (retry is! SessionError) {
+            setState(() => _terminalMessage = _messageFor(retry));
+          }
+        }
+        return;
+      }
+      // Any other terminal session (pending/rejected/disabled/unauthorized
+      // device/role-blocked) stays here with an inline message — never pops
+      // back to user-type selection on a successful sign-in.
+      setState(() => _terminalMessage = _messageFor(session));
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
-    // Any other terminal session (pending/rejected/disabled/unauthorized
-    // device/role-blocked) stays here with an inline message — never pops
-    // back to user-type selection on a successful sign-in.
-    setState(() => _terminalMessage = _messageFor(session));
   }
 
   InputDecoration _fieldDecoration(
@@ -343,7 +364,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final l10n = AppLocalizations.of(context);
     final authState = ref.watch(authProvider);
     final sessionState = ref.watch(sessionProvider);
-    final isLoading = authState.isLoading || sessionState.isLoading;
+    final isLoading =
+        _isSubmitting || authState.isLoading || sessionState.isLoading;
     final authError = authState.hasError
         ? friendlyErrorMessage(context, authState.error)
         : sessionState.hasError

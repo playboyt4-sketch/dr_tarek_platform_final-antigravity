@@ -4,6 +4,19 @@ import {
   SECURE_CALL_OPTS,
 } from "./core/utils/security_helpers";
 import {
+  partitionSubscriptionsForSubject,
+  selectCanonicalPlanDoc,
+} from "./plan_resolution";
+import {
+  buildLectureRestoreFields,
+  buildStudentArchiveFields,
+  buildStudentRestoreFields,
+  buildSubjectArchiveFields,
+  buildSubjectRestoreFields,
+  isArchivedRecord,
+  isStudentArchiveEligibleRole,
+} from "./archive_lifecycle";
+import {
   DEFAULT_BUNNY_LIBRARY_ID,
   describeBunnyEnvironment,
   normalizeBunnyLibraryId,
@@ -1246,17 +1259,29 @@ async function getSubjectAllowance(planId: string, planFeatures?: DocumentData[]
   return Math.floor(allowance);
 }
 
-async function getActiveSubjectSubscription(studentId: string, subjectId: string) {
+async function findActiveSubjectSubscriptionDoc(
+  studentId: string,
+  subjectId: string,
+) {
   const subscriptionSnap = await db.collection("subscriptions")
     .where("student_id", "==", studentId)
     .where("subject_id", "==", subjectId)
     .where("status", "==", "active")
-    .limit(1)
     .get();
-  if (subscriptionSnap.empty) {
+  const candidates = subscriptionSnap.docs.map((doc) => ({
+    id: doc.id,
+    ref: doc.ref,
+    data: dataOf(doc.data()),
+  }));
+  return partitionSubscriptionsForSubject(candidates).primary;
+}
+
+async function getActiveSubjectSubscription(studentId: string, subjectId: string) {
+  const activeDoc = await findActiveSubjectSubscriptionDoc(studentId, subjectId);
+  if (!activeDoc) {
     throw new HttpsError("permission-denied", "Active subject subscription is required.");
   }
-  const subscription = dataOf(subscriptionSnap.docs[0].data());
+  const subscription = activeDoc.data;
   assertSubjectAccess(subscription);
   const planId = getString(subscription.plan_id);
   if (!planId) throw new HttpsError("failed-precondition", "Subject subscription plan is missing.");
@@ -2587,6 +2612,10 @@ export const verifyPhonePassword = onCall(SECURE_CALL_OPTS, async (request) => {
       await recordLoginFailure(STUDENT_LOGIN_IP_SCOPE, loginIp, STUDENT_LOGIN_IP_MAX_FAILURES);
     }
     throw new HttpsError("unauthenticated", "Invalid phone number or password.");
+  }
+
+  if (user.is_archived === true || user.is_deleted === true) {
+    throw new HttpsError("permission-denied", "Account is archived.");
   }
 
   if (user.account_status && user.account_status !== "active") {
@@ -4262,6 +4291,33 @@ export const enforceOneSubscriptionPerSubject = onDocumentCreated("subscriptions
   });
 });
 
+export function resolveNextUnreadBadgeCount(
+  currentUnread: unknown,
+  delta = 1,
+): number {
+  const current =
+    typeof currentUnread === "number" && Number.isFinite(currentUnread) ?
+      Math.max(0, Math.floor(currentUnread)) :
+      0;
+  return Math.max(1, current + delta);
+}
+
+async function incrementUserUnreadBadgeCount(userId: string): Promise<number> {
+  const userRef = db.collection("users").doc(userId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    const current = snap.exists ? snap.data()?.unread_notifications_count : 0;
+    const nextCount = resolveNextUnreadBadgeCount(current, 1);
+    if (snap.exists) {
+      tx.update(userRef, {
+        unread_notifications_count: nextCount,
+        updated_at: FieldValue.serverTimestamp(),
+      });
+    }
+    return nextCount;
+  });
+}
+
 async function sendNotificationNow(
   notificationId: string,
   notificationData: DocumentData,
@@ -4285,10 +4341,16 @@ async function sendNotificationNow(
     return {queued: true, sent: 0, failed: 0, failedDeviceIds: [] as string[]};
   }
 
+  const alreadyCounted = notificationData.badge_counted === true;
+  const badgeCount = alreadyCounted ?
+    resolveNextUnreadBadgeCount(userData.unread_notifications_count, 0) :
+    await incrementUserUnreadBadgeCount(userId);
+
   const devices = await getDeviceTokens(userId, onlyDeviceIds);
   if (devices.length === 0) {
     await db.collection("notifications").doc(notificationId).update({
       delivery_status: "in_app_only",
+      badge_counted: true,
       updated_at: FieldValue.serverTimestamp(),
       updated_by: "system",
     });
@@ -4359,7 +4421,7 @@ async function sendNotificationNow(
           "thread-id": groupingKey,
           "mutable-content": 1,
           sound: "default",
-          badge: 1,
+          badge: badgeCount,
           alert: {
             title: getString(notificationData.title) ?? "Dr. Tarek Platform",
             body: getString(notificationData.body) ?? "",
@@ -4398,6 +4460,7 @@ async function sendNotificationNow(
   await db.collection("notifications").doc(notificationId).update({
     sent_at: sent > 0 ? FieldValue.serverTimestamp() : null,
     delivery_status: failed === 0 ? "sent" : sent > 0 ? "partially_sent" : "failed",
+    badge_counted: true,
     grouping_key: groupingKey,
     group_count: Math.max(groupCount, 1),
     updated_at: FieldValue.serverTimestamp(),
@@ -4425,6 +4488,13 @@ async function sendNotificationNow(
 export const sendPushNotification = onDocumentCreated("notifications/{notificationId}", async (event) => {
   const notificationData = event.data?.data();
   if (!notificationData) return;
+  if (
+    notificationData.skip_push === true ||
+    notificationData.delivery_status === "sent" ||
+    notificationData.delivery_status === "in_app_only"
+  ) {
+    return;
+  }
   const notificationId = event.params.notificationId;
 
   try {
@@ -4919,15 +4989,10 @@ export const generateBunnySignedUrl = onCall({
   // request-scoped verifiedSubjectContext (same call, same verdict).
   const subjectAssignment = await requireEnabledSubjectAccess(userId, resolvedSubjectId);
 
-  const subscriptionSnap = await db.collection("subscriptions")
-    .where("student_id", "==", userId)
-    .where("subject_id", "==", resolvedSubjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
+  const activeSub = await findActiveSubjectSubscriptionDoc(userId, resolvedSubjectId);
+  if (!activeSub) throw new HttpsError("permission-denied", "Active subject subscription is required.");
 
-  const subjectSubscription = subscriptionSnap.docs[0].data();
+  const subjectSubscription = activeSub.data;
   assertSubjectAccess(subjectSubscription);
 
   const subjectPlanId = getString(subjectSubscription.plan_id);
@@ -5718,21 +5783,16 @@ export const revalidateOfflineAccess = onCall(SECURE_CALL_OPTS, async (request) 
       continue;
     }
 
-    const subscriptionSnap = await db.collection("subscriptions")
-      .where("student_id", "==", userId)
-      .where("subject_id", "==", subjectId)
-      .where("status", "==", "active")
-      .limit(1)
-      .get();
+    const activeSub = await findActiveSubjectSubscriptionDoc(userId, subjectId);
 
-    if (subscriptionSnap.empty) {
+    if (!activeSub) {
       results.push({subjectId, allowed: false, wipeRequired: true, reason: "no_active_subscription"});
       continue;
     }
 
     try {
-      assertSubjectAccess(subscriptionSnap.docs[0].data());
-      const planId = getString(subscriptionSnap.docs[0].data().plan_id);
+      assertSubjectAccess(activeSub.data);
+      const planId = getString(activeSub.data.plan_id);
       if (!planId) throw new Error("missing_plan_id");
       // Read-only tier check: revalidation answers whether kept offline
       // bytes stay usable. It never claims a slot, never mutates, and
@@ -5801,16 +5861,11 @@ async function resolveDocumentAccess(userId: string, resourceId: string) {
   if (!subjectId) throw new HttpsError("failed-precondition", "Subject is missing.");
   await requireEnabledSubjectAccess(userId, subjectId);
 
-  const subscriptionSnap = await db.collection("subscriptions")
-    .where("student_id", "==", userId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
-  assertSubjectAccess(subscriptionSnap.docs[0].data());
+  const activeSub = await findActiveSubjectSubscriptionDoc(userId, subjectId);
+  if (!activeSub) throw new HttpsError("permission-denied", "Active subject subscription is required.");
+  assertSubjectAccess(activeSub.data);
 
-  const planId = getString(subscriptionSnap.docs[0].data().plan_id);
+  const planId = getString(activeSub.data.plan_id);
   if (!planId) throw new HttpsError("failed-precondition", "Subscription plan is missing.");
 
   const storagePath = getString(resource.storage_path) ?? getString(resource.resource_url);
@@ -5936,7 +5991,6 @@ export const getLectureResources = onCall({
       .where("student_id", "==", userId)
       .where("subject_id", "==", subjectId)
       .where("status", "==", "active")
-      .limit(1)
       .get(),
     resourcesQuery,
   ]);
@@ -5945,9 +5999,11 @@ export const getLectureResources = onCall({
   if (accessOutcome.status === "rejected") throw accessOutcome.reason;
   if (grantOutcome.status === "rejected") throw grantOutcome.reason;
   if (subscriptionOutcome.status === "rejected") throw subscriptionOutcome.reason;
-  const subscriptionSnap = subscriptionOutcome.value;
-  if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
-  const subjectSubscription = subscriptionSnap.docs[0].data();
+  const activeSub = partitionSubscriptionsForSubject(
+    subscriptionOutcome.value.docs.map((doc) => ({id: doc.id, data: dataOf(doc.data())})),
+  ).primary;
+  if (!activeSub) throw new HttpsError("permission-denied", "Active subject subscription is required.");
+  const subjectSubscription = activeSub.data;
   assertSubjectAccess(subjectSubscription);
   if (resourcesOutcome.status === "rejected") throw resourcesOutcome.reason;
   const resourcesSnap = resourcesOutcome.value;
@@ -6098,14 +6154,9 @@ export const getSectionDisplayMedia = onCall({
   if (!subjectId) throw new HttpsError("failed-precondition", "Section subject is missing.");
 
   await requireEnabledSubjectAccess(userId, subjectId);
-  const subscriptionSnap = await db.collection("subscriptions")
-    .where("student_id", "==", userId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  if (subscriptionSnap.empty) throw new HttpsError("permission-denied", "Active subject subscription is required.");
-  assertSubjectAccess(subscriptionSnap.docs[0].data());
+  const activeSub = await findActiveSubjectSubscriptionDoc(userId, subjectId);
+  if (!activeSub) throw new HttpsError("permission-denied", "Active subject subscription is required.");
+  assertSubjectAccess(activeSub.data);
 
   const lecturesSnap = await db.collection("lectures")
     .where("section_id", "==", sectionId)
@@ -6588,30 +6639,27 @@ async function resolveSubjectPlanDoc(
   plan: "free" | "pro" | "max",
   defaultPlanKey: string | null,
 ): Promise<{id: string; data: DocumentData}> {
-  if (plan === "free") {
-    if (!defaultPlanKey) {
-      throw new HttpsError("failed-precondition", "Default plan is not configured.");
-    }
-    const freeSnap = await db.collection("plans")
-      .where("plan_key", "==", defaultPlanKey)
-      .where("student_type", "==", studentType)
-      .where("is_active", "==", true)
-      .limit(1)
-      .get();
-    if (freeSnap.empty) {
-      throw new HttpsError("failed-precondition", "Active default plan was not found.");
-    }
-    return {id: freeSnap.docs[0].id, data: dataOf(freeSnap.docs[0].data())};
+  if (plan === "free" && !defaultPlanKey) {
+    throw new HttpsError("failed-precondition", "Default plan is not configured.");
   }
-  const paidSnap = await db.collection("plans")
+  const activePlansSnap = await db.collection("plans")
     .where("student_type", "==", studentType)
     .where("is_active", "==", true)
     .get();
-  for (const doc of paidSnap.docs) {
-    const key = (getString(doc.data().plan_key) ?? "").toLowerCase();
-    if (key === plan || key.endsWith(`_${plan}`)) {
-      return {id: doc.id, data: dataOf(doc.data())};
-    }
+  const candidates = activePlansSnap.docs.map((doc) => ({
+    id: doc.id,
+    data: dataOf(doc.data()),
+  }));
+  const selected = selectCanonicalPlanDoc(candidates, {
+    studentType,
+    plan,
+    preferredPlanKey: plan === "free" ? defaultPlanKey : null,
+  });
+  if (selected) {
+    return {id: selected.id, data: selected.data};
+  }
+  if (plan === "free") {
+    throw new HttpsError("failed-precondition", "Active default plan was not found.");
   }
   throw new HttpsError(
     "failed-precondition",
@@ -6691,15 +6739,6 @@ export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (reques
   const binding = await resolveSubscriptionPeriodBinding();
   const entitlements = await getActiveEntitlements(resolvedPlan.id);
 
-  const existingSnap = await db.collection("subscriptions")
-    .where("student_id", "==", studentId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  const existingRef = existingSnap.empty ? null : existingSnap.docs[0].ref;
-  const existingData = existingSnap.empty ? null : dataOf(existingSnap.docs[0].data());
-
   // ---- Atomic phase: assignment + subscription (+ audit) together. ----
   const assignmentId = `${studentId}_${subjectId}`;
   const assignmentRef = db.collection("subject_access_assignments").doc(assignmentId);
@@ -6711,6 +6750,12 @@ export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (reques
     const liveStudentSnap = await transaction.get(studentRef);
     const liveSubjectSnap = await transaction.get(subjectRef);
     const liveAssignmentSnap = await transaction.get(assignmentRef);
+    const liveSubsSnap = await transaction.get(
+      db.collection("subscriptions")
+        .where("student_id", "==", studentId)
+        .where("subject_id", "==", subjectId)
+        .where("status", "==", "active"),
+    );
     if (!liveStudentSnap.exists) throw new HttpsError("not-found", "Student not found.");
     const liveStudent = dataOf(liveStudentSnap.data());
     if (liveStudent.role !== "student" || liveStudent.approval_status !== "approved") {
@@ -6730,6 +6775,15 @@ export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (reques
     const action = !previous ?
       "create" :
       previous.is_deleted === true ? "restore" : "update";
+
+    const partitioned = partitionSubscriptionsForSubject(
+      liveSubsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ref: doc.ref,
+        data: dataOf(doc.data()),
+      })),
+    );
+    const existingPrimary = partitioned.primary;
 
     const now = FieldValue.serverTimestamp();
     const assignmentData: Record<string, unknown> = {
@@ -6752,25 +6806,29 @@ export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (reques
 
     let subscriptionId: string;
     let alreadyActive = false;
-    if (existingRef && existingData && existingData.is_deleted !== true) {
-      const currentPlanId = getString(existingData.plan_id);
+    if (existingPrimary) {
+      const currentPlanId = getString(existingPrimary.data.plan_id);
       if (currentPlanId === resolvedPlan.id) {
         alreadyActive = true;
-        subscriptionId = existingRef.id;
-        transaction.update(existingRef, {
+        subscriptionId = existingPrimary.id;
+        transaction.update(existingPrimary.ref, {
           academic_period_id: binding.academicPeriodId,
           end_date: binding.endDate,
+          is_deleted: false,
+          is_archived: false,
           updated_at: now,
           updated_by: authorization.actorId,
         });
       } else {
-        subscriptionId = existingRef.id;
-        transaction.update(existingRef, {
+        subscriptionId = existingPrimary.id;
+        transaction.update(existingPrimary.ref, {
           previous_plan_id: currentPlanId,
           plan_id: resolvedPlan.id,
           academic_period_id: binding.academicPeriodId,
           end_date: binding.endDate,
           status: "active",
+          is_deleted: false,
+          is_archived: false,
           updated_at: now,
           updated_by: authorization.actorId,
         });
@@ -6793,11 +6851,23 @@ export const grantSubjectAccessWithPlan = onCall(SECURE_CALL_OPTS, async (reques
         is_gifted: false,
         gifted_by: null,
         renewal_count: 0,
-        previous_plan_id: existingData ? getString(existingData.plan_id) : null,
+        previous_plan_id: null,
         is_deleted: false,
         created_at: FieldValue.serverTimestamp(),
         updated_at: FieldValue.serverTimestamp(),
         created_by: authorization.actorId,
+        updated_by: authorization.actorId,
+      });
+    }
+
+    for (const extra of partitioned.extras) {
+      transaction.update(extra.ref, {
+        status: "replaced",
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by: authorization.actorId,
+        replaced_by: subscriptionId,
+        updated_at: now,
         updated_by: authorization.actorId,
       });
     }
@@ -6872,13 +6942,11 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   const planKey = getString(settings.default_plan);
   if (!planKey) throw new HttpsError("failed-precondition", "Default plan is not configured.");
 
-  const planSnap = await db.collection("plans")
-    .where("plan_key", "==", planKey)
-    .where("student_type", "==", requestedStudentType)
-    .where("is_active", "==", true)
-    .limit(1)
-    .get();
-  if (planSnap.empty) throw new HttpsError("failed-precondition", "Active default plan was not found.");
+  const resolvedFreePlan = await resolveSubjectPlanDoc(
+    requestedStudentType,
+    "free",
+    planKey,
+  );
 
   const binding = await resolveSubscriptionPeriodBinding();
 
@@ -6887,21 +6955,39 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   // run inside one transaction, so two concurrent or sequential duplicate
   // submissions resolve to a single active subscription. Reference-data
   // reads above stay outside the transaction; only check-and-create is
-  // transactional. Same query as before — no new index required.
+  // transactional.
   const activation = await db.runTransaction(async (tx) => {
     const existingTxSnap = await tx.get(db.collection("subscriptions")
       .where("student_id", "==", studentId)
       .where("subject_id", "==", subjectId)
-      .where("status", "==", "active")
-      .limit(1));
-    if (!existingTxSnap.empty) {
-      return {subscriptionId: existingTxSnap.docs[0].id, alreadyActive: true};
+      .where("status", "==", "active"));
+    const partitioned = partitionSubscriptionsForSubject(
+      existingTxSnap.docs.map((doc) => ({
+        id: doc.id,
+        ref: doc.ref,
+        data: dataOf(doc.data()),
+      })),
+    );
+    if (partitioned.primary) {
+      const now = FieldValue.serverTimestamp();
+      for (const extra of partitioned.extras) {
+        tx.update(extra.ref, {
+          status: "replaced",
+          is_deleted: true,
+          deleted_at: now,
+          deleted_by: authorization.actorId,
+          replaced_by: partitioned.primary.id,
+          updated_at: now,
+          updated_by: authorization.actorId,
+        });
+      }
+      return {subscriptionId: partitioned.primary.id, alreadyActive: true};
     }
     const subscriptionRef = db.collection("subscriptions").doc();
     tx.set(subscriptionRef, {
       student_id: studentId,
       subject_id: subjectId,
-      plan_id: planSnap.docs[0].id,
+      plan_id: resolvedFreePlan.id,
       duration_type: "semester",
       academic_period_id: binding.academicPeriodId,
       start_date: FieldValue.serverTimestamp(),
@@ -6924,9 +7010,9 @@ export const activateFreePlan = onCall(SECURE_CALL_OPTS, async (request) => {
   });
   if (activation.alreadyActive) return {subscriptionId: activation.subscriptionId, alreadyActive: true};
 
-  await writeAnalyticsEvent(studentId, "Free Plan Activated", activation.subscriptionId, {subject_id: subjectId, plan_id: planSnap.docs[0].id, activated_by: authorization.actorId});
+  await writeAnalyticsEvent(studentId, "Free Plan Activated", activation.subscriptionId, {subject_id: subjectId, plan_id: resolvedFreePlan.id, activated_by: authorization.actorId});
 
-  const entitlements = await getActiveEntitlements(planSnap.docs[0].id);
+  const entitlements = await getActiveEntitlements(resolvedFreePlan.id);
   await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
     entitlements,
     subscription_expires_at: binding.endDate,
@@ -7587,14 +7673,9 @@ export const cleanupInvalidDeviceTokens = onSchedule("every 24 hours", async () 
 });
 
 async function getMembershipForMutation(studentId: string, subjectId: string) {
-  const snap = await db.collection("subscriptions")
-    .where("student_id", "==", studentId)
-    .where("subject_id", "==", subjectId)
-    .where("status", "==", "active")
-    .limit(1)
-    .get();
-  if (snap.empty) throw new HttpsError("not-found", "Active subscription was not found.");
-  return {ref: snap.docs[0].ref, data: dataOf(snap.docs[0].data())};
+  const activeSub = await findActiveSubjectSubscriptionDoc(studentId, subjectId);
+  if (!activeSub) throw new HttpsError("not-found", "Active subscription was not found.");
+  return {ref: activeSub.ref, data: activeSub.data};
 }
 
 async function validateMembershipPlan(studentId: string, planId: string) {
@@ -7621,21 +7702,79 @@ async function changeMembershipPlan(
   if (!studentId || !subjectId || !newPlanId) {
     throw new HttpsError("invalid-argument", "studentId, subjectId and newPlanId are required.");
   }
-  const membership = await getMembershipForMutation(studentId, subjectId);
   await validateMembershipPlan(studentId, newPlanId);
-  await membership.ref.update({
-    previous_plan_id: getString(membership.data.plan_id),
-    plan_id: newPlanId,
-    updated_at: FieldValue.serverTimestamp(),
-    updated_by: authorization.actorId,
+  const entitlements = await getActiveEntitlements(newPlanId);
+  const assignmentRef = db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`);
+
+  const mutationResult = await db.runTransaction(async (transaction) => {
+    const subsSnap = await transaction.get(
+      db.collection("subscriptions")
+        .where("student_id", "==", studentId)
+        .where("subject_id", "==", subjectId)
+        .where("status", "==", "active"),
+    );
+    const assignmentSnap = await transaction.get(assignmentRef);
+
+    const partitioned = partitionSubscriptionsForSubject(
+      subsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ref: doc.ref,
+        data: dataOf(doc.data()),
+      })),
+    );
+    if (!partitioned.primary) {
+      throw new HttpsError("not-found", "Active subscription was not found.");
+    }
+
+    const previousPlanId = getString(partitioned.primary.data.plan_id);
+    const now = FieldValue.serverTimestamp();
+    transaction.update(partitioned.primary.ref, {
+      previous_plan_id: previousPlanId,
+      plan_id: newPlanId,
+      is_deleted: false,
+      is_archived: false,
+      updated_at: now,
+      updated_by: authorization.actorId,
+    });
+
+    for (const extra of partitioned.extras) {
+      transaction.update(extra.ref, {
+        status: "replaced",
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by: authorization.actorId,
+        replaced_by: partitioned.primary.id,
+        updated_at: now,
+        updated_by: authorization.actorId,
+      });
+    }
+
+    if (assignmentSnap.exists) {
+      transaction.update(assignmentRef, {
+        entitlements,
+        subscription_expires_at: partitioned.primary.data.end_date ?? null,
+        updated_at: now,
+        updated_by: authorization.actorId,
+      });
+    }
+
+    return {
+      subscriptionId: partitioned.primary.id,
+      previousPlanId,
+    };
   });
-  await writeAnalyticsEvent(studentId, eventType, membership.ref.id, {subject_id: subjectId, new_plan_id: newPlanId, changed_by: authorization.actorId});
+
+  await writeAnalyticsEvent(studentId, eventType, mutationResult.subscriptionId, {
+    subject_id: subjectId,
+    new_plan_id: newPlanId,
+    changed_by: authorization.actorId,
+  });
   await db.collection("admin_audit_log").add({
     action: "membership_plan_changed",
     entity: "subscriptions",
     target_id: studentId,
-    subscription_id: membership.ref.id,
-    previous_plan_id: getString(membership.data.plan_id),
+    subscription_id: mutationResult.subscriptionId,
+    previous_plan_id: mutationResult.previousPlanId,
     new_plan_id: newPlanId,
     actor_id: authorization.actorId,
     actor_role: authorization.actorRole,
@@ -7644,13 +7783,7 @@ async function changeMembershipPlan(
     timestamp: FieldValue.serverTimestamp(),
   });
 
-  const entitlements = await getActiveEntitlements(newPlanId);
-  await db.collection("subject_access_assignments").doc(`${studentId}_${subjectId}`).update({
-    entitlements,
-    subscription_expires_at: membership.data.end_date ?? null,
-  });
-
-  return {subscriptionId: membership.ref.id};
+  return {subscriptionId: mutationResult.subscriptionId};
 }
 
 export const upgrade = onCall(SECURE_CALL_OPTS, async (request) => changeMembershipPlan(request, "Membership Upgraded"));
@@ -8905,13 +9038,10 @@ export const deleteSubject = onCall(SECURE_CALL_OPTS, async (request) => {
       throw new HttpsError("not-found", "Subject not found.");
     }
 
-    transaction.update(subjectRef, {
-      is_deleted: true,
-      deleted_at: FieldValue.serverTimestamp(),
-      deleted_by: authorization.actorId,
-      updated_at: FieldValue.serverTimestamp(),
-      updated_by: authorization.actorId,
-    });
+    transaction.update(subjectRef, buildSubjectArchiveFields({
+      actorId: authorization.actorId,
+      nowSentinel: FieldValue.serverTimestamp(),
+    }));
     transaction.set(db.collection("admin_audit_log").doc(), {
       action: "subject_soft_deleted",
       entity: "subject",
@@ -8925,6 +9055,171 @@ export const deleteSubject = onCall(SECURE_CALL_OPTS, async (request) => {
   });
 
   return {success: true, subjectId};
+});
+
+export const restoreSubject = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireContentManager(request);
+  const subjectId = getString(request.data?.subjectId);
+  if (!subjectId) {
+    throw new HttpsError("invalid-argument", "subjectId is required.");
+  }
+
+  const subjectRef = db.collection("subjects").doc(subjectId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(subjectRef);
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Subject not found.");
+    }
+    transaction.update(subjectRef, buildSubjectRestoreFields({
+      actorId: authorization.actorId,
+      nowSentinel: FieldValue.serverTimestamp(),
+    }));
+    transaction.set(db.collection("admin_audit_log").doc(), {
+      action: "subject_restored",
+      entity: "subject",
+      target_id: subjectId,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {success: true, subjectId};
+});
+
+export const restoreLecture = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireContentManager(request);
+  const lectureId = getString(request.data?.lectureId);
+  if (!lectureId) {
+    throw new HttpsError("invalid-argument", "lectureId is required.");
+  }
+
+  const lectureRef = db.collection("lectures").doc(lectureId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(lectureRef);
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Lecture not found.");
+    }
+    const previousStatus = getString(snapshot.data()?.status);
+    transaction.update(lectureRef, buildLectureRestoreFields({
+      actorId: authorization.actorId,
+      previousStatus,
+      nowSentinel: FieldValue.serverTimestamp(),
+    }));
+    transaction.set(db.collection("admin_audit_log").doc(), {
+      action: "lecture_restored",
+      entity: "lecture",
+      target_id: lectureId,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {success: true, lectureId};
+});
+
+export const archiveStudent = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  if (!studentId) {
+    throw new HttpsError("invalid-argument", "studentId is required.");
+  }
+
+  const userRef = db.collection("users").doc(studentId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Student not found.");
+    }
+    const data = snapshot.data() as Record<string, unknown> | undefined;
+    if (!isStudentArchiveEligibleRole(data?.role)) {
+      throw new HttpsError("permission-denied", "Only student accounts can be archived.");
+    }
+    if (isArchivedRecord(data)) {
+      throw new HttpsError("failed-precondition", "Student is already archived.");
+    }
+
+    const previousAccountStatus = getString(data?.account_status) ?? "active";
+    transaction.update(userRef, buildStudentArchiveFields({
+      actorId: authorization.actorId,
+      previousAccountStatus,
+      nowSentinel: FieldValue.serverTimestamp(),
+    }));
+    transaction.set(db.collection("admin_audit_log").doc(), {
+      action: "student_archived",
+      entity: "student",
+      target_id: studentId,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  try {
+    await getAuth().updateUser(studentId, {disabled: true});
+    await getAuth().revokeRefreshTokens(studentId);
+  } catch (authError: unknown) {
+    const code = (authError as {code?: string}).code;
+    if (code !== "auth/user-not-found") {
+      console.warn(`archiveStudent auth disable warning for ${studentId}:`, authError);
+    }
+  }
+
+  return {success: true, studentId};
+});
+
+export const restoreStudent = onCall(SECURE_CALL_OPTS, async (request) => {
+  const authorization = await requireStudentAccessManager(request);
+  const studentId = getString(request.data?.studentId);
+  if (!studentId) {
+    throw new HttpsError("invalid-argument", "studentId is required.");
+  }
+
+  const userRef = db.collection("users").doc(studentId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Student not found.");
+    }
+    const data = snapshot.data() as Record<string, unknown> | undefined;
+    if (!isStudentArchiveEligibleRole(data?.role)) {
+      throw new HttpsError("permission-denied", "Only student accounts can be restored.");
+    }
+    const previousAccountStatus = getString(data?.archived_previous_account_status);
+    transaction.update(userRef, buildStudentRestoreFields({
+      actorId: authorization.actorId,
+      previousAccountStatus,
+      nowSentinel: FieldValue.serverTimestamp(),
+    }));
+    transaction.set(db.collection("admin_audit_log").doc(), {
+      action: "student_restored",
+      entity: "student",
+      target_id: studentId,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  try {
+    await getAuth().updateUser(studentId, {disabled: false});
+  } catch (authError: unknown) {
+    const code = (authError as {code?: string}).code;
+    if (code !== "auth/user-not-found") {
+      console.warn(`restoreStudent auth enable warning for ${studentId}:`, authError);
+    }
+  }
+
+  return {success: true, studentId};
 });
 
 /* ============================================================
@@ -9176,17 +9471,35 @@ export const propagatePlanFeatureChange = onDocumentUpdated("plan_features/{feat
     const snap = await query.get();
     if (snap.empty) break;
 
-    const batch = db.batch();
+    const candidateAssignmentIds: string[] = [];
     for (const doc of snap.docs) {
-      const data = doc.data();
-      const assignmentId = `${data.student_id}_${data.subject_id}`;
-      batch.update(db.collection("subject_access_assignments").doc(assignmentId), {
-        entitlements,
-      });
       lastDoc = doc;
+      const data = doc.data();
+      if (data.is_deleted === true || data.is_archived === true) continue;
+      if (typeof data.student_id === "string" && typeof data.subject_id === "string") {
+        candidateAssignmentIds.push(`${data.student_id}_${data.subject_id}`);
+      }
     }
 
-    await batch.commit();
+    if (candidateAssignmentIds.length > 0) {
+      const refs = candidateAssignmentIds.map((id) =>
+        db.collection("subject_access_assignments").doc(id),
+      );
+      const assignmentSnaps = await db.getAll(...refs);
+      const batch = db.batch();
+      let updates = 0;
+      for (const aSnap of assignmentSnaps) {
+        if (!aSnap.exists || aSnap.data()?.is_deleted === true) continue;
+        batch.update(aSnap.ref, {
+          entitlements,
+          updated_at: FieldValue.serverTimestamp(),
+        });
+        updates++;
+      }
+      if (updates > 0) {
+        await batch.commit();
+      }
+    }
   }
 });
 
@@ -10101,6 +10414,419 @@ export const autoPublishDueLectures = onSchedule("every 5 minutes", async () => 
   await publishDueLectures();
 });
 
+export interface LecturePublishNotificationPayload {
+  title: string;
+  body: string;
+  data: Record<string, string>;
+  android: {
+    priority: "high";
+    notification: {
+      title: string;
+      body: string;
+      sound: string;
+      channelId: string;
+      tag: string;
+    };
+  };
+  apns: {
+    headers: Record<string, string>;
+    payload: {
+      aps: {
+        alert: {
+          title: string;
+          body: string;
+        };
+        sound: string;
+        badge: number;
+        "mutable-content": number;
+        "thread-id": string;
+      };
+    };
+  };
+}
+
+/**
+ * Pure gate deciding whether a Firestore write on `lectures/{lectureId}`
+ * represents a first-time publish that should trigger student push alerts.
+ */
+export function shouldSendLecturePublishNotification(
+  before: Record<string, unknown> | undefined | null,
+  after: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!after) return false;
+  if (after.is_deleted === true) return false;
+  if (after.status !== "published") return false;
+  if (after.publish_notification_sent === true) return false;
+  if (before && before.status === "published") return false;
+  return true;
+}
+
+/**
+ * Builds the system push payload (including full iOS APNs alert, sound,
+ * badge, and priority 10 headers) for a newly published lecture.
+ */
+export function buildLecturePublishNotificationPayload(input: {
+  lectureId: string;
+  subjectId: string;
+  subjectTitle?: string | null;
+  lectureTitle?: string | null;
+  badge?: number | null;
+}): LecturePublishNotificationPayload {
+  const subjectTitle = getString(input.subjectTitle)?.trim();
+  const lectureTitle = getString(input.lectureTitle)?.trim();
+  const badge =
+    typeof input.badge === "number" && Number.isFinite(input.badge) && input.badge > 0 ?
+      Math.floor(input.badge) :
+      1;
+  const title = subjectTitle ?
+    `محاضرة جديدة في ${subjectTitle}` :
+    "محاضرة جديدة";
+  const body = lectureTitle ?
+    `تم نشر محاضرة: ${lectureTitle}` :
+    "تم نشر محاضرة جديدة، يمكنك مشاهدتها الآن.";
+
+  return {
+    title,
+    body,
+    data: {
+      notification_type: "lecture",
+      subject_id: input.subjectId,
+      lecture_id: input.lectureId,
+      deep_link: `/subject/${input.subjectId}`,
+      click_action: "FLUTTER_NOTIFICATION_CLICK",
+    },
+    android: {
+      priority: "high",
+      notification: {
+        title,
+        body,
+        sound: "default",
+        channelId: "dr_tarek_general",
+        tag: `lecture_${input.lectureId}`,
+      },
+    },
+    apns: {
+      headers: {
+        "apns-push-type": "alert",
+        "apns-priority": "10",
+        "apns-collapse-id": `lecture_${input.lectureId}`,
+      },
+      payload: {
+        aps: {
+          alert: {
+            title,
+            body,
+          },
+          sound: "default",
+          badge,
+          "mutable-content": 1,
+          "thread-id": `subject_${input.subjectId}`,
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Splits a non-empty list into fixed-size chunks (used for FCM's 500-token
+ * multicast limit and bounded Firestore queries).
+ */
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function resolveEnrolledSubjectStudentIds(subjectId: string): Promise<string[]> {
+  const [assignmentsSnap, subscriptionsSnap] = await Promise.all([
+    db.collection("subject_access_assignments")
+      .where("subject_id", "==", subjectId)
+      .get(),
+    db.collection("subscriptions")
+      .where("subject_id", "==", subjectId)
+      .where("status", "==", "active")
+      .get(),
+  ]);
+
+  const studentIds = new Set<string>();
+  for (const doc of assignmentsSnap.docs) {
+    const data = dataOf(doc.data());
+    if (data.is_deleted === true || data.enabled !== true) continue;
+    const studentId = getString(data.student_id)?.trim();
+    if (studentId) studentIds.add(studentId);
+  }
+  for (const doc of subscriptionsSnap.docs) {
+    const data = dataOf(doc.data());
+    if (data.is_deleted === true || data.status !== "active") continue;
+    const studentId = getString(data.student_id)?.trim();
+    if (studentId) studentIds.add(studentId);
+  }
+  return Array.from(studentIds);
+}
+
+export function buildLecturePublishInAppNotificationDoc(input: {
+  studentId: string;
+  lectureId: string;
+  subjectId: string;
+  title: string;
+  body: string;
+  deepLink: string;
+  hasTokens: boolean;
+  sentTimestamp: unknown;
+  nowTimestamp: unknown;
+}): Record<string, unknown> {
+  return {
+    user_id: input.studentId,
+    notification_type: "lecture",
+    type: "Lecture",
+    title: input.title,
+    body: input.body,
+    subject_id: input.subjectId,
+    lecture_id: input.lectureId,
+    priority: "high",
+    media_type: "none",
+    media_url: null,
+    deep_link: input.deepLink,
+    actions: [],
+    is_read: false,
+    read_at: null,
+    badge_counted: true,
+    skip_push: true,
+    delivery_status: input.hasTokens ? "sent" : "in_app_only",
+    sent_at: input.hasTokens ? input.sentTimestamp : null,
+    created_at: input.nowTimestamp,
+    created_by: "system",
+    updated_at: input.nowTimestamp,
+    updated_by: "system",
+  };
+}
+
+export async function handleLecturePublishedNotification(input: {
+  lectureId: string;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+}): Promise<{sent: number; failed: number; recipients: number}> {
+  if (!shouldSendLecturePublishNotification(input.before, input.after)) {
+    return {sent: 0, failed: 0, recipients: 0};
+  }
+
+  const lectureRef = db.collection("lectures").doc(input.lectureId);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(lectureRef);
+    if (!snap.exists) return null;
+    const data = dataOf(snap.data());
+    if (
+      data.is_deleted === true ||
+      data.status !== "published" ||
+      data.publish_notification_sent === true
+    ) {
+      return null;
+    }
+    tx.update(lectureRef, {
+      publish_notification_sent: true,
+      publish_notification_sent_at: FieldValue.serverTimestamp(),
+    });
+    return data;
+  });
+
+  if (!claimed) {
+    return {sent: 0, failed: 0, recipients: 0};
+  }
+
+  let subjectId = getString(claimed.subject_id)?.trim() ?? "";
+  if (!subjectId) {
+    const sectionId = getString(claimed.section_id)?.trim();
+    if (sectionId) {
+      const sectionSnap = await db.collection("subject_sections").doc(sectionId).get();
+      if (sectionSnap.exists) {
+        subjectId = getString(sectionSnap.data()?.subject_id)?.trim() ?? "";
+      }
+    }
+  }
+  if (!subjectId) {
+    return {sent: 0, failed: 0, recipients: 0};
+  }
+
+  const [subjectSnap, studentIds] = await Promise.all([
+    db.collection("subjects").doc(subjectId).get(),
+    resolveEnrolledSubjectStudentIds(subjectId),
+  ]);
+  if (!subjectSnap.exists || subjectSnap.data()?.is_deleted === true) {
+    return {sent: 0, failed: 0, recipients: 0};
+  }
+  if (studentIds.length === 0) {
+    return {sent: 0, failed: 0, recipients: 0};
+  }
+
+  const subjectTitle = getString(subjectSnap.data()?.title);
+  const lectureTitle = getString(claimed.title);
+  const basePayload = buildLecturePublishNotificationPayload({
+    lectureId: input.lectureId,
+    subjectId,
+    subjectTitle,
+    lectureTitle,
+  });
+
+  // Collect eligible enrolled students, increment each student's unread counter
+  // once, and prepare both in-app Firestore notification docs and FCM pushes.
+  const eligibleStudents: Array<{userId: string; hasTokens: boolean}> = [];
+  const tokenToDevice = new Map<string, {deviceId: string; userId: string; badge: number}>();
+  for (const userChunk of chunkArray(studentIds, 20)) {
+    const perUser = await Promise.all(
+      userChunk.map(async (studentId) => {
+        const userSnap = await db.collection("users").doc(studentId).get();
+        if (!userSnap.exists) return null;
+        const userData = dataOf(userSnap.data());
+        if (
+          userData.is_deleted === true ||
+          userData.account_status === "disabled" ||
+          (userData.approval_status && userData.approval_status !== "approved")
+        ) {
+          return null;
+        }
+        const [devices, badge] = await Promise.all([
+          getDeviceTokens(studentId),
+          incrementUserUnreadBadgeCount(studentId),
+        ]);
+        return {
+          studentId,
+          badge,
+          devices,
+        };
+      }),
+    );
+    for (const userEntry of perUser) {
+      if (!userEntry) continue;
+      eligibleStudents.push({
+        userId: userEntry.studentId,
+        hasTokens: userEntry.devices.length > 0,
+      });
+      for (const device of userEntry.devices) {
+        if (!tokenToDevice.has(device.token)) {
+          tokenToDevice.set(device.token, {
+            deviceId: device.id,
+            userId: userEntry.studentId,
+            badge: userEntry.badge,
+          });
+        }
+      }
+    }
+  }
+
+  // Write in-app notification documents (up to 500 per WriteBatch) so all
+  // eligible students immediately see the lecture alert in NotificationsScreen.
+  const nowSentinel = FieldValue.serverTimestamp();
+  for (const studentChunk of chunkArray(eligibleStudents, 500)) {
+    const batch = db.batch();
+    for (const studentEntry of studentChunk) {
+      const docId = `lecture_pub_${input.lectureId}_${studentEntry.userId}`;
+      batch.set(
+        db.collection("notifications").doc(docId),
+        buildLecturePublishInAppNotificationDoc({
+          studentId: studentEntry.userId,
+          lectureId: input.lectureId,
+          subjectId,
+          title: basePayload.title,
+          body: basePayload.body,
+          deepLink: basePayload.data.deep_link,
+          hasTokens: studentEntry.hasTokens,
+          sentTimestamp: nowSentinel,
+          nowTimestamp: nowSentinel,
+        }),
+      );
+    }
+    await batch.commit();
+  }
+
+  const allEntries = Array.from(tokenToDevice.entries());
+  if (allEntries.length === 0) {
+    return {sent: 0, failed: 0, recipients: eligibleStudents.length};
+  }
+
+  const messaging = getMessaging();
+  let sent = 0;
+  let failed = 0;
+
+  for (const entryChunk of chunkArray(allEntries, 500)) {
+    const messages: Message[] = entryChunk.map(([token, refInfo]) => ({
+      token,
+      notification: {
+        title: basePayload.title,
+        body: basePayload.body,
+      },
+      data: basePayload.data,
+      android: basePayload.android,
+      apns: {
+        ...basePayload.apns,
+        payload: {
+          aps: {
+            ...basePayload.apns.payload.aps,
+            badge: refInfo.badge,
+          },
+        },
+      },
+    }));
+
+    const response = await messaging.sendEach(messages);
+
+    for (let i = 0; i < response.responses.length; i += 1) {
+      const result = response.responses[i];
+      if (result.success) {
+        sent += 1;
+        continue;
+      }
+      failed += 1;
+      const errorCode = result.error?.code ?? "";
+      if (
+        errorCode === "messaging/registration-token-not-registered" ||
+        errorCode === "messaging/invalid-registration-token"
+      ) {
+        const refInfo = entryChunk[i][1];
+        if (refInfo.deviceId.startsWith("user_")) {
+          await db.collection("users").doc(refInfo.userId).update({
+            fcm_token: null,
+            updated_at: FieldValue.serverTimestamp(),
+            updated_by: "system",
+          });
+        } else {
+          await removeInvalidToken(refInfo.deviceId);
+        }
+      }
+    }
+  }
+
+  console.log(
+    `onLecturePublishedNotify(${input.lectureId}): sent=${sent}, failed=${failed}, inApp=${eligibleStudents.length}`,
+  );
+  return {sent, failed, recipients: eligibleStudents.length};
+}
+
+export const resetUnreadNotificationsCount = onCall(SECURE_CALL_OPTS, async (request) => {
+  const userId = requireAuthenticated(request);
+  const userRef = db.collection("users").doc(userId);
+  const snap = await userRef.get();
+  if (snap.exists) {
+    await userRef.update({
+      unread_notifications_count: 0,
+      updated_at: FieldValue.serverTimestamp(),
+      updated_by: userId,
+    });
+  }
+  return {success: true, unreadCount: 0};
+});
+
+export const onLecturePublishedNotify = onDocumentWritten("lectures/{lectureId}", async (event) => {
+  const before = event.data?.before.exists ? event.data.before.data() : undefined;
+  const after = event.data?.after.exists ? event.data.after.data() : undefined;
+  await handleLecturePublishedNotification({
+    lectureId: event.params.lectureId,
+    before,
+    after,
+  });
+});
+
 export const setDefaultStorageProvider = onCall(SECURE_CALL_OPTS, async (request) => {
   const doctorId = requireDoctor(request);
   const provider = getString(request.data?.provider)?.toLowerCase();
@@ -10223,8 +10949,8 @@ async function purgeUserAccount(
   targetUid: string,
   targetSnapshot: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>,
   actorUid: string,
-  actorRole: "doctor" | "student",
-  actionType: "account_deleted_self" | "account_deleted_by_owner"
+  actorRole: "doctor" | "admin" | "student",
+  actionType: "account_deleted_self" | "account_deleted_by_owner" | "student_permanently_deleted"
 ): Promise<DeletionCounts> {
   const targetData = targetSnapshot.data() as Record<string, unknown> | undefined;
   const targetRole = getString(targetData?.role) ?? "student";
@@ -10587,4 +11313,131 @@ export const deleteAccountByOwner = onCall({...SECURE_CALL_OPTS, timeoutSeconds:
 
   return {success: true, deleted: counts};
 });
+
+async function deleteCollectionMatchesInBatches(
+  query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>,
+): Promise<number> {
+  let deleted = 0;
+  while (true) {
+    const snap = await query.limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      batch.delete(doc.ref);
+    }
+    await batch.commit();
+    deleted += snap.size;
+  }
+  return deleted;
+}
+
+export const permanentlyDeleteArchivedItem = onCall(
+  {...SECURE_CALL_OPTS, timeoutSeconds: 300},
+  async (request) => {
+    const entityType = getString(request.data?.entityType);
+    const targetId = getString(request.data?.targetId);
+    if (!targetId || (entityType !== "student" && entityType !== "subject" && entityType !== "lecture")) {
+      throw new HttpsError(
+        "invalid-argument",
+        "entityType ('student' | 'subject' | 'lecture') and targetId are required.",
+      );
+    }
+
+    if (entityType === "student") {
+      const authorization = await requireStudentAccessManager(request);
+      const userSnap = await db.collection("users").doc(targetId).get();
+      if (!userSnap.exists) {
+        throw new HttpsError("not-found", "Student not found.");
+      }
+      const userData = userSnap.data() as Record<string, unknown> | undefined;
+      if (!isStudentArchiveEligibleRole(userData?.role)) {
+        throw new HttpsError("permission-denied", "Only student accounts can be permanently deleted from Archive.");
+      }
+      if (!isArchivedRecord(userData)) {
+        throw new HttpsError("failed-precondition", "Archive the student before permanent deletion.");
+      }
+      const counts = await purgeUserAccount(
+        targetId,
+        userSnap,
+        authorization.actorId,
+        authorization.actorRole,
+        "student_permanently_deleted",
+      );
+      return {success: true, entityType, targetId, deleted: counts};
+    }
+
+    const authorization = await requireContentManager(request);
+    if (entityType === "lecture") {
+      const lectureRef = db.collection("lectures").doc(targetId);
+      const lectureSnap = await lectureRef.get();
+      if (!lectureSnap.exists) {
+        throw new HttpsError("not-found", "Lecture not found.");
+      }
+      if (!isArchivedRecord(lectureSnap.data() as Record<string, unknown> | undefined)) {
+        throw new HttpsError("failed-precondition", "Archive the lecture before permanent deletion.");
+      }
+      await deleteCollectionMatchesInBatches(
+        db.collection("lecture_resources").where("lecture_id", "==", targetId),
+      );
+      await deleteCollectionMatchesInBatches(
+        db.collection("lecture_access_grants").where("lecture_id", "==", targetId),
+      );
+      await lectureRef.delete();
+      await db.collection("admin_audit_log").add({
+        action: "lecture_permanently_deleted",
+        entity: "lecture",
+        target_id: targetId,
+        actor_id: authorization.actorId,
+        actor_role: authorization.actorRole,
+        permission_basis: authorization.permissionBasis,
+        created_at: FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return {success: true, entityType, targetId};
+    }
+
+    // Subject permanent delete: cascades child sections, lectures, resources, grants & assignments.
+    const subjectRef = db.collection("subjects").doc(targetId);
+    const subjectSnap = await subjectRef.get();
+    if (!subjectSnap.exists) {
+      throw new HttpsError("not-found", "Subject not found.");
+    }
+    if (!isArchivedRecord(subjectSnap.data() as Record<string, unknown> | undefined)) {
+      throw new HttpsError("failed-precondition", "Archive the subject before permanent deletion.");
+    }
+    const lecturesSnap = await db.collection("lectures").where("subject_id", "==", targetId).get();
+    for (const lecDoc of lecturesSnap.docs) {
+      await deleteCollectionMatchesInBatches(
+        db.collection("lecture_resources").where("lecture_id", "==", lecDoc.id),
+      );
+      await deleteCollectionMatchesInBatches(
+        db.collection("lecture_access_grants").where("lecture_id", "==", lecDoc.id),
+      );
+    }
+    await deleteCollectionMatchesInBatches(
+      db.collection("lectures").where("subject_id", "==", targetId),
+    );
+    await deleteCollectionMatchesInBatches(
+      db.collection("subject_sections").where("subject_id", "==", targetId),
+    );
+    await deleteCollectionMatchesInBatches(
+      db.collection("subject_access_assignments").where("subject_id", "==", targetId),
+    );
+    await deleteCollectionMatchesInBatches(
+      db.collection("subject_device_authorizations").where("subject_id", "==", targetId),
+    );
+    await subjectRef.delete();
+    await db.collection("admin_audit_log").add({
+      action: "subject_permanently_deleted",
+      entity: "subject",
+      target_id: targetId,
+      actor_id: authorization.actorId,
+      actor_role: authorization.actorRole,
+      permission_basis: authorization.permissionBasis,
+      created_at: FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
+    });
+    return {success: true, entityType, targetId};
+  },
+);
 

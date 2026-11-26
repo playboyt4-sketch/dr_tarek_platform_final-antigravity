@@ -1,21 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../applications/presentation/widgets/application_decision_dialog.dart';
 import '../../../home/presentation/providers/home_stats_provider.dart';
 import '../providers/grade_pending_requests_provider.dart';
 import '../providers/grade_students_provider.dart';
-import 'grade_students_screen.dart'
-    show gradeAccent;
-
-const List<({String key, String label})> _grades =
-    <({String key, String label})>[
-  (key: 'grade_one', label: 'Grade One'),
-  (key: 'grade_two', label: 'Grade Two'),
-  (key: 'grade_three', label: 'Grade Three'),
-  (key: 'grade_four', label: 'Grade Four'),
-];
+import '../widgets/grade_nav_bar.dart';
+import 'grade_students_screen.dart' show gradeAccent;
 
 /// Grade pending-requests screen (`# Grade- Grade one pending requests`):
 /// fixed 1280 x 800 canvas, pure white.
@@ -87,107 +80,73 @@ class _GradePendingRequestsScreenState
   Widget build(BuildContext context) {
     return Material(
       color: const Color(0xFFFFFFFF),
-      child: SingleChildScrollView(
-        clipBehavior: Clip.antiAlias,
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          clipBehavior: Clip.antiAlias,
-          child: SizedBox(
-            width: 1280,
-            height: 800,
-            child: Stack(
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final DashboardBreakpoint breakpoint =
+              breakpointForWidth(constraints.maxWidth);
+          final bool isMobile = breakpoint == DashboardBreakpoint.mobile;
+          final double horizontalPadding = switch (breakpoint) {
+            DashboardBreakpoint.mobile => 16,
+            DashboardBreakpoint.tablet => 28,
+            DashboardBreakpoint.desktop => 48,
+          };
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              isMobile ? 12 : 20,
+              horizontalPadding,
+              32,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Positioned(
-                  left: 370,
-                  top: 24,
-                  width: 540,
-                  height: 80,
-                  child: IgnorePointer(child: _BrandLockup()),
+                const ResponsiveScreenHeader(),
+                SizedBox(height: isMobile ? 8 : 20),
+                GradeNavBar(
+                  gradeKey: _gradeKey,
+                  onGradeSelected: (String key) =>
+                      setState(() => _gradeKey = key),
                 ),
-                Positioned(
-                  left: 310,
-                  top: 136,
-                  width: 660,
-                  height: 40,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: const Color(0xFF979797),
-                        width: 1,
-                        strokeAlign: BorderSide.strokeAlignInside,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        for (int i = 0; i < _grades.length; i++)
-                          ...<Widget>[
-                          if (i > 0) const SizedBox(width: 4),
-                          _GradePill(
-                            label: _grades[i].label,
-                            active: _grades[i].key == _gradeKey,
-                            accent: gradeAccent(_grades[i].key),
-                            onTap: () => setState(
-                              () => _gradeKey = _grades[i].key,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                const SizedBox(height: 14),
+                StudentsSubjectsTabs(
+                  studentsActive: true,
+                  accent: _accent,
+                  onStudentsTap: () =>
+                      widget.onStudentsTab?.call(_gradeKey),
+                  onSubjectsTap: () =>
+                      widget.onSubjectsTab?.call(_gradeKey),
                 ),
-                Positioned(
-                  left: 472,
-                  top: 190,
-                  width: 336,
-                  height: 40,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      _SectionTab(
-                        label: 'Students',
-                        active: true,
-                        accent: _accent,
-                        onTap: () =>
-                            widget.onStudentsTab?.call(_gradeKey),
+                const SizedBox(height: 20),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 448),
+                    child: Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: isMobile ? 14 : 18,
                       ),
-                      const SizedBox(width: 4),
-                      _SectionTab(
-                        label: 'Subjects',
-                        active: false,
-                        accent: _accent,
-                        onTap: () =>
-                            widget.onSubjectsTab?.call(_gradeKey),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(9999),
+                        border: Border.all(color: _accent, width: 1.5),
                       ),
-                    ],
-                  ),
-                ),
-                // # pending requests banner (416, 270, 448 x 76).
-                Positioned(
-                  left: 416,
-                  top: 270,
-                  width: 448,
-                  height: 76,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(9999),
-                      border: Border.all(color: _accent, width: 1.5),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Text(
-                      'Pending Requests',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF374151),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Pending Requests',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: isMobile ? 22 : 28,
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFF374151),
+                        ),
                       ),
                     ),
                   ),
                 ),
+                const SizedBox(height: 24),
                 _PendingRequestsTable(
                   gradeKey: _gradeKey,
                   accent: _accent,
@@ -195,134 +154,15 @@ class _GradePendingRequestsScreenState
                 ),
               ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-class _BrandLockup extends StatelessWidget {
-  const _BrandLockup();
-
-  @override
-  Widget build(BuildContext context) {
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.centerLeft,
-      child: Text.rich(
-        TextSpan(
-          children: <TextSpan>[
-            TextSpan(
-              text: 'Tarek el araby ',
-              style: AppTypography.homeBrandHeavy(fontSize: 48),
-            ),
-            TextSpan(
-              text: 'Platform',
-              style: AppTypography.homeBrandLight(fontSize: 48).copyWith(
-                color: AppColors.ink,
-              ),
-            ),
-          ],
-        ),
-        maxLines: 1,
-      ),
-    );
-  }
-}
-
-class _GradePill extends StatelessWidget {
-  final String label;
-  final bool active;
-  final Color accent;
-  final VoidCallback onTap;
-
-  const _GradePill({
-    required this.label,
-    required this.active,
-    required this.accent,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 160,
-      height: 32,
-      child: Material(
-        color: active ? accent : Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(28),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: active
-                    ? const Color(0xFFFFFFFF)
-                    : const Color(0xFF374151),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionTab extends StatelessWidget {
-  final String label;
-  final bool active;
-  final Color accent;
-  final VoidCallback onTap;
-
-  const _SectionTab({
-    required this.label,
-    required this.active,
-    required this.accent,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 160,
-      height: 32,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 14,
-                fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-                color: active ? accent : const Color(0xFF6B7280),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              height: 2,
-              width: 64,
-              color: active ? accent : Colors.transparent,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Pending requests table (78, 420, 1120 x 390): 40 px sticky header +
-/// scrollable 48 px rows with 88 x 32 View buttons.
+/// Pending requests table: expands to full width on desktop, horizontally
+/// scrollable on mobile/narrow tablets.
 class _PendingRequestsTable extends ConsumerWidget {
   final String gradeKey;
   final Color accent;
@@ -338,30 +178,29 @@ class _PendingRequestsTable extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AsyncValue<List<PendingRequestRow>> rowsAsync =
         ref.watch(gradePendingRequestsProvider(gradeKey));
-    return Positioned(
-      left: 78,
-      top: 420,
-      width: 1120,
-      height: 390,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-            boxShadow: const <BoxShadow>[
-              BoxShadow(
-                color: Color(0x0D000000),
-                blurRadius: 20,
-                offset: Offset(0, 4),
-              ),
-            ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x0D000000),
+              blurRadius: 20,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: rowsAsync.when(
+          loading: () => const SizedBox(
+            height: 200,
+            child: Center(child: CircularProgressIndicator()),
           ),
-          child: rowsAsync.when(
-            loading: () =>
-                const Center(child: CircularProgressIndicator()),
-            error: (Object error, StackTrace stackTrace) => const Center(
+          error: (Object error, StackTrace stackTrace) => const SizedBox(
+            height: 200,
+            child: Center(
               child: Text(
                 'Could not load requests.',
                 style: TextStyle(
@@ -371,47 +210,53 @@ class _PendingRequestsTable extends ConsumerWidget {
                 ),
               ),
             ),
-            data: (List<PendingRequestRow> rows) {
-              return Column(
+          ),
+          data: (List<PendingRequestRow> rows) {
+            return ResponsiveHorizontalTable(
+              minTableWidth: 880,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   const _TableHeader(),
                   Container(height: 1, color: const Color(0xFFE5E7EB)),
-                  Expanded(
-                    child: rows.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No pending requests.',
-                              style: TextStyle(
-                                fontFamily: AppTypography.fontFamily,
-                                fontSize: 14,
-                                color: Color(0xFF6B7280),
-                              ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: EdgeInsets.zero,
-                            itemCount: rows.length,
-                            separatorBuilder:
-                                (BuildContext context, int index) =>
-                                    Container(
-                              height: 1,
-                              color: const Color(0xFFF3F4F6),
-                            ),
-                            itemBuilder:
-                                (BuildContext context, int index) {
-                              return _RequestRow(
-                                number: index + 1,
-                                row: rows[index],
-                                accent: accent,
-                                onView: () => onView(rows[index]),
-                              );
-                            },
+                  if (rows.isEmpty)
+                    const SizedBox(
+                      height: 180,
+                      child: Center(
+                        child: Text(
+                          'No pending requests.',
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 14,
+                            color: Color(0xFF6B7280),
                           ),
-                  ),
+                        ),
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: rows.length,
+                      separatorBuilder: (BuildContext context, int index) =>
+                          Container(
+                        height: 1,
+                        color: const Color(0xFFF3F4F6),
+                      ),
+                      itemBuilder: (BuildContext context, int index) {
+                        return _RequestRow(
+                          number: index + 1,
+                          row: rows[index],
+                          accent: accent,
+                          onView: () => onView(rows[index]),
+                        );
+                      },
+                    ),
                 ],
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ),
     );

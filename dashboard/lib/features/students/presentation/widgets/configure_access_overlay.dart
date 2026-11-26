@@ -108,25 +108,31 @@ class _ConfigureAccessOverlayState extends State<ConfigureAccessOverlay> {
     }).toList();
 
     return Center(
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 640,
-          height: 520,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x29000000),
-                blurRadius: 32,
-                offset: Offset(0, 12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Material(
+          color: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 640,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+            ),
+            child: Container(
+              width: double.infinity,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x29000000),
+                    blurRadius: 32,
+                    offset: Offset(0, 12),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Column(
-            children: [
+              child: Column(
+                children: [
               // Top Header
               Padding(
                 padding: const EdgeInsets.only(left: 36, right: 24, top: 20, bottom: 12),
@@ -292,6 +298,8 @@ class _ConfigureAccessOverlayState extends State<ConfigureAccessOverlay> {
             ],
           ),
         ),
+        ),
+      ),
       ),
     );
   }

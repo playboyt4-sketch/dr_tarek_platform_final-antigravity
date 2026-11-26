@@ -20,6 +20,10 @@ class VideoPlayerLayout extends StatelessWidget {
 
   /// Saves a bookmark at the current playback position (null hides the action).
   final VoidCallback? onBookmarkTap;
+  final VoidCallback? onDownloadTap;
+  final bool isDownloading;
+  final bool isDownloaded;
+  final double downloadProgress;
 
   /// Watermark text to display (defaults to controller.userId if omitted).
   final String? watermarkText;
@@ -37,6 +41,10 @@ class VideoPlayerLayout extends StatelessWidget {
     required this.onToggleControls,
     this.onUpgradeTap,
     this.onBookmarkTap,
+    this.onDownloadTap,
+    this.isDownloading = false,
+    this.isDownloaded = false,
+    this.downloadProgress = 0.0,
     this.watermarkText,
     this.sectionButtonLabel = 'Lectures',
     super.key,
@@ -86,6 +94,10 @@ class VideoPlayerLayout extends StatelessWidget {
             onToggleControls: onToggleControls,
             onUpgradeTap: onUpgradeTap,
             onBookmarkTap: onBookmarkTap,
+            onDownloadTap: onDownloadTap,
+            isDownloading: isDownloading,
+            isDownloaded: isDownloaded,
+            downloadProgress: downloadProgress,
             sectionButtonLabel: sectionButtonLabel,
           ),
         ],

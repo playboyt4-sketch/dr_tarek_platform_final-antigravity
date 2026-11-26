@@ -30,6 +30,7 @@ class DashboardSubject {
   /// Student Home avatar badge, which follows the centered card's plan.
   final String? planKey;
   final int displayOrder;
+  final DateTime? updatedAt;
   final DashboardSubjectAccessState subjectAccessState;
   final DashboardSubscriptionState subscriptionState;
   final DashboardEntitlementState entitlementState;
@@ -60,6 +61,7 @@ class DashboardSubject {
     this.gradeKey,
     this.planKey,
     required this.displayOrder,
+    this.updatedAt,
     this.subjectAccessState = DashboardSubjectAccessState.enabled,
     this.subscriptionState = DashboardSubscriptionState.active,
     this.entitlementState = DashboardEntitlementState.ready,

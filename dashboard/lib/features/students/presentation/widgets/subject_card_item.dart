@@ -17,6 +17,7 @@ class SubjectCardItem extends StatefulWidget {
   final int onlineCount;
   final Color gradeColor;
   final VoidCallback onTap;
+  final VoidCallback? onArchiveTap;
 
   const SubjectCardItem({
     super.key,
@@ -28,6 +29,7 @@ class SubjectCardItem extends StatefulWidget {
     required this.onlineCount,
     required this.gradeColor,
     required this.onTap,
+    this.onArchiveTap,
   });
 
   @override
@@ -48,7 +50,7 @@ class _SubjectCardItemState extends State<SubjectCardItem> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
-          width: 540,
+          width: double.infinity,
           height: 128,
           decoration: BoxDecoration(
             color: Colors.white,
@@ -76,41 +78,69 @@ class _SubjectCardItemState extends State<SubjectCardItem> {
                   children: [
                     // Subject Name
                     Center(
-                      child: Text(
-                        widget.title,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontFamily: 'Google Sans Flex',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 48,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                    ),
-                    // Status Dot Indicator (Top Right)
-                    Positioned(
-                      top: 14,
-                      right: 18,
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        padding: const EdgeInsets.all(2),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.transparent,
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: 14,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: widget.isActive
-                                  ? const Color(0xFF34C759)
-                                  : const Color(0xFFEF4444),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 42),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            widget.title,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontFamily: 'Google Sans Flex',
+                              fontWeight: FontWeight.w400,
+                              fontSize: 38,
+                              color: Color(0xFF6B7280),
                             ),
                           ),
                         ),
+                      ),
+                    ),
+                    // Status Dot Indicator & Archive Action (Top Right)
+                    Positioned(
+                      top: 12,
+                      right: 16,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          if (widget.onArchiveTap != null)
+                            Tooltip(
+                              message: 'Move to Archive',
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(9999),
+                                onTap: widget.onArchiveTap,
+                                child: const Padding(
+                                  padding: EdgeInsets.all(4),
+                                  child: Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 18,
+                                    color: Color(0xFFDC2626),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          Container(
+                            width: 22,
+                            height: 22,
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.transparent,
+                            ),
+                            child: Center(
+                              child: Container(
+                                width: 14,
+                                height: 14,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: widget.isActive
+                                      ? const Color(0xFF34C759)
+                                      : const Color(0xFFEF4444),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -192,7 +222,7 @@ class _AddSubjectCardState extends State<AddSubjectCard> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
-          width: 540,
+          width: double.infinity,
           height: 128,
           decoration: BoxDecoration(
             color: Colors.white,

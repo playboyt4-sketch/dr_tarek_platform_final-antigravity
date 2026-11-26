@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../providers/grade_students_provider.dart' show GradeStudent;
 import '../providers/student_profile_subjects_provider.dart';
@@ -94,11 +95,11 @@ class _StudentProfileMembershipsTabState
     // instead of plan actions.
     if (isGuest) {
       return SizedBox(
-        width: 830,
+        width: double.infinity,
         child: Column(
           children: <Widget>[
             Container(
-              width: 830,
+              width: double.infinity,
               padding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 12,
@@ -157,7 +158,7 @@ class _StudentProfileMembershipsTabState
     }
 
     return SizedBox(
-      width: 830,
+      width: double.infinity,
       child: rowsAsync.when(
         loading: () => const SizedBox(
           height: 200,
@@ -221,7 +222,7 @@ class _MembershipsTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 830,
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
@@ -234,42 +235,46 @@ class _MembershipsTable extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        children: <Widget>[
-          const Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: <Widget>[
-                SizedBox(width: 56, child: _MembershipHeaderLabel('No.')),
-                SizedBox(width: 216, child: _MembershipHeaderLabel('Subjects')),
-                SizedBox(width: 146, child: _MembershipHeaderLabel('Grade')),
-                SizedBox(width: 116, child: _MembershipHeaderLabel('plan')),
-                SizedBox(width: 116, child: _MembershipHeaderLabel('Status')),
-                SizedBox(width: 156, child: _MembershipHeaderLabel('Action')),
-              ],
-            ),
-          ),
-          Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (rows.isEmpty)
+      child: ResponsiveHorizontalTable(
+        minTableWidth: 830,
+        child: Column(
+          children: <Widget>[
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'لا توجد مواد مسجلة لهذا الطالب بعد.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
+              padding: EdgeInsets.all(8),
+              child: Row(
+                children: <Widget>[
+                  SizedBox(width: 56, child: _MembershipHeaderLabel('No.')),
+                  SizedBox(
+                      width: 216, child: _MembershipHeaderLabel('Subjects')),
+                  SizedBox(width: 146, child: _MembershipHeaderLabel('Grade')),
+                  SizedBox(width: 116, child: _MembershipHeaderLabel('plan')),
+                  SizedBox(width: 116, child: _MembershipHeaderLabel('Status')),
+                  SizedBox(width: 156, child: _MembershipHeaderLabel('Action')),
+                ],
+              ),
+            ),
+            Container(height: 1, color: const Color(0xFFE5E7EB)),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'لا توجد مواد مسجلة لهذا الطالب بعد.',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
-              ),
-            )
-          else
-            for (int i = 0; i < rows.length; i++)
-              _MembershipDataRow(
-                state: state,
-                index: i,
-                row: rows[i],
-              ),
-        ],
+              )
+            else
+              for (int i = 0; i < rows.length; i++)
+                _MembershipDataRow(
+                  state: state,
+                  index: i,
+                  row: rows[i],
+                ),
+          ],
+        ),
       ),
     );
   }
