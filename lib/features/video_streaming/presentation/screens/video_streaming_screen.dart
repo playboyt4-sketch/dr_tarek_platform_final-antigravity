@@ -9,7 +9,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
 import '../../../subject_navigation/presentation/providers/subject_navigation_providers.dart';
 import '../../../subject_navigation/presentation/widgets/lecture_download_button.dart';
-import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
 import '../../../bookmarks/presentation/providers/bookmarks_providers.dart';
 import '../../data/repositories/playback_repository.dart';
@@ -55,6 +54,7 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
   VideoPlaybackController? _controller;
   Timer? _hideControlsTimer;
   bool _initializingController = false;
+  OpenableLectureDocument? _floatingPdf;
 
   @override
   void initState() {
@@ -271,110 +271,165 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
 
         return Scaffold(
           backgroundColor: Colors.black,
-          body: VideoPlayerLayout(
-            controller: _controller!,
-            watermarkText: watermarkText,
-            sectionButtonLabel: _sectionButtonLabel(),
-            onDownloadTap: () => _handlePlayerDownloadTap(downloadState),
-            isDownloading: downloadState.isDownloading,
-            isDownloaded: downloadState.isDownloaded,
-            downloadProgress: downloadState.progress,
-          onBack: () {
-            Navigator.pop(context);
-          },
-          onLecturesTap: _showEpisodesPanel,
-            onUpgradeTap: () {
-              final navigator = Navigator.of(context);
-              final user = ref.read(authProvider).value;
-              if (user == null) return;
-              unawaited(navigator.push(MaterialPageRoute(
-                builder: (_) => MembershipPlansScreen(user: user),
-              )));
-            },
-            onPdfTap: () async {
-              if (_controller == null) return;
-              final navigator = Navigator.of(context);
-              final messenger = ScaffoldMessenger.of(context);
-              try {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (_) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-
-                final resources = await _controller!.sourceResolver.loadResources(_controller!.lectureId);
-
-                if (mounted) {
-                  navigator.pop();
-                }
-
-                // Storage-delivery Fix 1: attachments join PDFs as openable
-                // documents. Provider dispatch stays in the Data layer —
-                // the sheet only forwards the opaque storageProvider string.
-                final documents = LectureDocuments.fromResources(resources);
-                if (documents.isEmpty) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('لا توجد ملفات متاحة لهذه المحاضرة.')),
-                    );
-                  }
-                  return;
-                }
-
-                // Legacy UX preserved: a lecture with exactly one document
-                // and it is the PDF -> open it directly (no sheet).
-                if (documents.length == 1 && documents.single.isPdf) {
-                  final pdf = documents.single;
-                  if (mounted) {
-                    await navigator.push(
-                      MaterialPageRoute(
-                        builder: (_) => PdfViewerScreen(
-                          resourceId: pdf.resourceId,
-                          title: pdf.title,
-                          subjectId: _controller!.subjectId,
-                          lectureId: _controller!.lectureId,
-                          storageProvider: pdf.storageProvider,
-                          videoController: _controller,
-                        ),
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              VideoPlayerLayout(
+                controller: _controller!,
+                watermarkText: watermarkText,
+                sectionButtonLabel: _sectionButtonLabel(),
+                onDownloadTap: () => _handlePlayerDownloadTap(downloadState),
+                isDownloading: downloadState.isDownloading,
+                isDownloaded: downloadState.isDownloaded,
+                downloadProgress: downloadState.progress,
+                onBack: () {
+                  Navigator.pop(context);
+                },
+                onLecturesTap: _showEpisodesPanel,
+                onUpgradeTap: () {
+                  final navigator = Navigator.of(context);
+                  final user = ref.read(authProvider).value;
+                  if (user == null) return;
+                  unawaited(navigator.push(MaterialPageRoute(
+                    builder: (_) => MembershipPlansScreen(user: user),
+                  )));
+                },
+                onPdfTap: () async {
+                  if (_controller == null) return;
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const Center(
+                        child: CircularProgressIndicator(),
                       ),
                     );
+
+                    final resources = await _controller!.sourceResolver
+                        .loadResources(_controller!.lectureId);
+
                     if (mounted) {
-                      ref.invalidate(dashboardSubjectsProvider);
+                      navigator.pop();
+                    }
+
+                    final documents = LectureDocuments.fromResources(resources);
+                    if (documents.isEmpty) {
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text('لا توجد ملفات متاحة لهذه المحاضرة.'),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+
+                    // Float PDF directly over the full-screen playing video
+                    // without pushing a new screen or shrinking the player.
+                    if (documents.length == 1 && documents.single.isPdf) {
+                      if (mounted) {
+                        setState(() => _floatingPdf = documents.single);
+                      }
+                      return;
+                    }
+
+                    if (!mounted) return;
+                    await showLectureDocumentsSheet(
+                      this.context,
+                      documents: documents,
+                      subjectId: _controller!.subjectId,
+                      lectureId: _controller!.lectureId,
+                      videoController: _controller,
+                      onOpenPdf: (doc) {
+                        if (mounted) {
+                          setState(() => _floatingPdf = doc);
+                        }
+                      },
+                    );
+                  } catch (_) {
+                    if (mounted) {
+                      navigator.pop();
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('تعذر تحميل موارد المحاضرة.'),
+                        ),
+                      );
                     }
                   }
-                  return;
-                }
-
-                if (!mounted) return;
-                await showLectureDocumentsSheet(
-                  this.context,
-                  documents: documents,
-                  subjectId: _controller!.subjectId,
-                  lectureId: _controller!.lectureId,
-                  videoController: _controller,
-                );
-              } catch (_) {
-                if (mounted) {
-                  navigator.pop();
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('تعذر تحميل موارد المحاضرة.')),
-                  );
-                }
-              }
-            },
-            onQualityTap: _showQualitySheet,
-            onBookmarkTap: _saveBookmark,
-            onNextTap: () {
-              if (_controller!.hasNextEpisode) {
-                _controller!.nextEpisode();
-              }
-            },
-            onToggleControls: () {
-              _controller!.toggleControls();
-              _scheduleHideControls();
-            },
+                },
+                onQualityTap: _showQualitySheet,
+                onBookmarkTap: _saveBookmark,
+                onNextTap: () {
+                  if (_controller!.hasNextEpisode) {
+                    _controller!.nextEpisode();
+                  }
+                },
+                onToggleControls: () {
+                  _controller!.toggleControls();
+                  _scheduleHideControls();
+                },
+              ),
+              if (_controller!.isPlayingOffline)
+                Positioned(
+                  top: MediaQuery.paddingOf(context).top + 12,
+                  right: MediaQuery.paddingOf(context).right + 16,
+                  child: IgnorePointer(
+                    child: Container(
+                      key: const ValueKey('player_offline_mode_badge'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xD9065F46),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFF34D399)),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.offline_pin_rounded,
+                            color: Colors.white,
+                            size: 14,
+                          ),
+                          SizedBox(width: 5),
+                          Text(
+                            'Offline Mode',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              if (_floatingPdf != null)
+                Positioned.fill(
+                  child: SafeArea(
+                    child: PdfViewerScreen(
+                      key: ValueKey('floating_pdf_${_floatingPdf!.resourceId}'),
+                      resourceId: _floatingPdf!.resourceId,
+                      title: _floatingPdf!.title,
+                      subjectId: _controller!.subjectId,
+                      lectureId: _controller!.lectureId,
+                      storageProvider: _floatingPdf!.storageProvider,
+                      videoController: _controller,
+                      embeddedOverlay: true,
+                      onClose: () {
+                        if (mounted) {
+                          setState(() => _floatingPdf = null);
+                        }
+                      },
+                    ),
+                  ),
+                ),
+            ],
           ),
         );
       },

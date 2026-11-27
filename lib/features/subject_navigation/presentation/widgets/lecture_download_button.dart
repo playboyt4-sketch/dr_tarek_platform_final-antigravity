@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -145,6 +146,11 @@ class _LectureDownloadButtonState extends ConsumerState<LectureDownloadButton> {
     if (userId == null || userId.isEmpty) {
       try {
         userId = (await ref.read(authProvider.future))?.id;
+      } catch (_) {}
+    }
+    if (userId == null || userId.isEmpty) {
+      try {
+        userId = FirebaseAuth.instance.currentUser?.uid;
       } catch (_) {}
     }
     if (!mounted) return;
@@ -294,6 +300,19 @@ class _LectureDownloadButtonState extends ConsumerState<LectureDownloadButton> {
         const LectureDownloadState();
 
     if (downloadState.isDownloading) {
+      if (downloadState.isPreparing && downloadState.progress <= 0) {
+        return Tooltip(
+          message: 'جاري تجهيز التحميل...',
+          child: SizedBox(
+            width: context.rs(28),
+            height: context.rs(28),
+            child: const CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: Color(0xFF1D4ED8),
+            ),
+          ),
+        );
+      }
       final clamped = downloadState.progress.clamp(0.01, 1.0);
       final percentage = (clamped * 100).round().clamp(1, 100);
       return Tooltip(

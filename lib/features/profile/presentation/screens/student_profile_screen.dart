@@ -42,9 +42,7 @@ abstract final class _StudentProfileDesign {
   static const gutter = 24.0;
   static const backTop = 14.0;
   static const backSize = 44.0;
-  static const headerGap = 14.0;
   static const avatarSize = 100.0;
-  static const sectionGap = 16.0;
   static const subjectsBoxBorder = Color(0xFFD0D0D0);
 }
 
@@ -477,85 +475,90 @@ class _StudentProfileScreenState extends ConsumerState<StudentProfileScreen> {
         child: Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: context.contentMaxWidth),
-            child: ListView(
+            child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: context.rs(_StudentProfileDesign.gutter),
               ),
-              children: [
-                // Figma reserves ~50px of status-bar chrome above the back
-                // button (24,64). Real devices get it from SafeArea; on
-                // notch-less platforms (web/desktop) the safe padding is
-                // zero, so the chrome gap is emulated there — otherwise
-                // the arrow hugs the viewport top edge.
-                _TopChromeGap(),
-                // Back (Figma 24,64 44x44 glass circle). Pinned to LTR so
-                // the arrow always points left like Figma — the ambient
-                // RTL mirrors `arrow_back` to point right.
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: _GlassCircleButton(
-                      tooltip: 'رجوع',
-                      icon: Icons.arrow_back_rounded,
-                      onTap: () => Navigator.of(context).maybePop(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Figma reserves ~50px of status-bar chrome above the back
+                  // button (24,64). Real devices get it from SafeArea; on
+                  // notch-less platforms (web/desktop) the safe padding is
+                  // zero, so the chrome gap is emulated there — otherwise
+                  // the arrow hugs the viewport top edge.
+                  const _TopChromeGap(),
+                  // Back (Figma 24,64 44x44 glass circle). Pinned to LTR so
+                  // the arrow always points left like Figma — the ambient
+                  // RTL mirrors `arrow_back` to point right.
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: _GlassCircleButton(
+                        tooltip: 'رجوع',
+                        icon: Icons.arrow_back_rounded,
+                        onTap: () => Navigator.of(context).maybePop(),
+                      ),
                     ),
                   ),
-                ),
-                SizedBox(height: context.rsV(_StudentProfileDesign.headerGap)),
-                // Header capsule (Figma 24,122 345 white 15% r9999).
-                _HeaderCard(
-                  fullName: _fullName,
-                  gradeLabel: _gradeLabel(user.grade),
-                  phone: user.phoneNumber,
-                  photoUrl: _photoUrl,
-                  onEdit: _openEditSheet,
-                ),
-                SizedBox(height: context.rsV(_StudentProfileDesign.sectionGap)),
-                // Change password (Figma 24,238 345 white pill r28).
-                _WhitePillButton(
-                  label: 'Change password',
-                  foreground: canvas,
-                  onTap: _openChangePassword,
-                ),
-                SizedBox(height: context.rsV(_StudentProfileDesign.sectionGap)),
-                // Subjects panel (Figma 24,300 345x258).
-                _SubjectsPanel(
-                  canvas: canvas,
-                  subjectsAsync: subjectsAsync,
-                  onRetry: () => ref.invalidate(dashboardSubjectsProvider),
-                ),
-                if (biometricSupported) ...[
-                  SizedBox(height: context.rsV(_StudentProfileDesign.sectionGap)),
-                  _BiometricLockTile(
-                    canvas: canvas,
-                    enabled: biometricLockEnabled,
-                    busy: _isTogglingBiometric,
-                    onChanged: _onToggleBiometricLock,
+                  SizedBox(height: context.rsV(10)),
+                  // Header capsule (Figma 24,122 345 white 15% r9999).
+                  _HeaderCard(
+                    fullName: _fullName,
+                    gradeLabel: _gradeLabel(user.grade),
+                    phone: user.phoneNumber,
+                    photoUrl: _photoUrl,
+                    onEdit: _openEditSheet,
                   ),
-                ],
-                SizedBox(height: context.rsV(32)),
-                // Account actions (white pills like the rest of the
-                // screen — the blue outlined style clashed with the
-                // grade canvas).
-                _WhitePillButton(
-                  label: 'Logout',
-                  foreground: canvas,
-                  onTap: () => ref.read(authProvider.notifier).logout(),
-                ),
-                if (_showDangerZone(user)) ...[
-                  SizedBox(
-                    height: context.rsV(_StudentProfileDesign.sectionGap),
-                  ),
-                  // Delete My Account (Figma 21,768 345 white pill r28).
+                  SizedBox(height: context.rsV(12)),
+                  // Change password (Figma 24,238 345 white pill r28).
                   _WhitePillButton(
-                    label: 'Delete My Account',
+                    label: 'Change password',
                     foreground: canvas,
-                    onTap: _showDeleteAccountDialog,
+                    onTap: _openChangePassword,
                   ),
+                  SizedBox(height: context.rsV(12)),
+                  // Subjects panel: takes only the space it needs and scrolls
+                  // internally if the student has many subjects — the outer
+                  // profile page stays fixed with zero unwanted scroll.
+                  Flexible(
+                    child: _SubjectsPanel(
+                      canvas: canvas,
+                      subjectsAsync: subjectsAsync,
+                      onRetry: () => ref.invalidate(dashboardSubjectsProvider),
+                    ),
+                  ),
+                  if (biometricSupported) ...[
+                    SizedBox(height: context.rsV(12)),
+                    _BiometricLockTile(
+                      canvas: canvas,
+                      enabled: biometricLockEnabled,
+                      busy: _isTogglingBiometric,
+                      onChanged: _onToggleBiometricLock,
+                    ),
+                  ],
+                  SizedBox(height: context.rsV(14)),
+                  // Account actions (white pills like the rest of the
+                  // screen — the blue outlined style clashed with the
+                  // grade canvas).
+                  _WhitePillButton(
+                    label: 'Logout',
+                    foreground: canvas,
+                    onTap: () => ref.read(authProvider.notifier).logout(),
+                  ),
+                  if (_showDangerZone(user)) ...[
+                    SizedBox(height: context.rsV(10)),
+                    // Delete My Account (Figma 21,768 345 white pill r28).
+                    _WhitePillButton(
+                      label: 'Delete My Account',
+                      foreground: canvas,
+                      onTap: _showDeleteAccountDialog,
+                    ),
+                  ],
+                  SizedBox(height: context.rsV(12)),
                 ],
-                SizedBox(height: context.rsV(24)),
-              ],
+              ),
             ),
           ),
         ),
@@ -1003,11 +1006,13 @@ class _SubjectsPanel extends StatelessWidget {
                       style: TextStyle(color: Colors.white, fontSize: 14),
                     );
                   }
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (int i = 0; i < items.length; i++) ...[
+                  return SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (int i = 0; i < items.length; i++) ...[
                         if (i > 0) SizedBox(height: context.rsV(10)),
                         Row(
                           mainAxisSize: MainAxisSize.max,
@@ -1115,7 +1120,8 @@ class _SubjectsPanel extends StatelessWidget {
                         ),
                       ],
                     ],
-                  );
+                  ),
+                );
                 },
               ),
             ),

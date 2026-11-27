@@ -14,6 +14,7 @@ import '../../../student_dashboard/presentation/providers/dashboard_providers.da
 import '../../domain/entities/subject_learning_entities.dart';
 import '../providers/subject_navigation_providers.dart';
 import '../widgets/lecture_download_button.dart';
+import '../../../video_streaming/data/services/video_download_service.dart';
 import '../../../video_streaming/presentation/screens/video_streaming_screen.dart';
 
 /// Double-tap guard: rapid repeated taps on a lecture/cover must not stack
@@ -1134,6 +1135,13 @@ class _LectureCard extends ConsumerWidget {
     final cachedDuration = ref.watch(
       lectureResolvedDurationProvider.select((map) => map[lecture.id]),
     );
+    final isOfflineReady = ref.watch(
+      videoDownloadControllerProvider.select(
+        (map) =>
+            (map[lecture.id]?.isDownloaded == true) &&
+            (map[lecture.id]?.isVideo == true),
+      ),
+    );
     final effectiveDuration =
         lecture.duration ?? mediaDuration ?? cachedDuration;
     final durationText = _formatDuration(effectiveDuration);
@@ -1180,6 +1188,46 @@ class _LectureCard extends ConsumerWidget {
                             )
                           else
                             const _CardPlayOverlay(),
+                          if (isOfflineReady)
+                            Positioned(
+                              top: context.rsV(8),
+                              left: context.rs(8),
+                              child: Container(
+                                key: ValueKey('card_offline_mode_${lecture.id}'),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: context.rs(8),
+                                  vertical: context.rsV(3),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xD9065F46),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: const Color(0xFF34D399),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.offline_pin_rounded,
+                                      size: context.rs(12),
+                                      color: Colors.white,
+                                    ),
+                                    SizedBox(width: context.rs(4)),
+                                    Text(
+                                      'Offline Mode',
+                                      style: TextStyle(
+                                        fontFamily:
+                                            AppFontFamilies.googleSansFlex,
+                                        color: Colors.white,
+                                        fontSize: context.rsFont(10),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),

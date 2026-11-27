@@ -60,6 +60,9 @@ class VideoPlaybackController extends ChangeNotifier {
   /// sandbox MP4 copy if present and valid before touching the network.
   final bool preferOffline;
 
+  /// True while the active video engine is playing from a local offline file.
+  bool isPlayingOffline = false;
+
   /// Optional test seam for resolving a local downloaded MP4 path.
   final Future<String?> Function({
     required String subjectId,
@@ -401,6 +404,21 @@ class VideoPlaybackController extends ChangeNotifier {
       );
     } catch (error) {
       if (!_disposed && operation == _operationId) {
+        if (!kIsWeb) {
+          try {
+            final fallbackOfflinePath = await _resolveLocalOfflinePath();
+            if (!_disposed &&
+                operation == _operationId &&
+                fallbackOfflinePath != null) {
+              await _loadOfflineEngine(
+                operation: operation,
+                filePath: fallbackOfflinePath,
+                autoplay: true,
+              );
+              return;
+            }
+          } catch (_) {}
+        }
         // DIAGNOSIS-ONLY: full op context for the permission-denied hunt.
         debugPrint(
           '[VIDEO-DIAG] player initialize FAILED stage=$stage userId=$userId subjectId=$subjectId lectureId=$lectureId '
@@ -705,6 +723,7 @@ class VideoPlaybackController extends ChangeNotifier {
     required bool autoplay,
   }) async {
     _dropSession();
+    isPlayingOffline = true;
     _firstFrameLogged = false;
     _bufferingStartedAt = null;
     _downgradedThisEngine = false;
@@ -763,6 +782,7 @@ class VideoPlaybackController extends ChangeNotifier {
       throw const VideoSourceException('Video source unavailable.');
     }
     _dropSession();
+    isPlayingOffline = false;
     // Fresh engine attempt: exactly one firstFrame line will be logged for
     // this initialization (see _onEngineUpdate). Buffering/downgrade state
     // restarts here too so a previous stall cannot trigger an immediate

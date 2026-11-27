@@ -24,6 +24,7 @@ import '../../presentation/providers/video_streaming_providers.dart';
 @immutable
 class LectureDownloadState {
   final bool isDownloading;
+  final bool isPreparing;
   final bool isDownloaded;
   final double progress;
   final String? resourceId;
@@ -32,6 +33,7 @@ class LectureDownloadState {
 
   const LectureDownloadState({
     this.isDownloading = false,
+    this.isPreparing = false,
     this.isDownloaded = false,
     this.progress = 0.0,
     this.resourceId,
@@ -41,6 +43,7 @@ class LectureDownloadState {
 
   LectureDownloadState copyWith({
     bool? isDownloading,
+    bool? isPreparing,
     bool? isDownloaded,
     double? progress,
     String? resourceId,
@@ -49,6 +52,7 @@ class LectureDownloadState {
   }) {
     return LectureDownloadState(
       isDownloading: isDownloading ?? this.isDownloading,
+      isPreparing: isPreparing ?? this.isPreparing,
       isDownloaded: isDownloaded ?? this.isDownloaded,
       progress: progress ?? this.progress,
       resourceId: resourceId ?? this.resourceId,
@@ -385,6 +389,32 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
           .timeout(const Duration(seconds: 12));
       final planLabel = _resolvePlanLabel(subscription.planId);
 
+      // Immediate plan gate BEFORE loading resources or showing any spinner:
+      // if neither video nor PDF offline download is enabled, open upgrade sheet.
+      final canDownloadVideo = isVideoDownloadFeatureEnabled(features);
+      final canDownloadPdf = isPdfDownloadFeatureEnabled(features);
+      if (!canDownloadVideo && !canDownloadPdf) {
+        return VideoDownloadActionOutcome(
+          success: false,
+          requiresUpgrade: true,
+          currentPlanLabel: planLabel,
+          message: 'تحميل الفيديوهات أوفلاين متاح في باقتي Pro و Max فقط.',
+        );
+      }
+
+      // Eligible Pro/Max student: immediately show preparing indicator so the
+      // button never looks unresponsive while fetching resources & signed URL.
+      _setLectureState(
+        lecture.id,
+        LectureDownloadState(
+          isDownloading: true,
+          isPreparing: true,
+          progress: 0.0,
+          subjectId: subjectId,
+          isVideo: true,
+        ),
+      );
+
       final resolver = ref.read(videoSourceResolverProvider);
       final resources = await resolver
           .loadResources(lecture.id)
@@ -392,12 +422,17 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
       final videoResource = resources
           .cast<VideoResource?>()
           .firstWhere(
-            (r) => r != null && r.isVideo && r.bunnyVideoId != null,
+            (r) =>
+                r != null &&
+                r.isVideo &&
+                r.bunnyVideoId != null &&
+                r.bunnyVideoId!.trim().isNotEmpty,
             orElse: () => null,
           );
 
       if (videoResource != null) {
-        if (!isVideoDownloadFeatureEnabled(features)) {
+        if (!canDownloadVideo) {
+          _setLectureState(lecture.id, const LectureDownloadState());
           return VideoDownloadActionOutcome(
             success: false,
             requiresUpgrade: true,
@@ -419,6 +454,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
               )
               .length;
           if (downloadedCount >= maxCount) {
+            _setLectureState(lecture.id, const LectureDownloadState());
             return VideoDownloadActionOutcome(
               success: false,
               message:
@@ -426,17 +462,6 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
             );
           }
         }
-
-        _setLectureState(
-          lecture.id,
-          LectureDownloadState(
-            isDownloading: true,
-            progress: 0.01,
-            resourceId: videoResource.id,
-            subjectId: subjectId,
-            isVideo: true,
-          ),
-        );
 
         final candidates = resolveDownloadQualityCandidates(
           features: features,
@@ -456,13 +481,14 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
 
         bool downloadedOk = false;
         Object? lastError;
+        int? lastHttpStatus;
 
         for (final quality in candidates) {
           try {
             final response = await functions
                 .httpsCallable('generateBunnySignedUrl')
                 .call(<String, dynamic>{
-                  'videoId': videoResource.bunnyVideoId!,
+                  'videoId': videoResource.bunnyVideoId!.trim(),
                   'quality': quality.backendValue,
                   'subjectId': subjectId,
                   'lectureId': lecture.id,
@@ -476,7 +502,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
             final rawUrl = data['url'] as String?;
             if (rawUrl == null || rawUrl.isEmpty) continue;
 
-            final httpOk = await _streamUrlToFile(
+            final httpResult = await _streamUrlToFile(
               url: Uri.parse(rawUrl),
               targetPartFile: partFile,
               finalFile: finalFile,
@@ -486,6 +512,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
                   lecture.id,
                   LectureDownloadState(
                     isDownloading: true,
+                    isPreparing: false,
                     progress: pVal,
                     resourceId: videoResource.id,
                     subjectId: subjectId,
@@ -494,10 +521,11 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
                 );
               },
             );
-            if (httpOk) {
+            if (httpResult.ok) {
               downloadedOk = true;
               break;
             }
+            lastHttpStatus = httpResult.statusCode;
           } catch (e) {
             lastError = e;
             // Try next fallback quality unless explicitly forbidden/denied.
@@ -511,7 +539,16 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
 
         if (!downloadedOk) {
           if (await partFile.exists()) await partFile.delete();
-          throw lastError ?? Exception('Failed to download MP4 rendition.');
+          if (lastError != null) {
+            throw lastError;
+          }
+          _setLectureState(lecture.id, const LectureDownloadState());
+          final statusSuffix = lastHttpStatus != null ? ' (HTTP $lastHttpStatus)' : '';
+          return VideoDownloadActionOutcome(
+            success: false,
+            message:
+                'تعذر العثور على ملف MP4 قابل للتحميل لهذا الفيديو حالياً$statusSuffix. يرجى التواصل مع الدعم لتفعيل MP4 Fallback على الفيديو.',
+          );
         }
 
         final expiry =
@@ -680,7 +717,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
     _setLectureState(lectureId, const LectureDownloadState(isDownloaded: false));
   }
 
-  static Future<bool> _streamUrlToFile({
+  static Future<({bool ok, int? statusCode})> _streamUrlToFile({
     required Uri url,
     required File targetPartFile,
     required File finalFile,
@@ -695,7 +732,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
       final response = await req.close().timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await response.drain<void>();
-        return false;
+        return (ok: false, statusCode: response.statusCode);
       }
 
       if (await targetPartFile.exists()) {
@@ -746,7 +783,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
 
       if (received <= 0) {
         if (await targetPartFile.exists()) await targetPartFile.delete();
-        return false;
+        return (ok: false, statusCode: response.statusCode);
       }
 
       if (await finalFile.exists()) {
@@ -754,7 +791,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
       }
       await targetPartFile.rename(finalFile.path);
       onProgress(1.0);
-      return true;
+      return (ok: true, statusCode: response.statusCode);
     } finally {
       client.close(force: true);
     }

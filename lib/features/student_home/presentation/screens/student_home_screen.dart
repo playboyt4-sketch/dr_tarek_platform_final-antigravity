@@ -581,26 +581,22 @@ class _CarouselTabState extends ConsumerState<_CarouselTab> {
       },
     );
 
-    return LayoutBuilder(
-      builder: (context, viewport) => RefreshIndicator(
-        color: semantic.isDark ? semantic.primary : Colors.white,
-        backgroundColor: semantic.isDark
-            ? semantic.glassCardFill
-            : semantic.inverseSurface,
-        onRefresh: widget.onRefresh,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minWidth: viewport.maxWidth,
-              minHeight: viewport.maxHeight,
-            ),
-            child: SizedBox(
-              width: viewport.maxWidth,
-              child: bodyContent,
-            ),
-          ),
+    return RefreshIndicator(
+      color: semantic.isDark ? semantic.primary : Colors.white,
+      backgroundColor: semantic.isDark
+          ? semantic.glassCardFill
+          : semantic.inverseSurface,
+      onRefresh: widget.onRefresh,
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
         ),
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: true,
+            child: bodyContent,
+          ),
+        ],
       ),
     );
   }

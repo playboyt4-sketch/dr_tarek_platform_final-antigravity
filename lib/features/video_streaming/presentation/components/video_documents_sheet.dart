@@ -129,6 +129,7 @@ Future<void> showLectureDocumentsSheet(
   String? subjectId,
   String? lectureId,
   VideoPlaybackController? videoController,
+  ValueChanged<OpenableLectureDocument>? onOpenPdf,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -210,6 +211,10 @@ Future<void> showLectureDocumentsSheet(
                       ),
                       onTap: () {
                         Navigator.of(sheetContext).pop();
+                        if (document.isPdf && onOpenPdf != null) {
+                          onOpenPdf(document);
+                          return;
+                        }
                         unawaited(
                           LectureDocumentActions.open(
                             context,

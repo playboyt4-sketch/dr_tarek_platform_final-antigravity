@@ -123,4 +123,46 @@ void main() {
     expect(find.text('Offline mode'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'ResizableFloatingPdfWindow renders internal close (×) and menu buttons inside its floating frame',
+      (WidgetTester tester) async {
+    bool closed = false;
+    bool menuOpened = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 400,
+            height: 700,
+            child: ResizableFloatingPdfWindow(
+              areaWidth: 400,
+              areaHeight: 700,
+              initialWidth: 260,
+              initialHeight: 340,
+              title: 'ملخص المحاضرة',
+              pageLabel: '1/10',
+              onCloseTap: () => closed = true,
+              onMenuTap: () => menuOpened = true,
+              child: const ColoredBox(color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('floating-pdf-close-btn')), findsOneWidget);
+    expect(find.byKey(const Key('floating-pdf-menu-btn')), findsOneWidget);
+    expect(find.text('ملخص المحاضرة (1/10)'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('floating-pdf-menu-btn')));
+    await tester.pump();
+    expect(menuOpened, isTrue);
+
+    await tester.tap(find.byKey(const Key('floating-pdf-close-btn')));
+    await tester.pump();
+    expect(closed, isTrue);
+  });
 }

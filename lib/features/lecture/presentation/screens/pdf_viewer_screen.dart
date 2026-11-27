@@ -38,6 +38,12 @@ class PdfViewerScreen extends ConsumerStatefulWidget {
   final String? storageProvider;
   final VideoPlaybackController? videoController;
 
+  /// When true, renders as a self-contained floating, draggable & resizable
+  /// PDF window over an active [VideoStreamingScreen] without pushing a new
+  /// full-screen route or drawing a screen-wide AppBar.
+  final bool embeddedOverlay;
+  final VoidCallback? onClose;
+
   const PdfViewerScreen({
     required this.resourceId,
     required this.title,
@@ -45,6 +51,8 @@ class PdfViewerScreen extends ConsumerStatefulWidget {
     this.lectureId,
     this.storageProvider,
     this.videoController,
+    this.embeddedOverlay = false,
+    this.onClose,
     super.key,
   });
 
@@ -635,60 +643,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
 
     final hasVideo = widget.videoController != null;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFf4f6f8),
-      // Top bar per `docs/pdf viewer.html`: fixed 60px, white surface,
-      // title 15/w600 + page counter 12/secondary, back + menu actions.
-      appBar: AppBar(
-        toolbarHeight: 60,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: false,
-        iconTheme: const IconThemeData(color: Colors.black87),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              widget.title,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF111827),
-              ),
-            ),
-            if (_totalPages > 0) ...[
-              const SizedBox(height: 2),
-              Text(
-                'صفحة ${_currentPage + 1} من $_totalPages',
-                style: const TextStyle(fontSize: 12, color: Color(0xFF6b7280)),
-              ),
-            ],
-          ],
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        actions: [
-          if (_downloadChecked && _canDownload)
-            IconButton(
-              icon: Icon(
-                _isOfflineEnabled ? Icons.check_circle : Icons.download_outlined,
-                color: _isOfflineEnabled ? const Color(0xFF10B981) : Colors.black87,
-              ),
-              tooltip: _isOfflineEnabled ? 'تم التحميل أوفلاين' : 'تحميل PDF للمذاكرة بدون إنترنت',
-              onPressed: _isOfflineEnabled
-                  ? () => _showToast('الملف محفوظ بالفعل للمذاكرة بدون إنترنت.')
-                  : _download,
-            ),
-          IconButton(
-            icon: const Icon(Icons.menu, color: Colors.black87),
-            onPressed: () => _showMainMenu(context),
-          ),
-        ],
-      ),
-      body: FutureBuilder<({PdfSignedUrlResult? urlResult, PlaybackProgressRecord? progress, String? tempFilePath})>(
+    final bodyFuture = FutureBuilder<({PdfSignedUrlResult? urlResult, PlaybackProgressRecord? progress, String? tempFilePath})>(
         future: _initializationFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -876,6 +831,14 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
             );
           }
 
+          // When embedded as a floating overlay directly on top of
+          // VideoStreamingScreen, return only the PDF reader surface; the
+          // ResizableFloatingPdfWindow chrome wraps it below without replacing
+          // the full-screen video player underneath.
+          if (widget.embeddedOverlay) {
+            return buildPdfReader();
+          }
+
           // Render appropriate layout based on viewMode
           // (`docs/pdf viewer.html`: split = video 40% + pdf 60%;
           // floating = fullscreen video + draggable/resizable pdf card).
@@ -950,7 +913,94 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
             ),
           );
         },
+      );
+
+    if (widget.embeddedOverlay) {
+      return LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final initW = math.min(
+            math.max(constraints.maxWidth * 0.48, 220.0),
+            constraints.maxWidth - 16.0,
+          );
+          final initH = math.min(
+            math.max(constraints.maxHeight * 0.78, 200.0),
+            constraints.maxHeight - 16.0,
+          );
+          return ResizableFloatingPdfWindow(
+            areaWidth: constraints.maxWidth,
+            areaHeight: constraints.maxHeight,
+            initialWidth: initW,
+            initialHeight: initH,
+            title: widget.title,
+            pageLabel: _totalPages > 0 ? '${_currentPage + 1}/$_totalPages' : null,
+            onCloseTap: widget.onClose,
+            onMenuTap: () => _showMainMenu(context),
+            onDownloadTap: (_downloadChecked && _canDownload)
+                ? (_isOfflineEnabled
+                    ? () => _showToast('الملف محفوظ بالفعل للمذاكرة بدون إنترنت.')
+                    : _download)
+                : null,
+            isOfflineEnabled: _isOfflineEnabled,
+            child: bodyFuture,
+          );
+        },
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFf4f6f8),
+      // Top bar per `docs/pdf viewer.html`: fixed 60px, white surface,
+      // title 15/w600 + page counter 12/secondary, back + menu actions.
+      appBar: AppBar(
+        toolbarHeight: 60,
+        backgroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: false,
+        iconTheme: const IconThemeData(color: Colors.black87),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.title,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF111827),
+              ),
+            ),
+            if (_totalPages > 0) ...[
+              const SizedBox(height: 2),
+              Text(
+                'صفحة ${_currentPage + 1} من $_totalPages',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF6b7280)),
+              ),
+            ],
+          ],
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        actions: [
+          if (_downloadChecked && _canDownload)
+            IconButton(
+              icon: Icon(
+                _isOfflineEnabled ? Icons.check_circle : Icons.download_outlined,
+                color: _isOfflineEnabled ? const Color(0xFF10B981) : Colors.black87,
+              ),
+              tooltip: _isOfflineEnabled ? 'تم التحميل أوفلاين' : 'تحميل PDF للمذاكرة بدون إنترنت',
+              onPressed: _isOfflineEnabled
+                  ? () => _showToast('الملف محفوظ بالفعل للمذاكرة بدون إنترنت.')
+                  : _download,
+            ),
+          IconButton(
+            icon: const Icon(Icons.menu, color: Colors.black87),
+            onPressed: () => _showMainMenu(context),
+          ),
+        ],
       ),
+      body: bodyFuture,
     );
   }
 }
@@ -1143,6 +1193,12 @@ class ResizableFloatingPdfWindow extends StatefulWidget {
   final double initialWidth;
   final double initialHeight;
   final Widget child;
+  final String? title;
+  final String? pageLabel;
+  final VoidCallback? onCloseTap;
+  final VoidCallback? onMenuTap;
+  final VoidCallback? onDownloadTap;
+  final bool isOfflineEnabled;
 
   const ResizableFloatingPdfWindow({
     super.key,
@@ -1151,6 +1207,12 @@ class ResizableFloatingPdfWindow extends StatefulWidget {
     required this.initialWidth,
     required this.initialHeight,
     required this.child,
+    this.title,
+    this.pageLabel,
+    this.onCloseTap,
+    this.onMenuTap,
+    this.onDownloadTap,
+    this.isOfflineEnabled = false,
   });
 
   @override
@@ -1272,24 +1334,119 @@ class _ResizableFloatingPdfWindowState
                         behavior: HitTestBehavior.opaque,
                         onPanUpdate: _onMoveDrag,
                         child: Container(
-                          height: 28,
+                          height: (widget.onCloseTap != null ||
+                                  widget.onMenuTap != null ||
+                                  widget.title != null)
+                              ? 38
+                              : 28,
                           width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
                           decoration: const BoxDecoration(
                             color: Color(0xFFF8FAFC),
                             border: Border(
                               bottom: BorderSide(color: Color(0xFFE5E7EB)),
                             ),
                           ),
-                          child: Center(
-                            child: Container(
-                              width: 36,
-                              height: 4,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF9CA3AF),
-                                borderRadius: BorderRadius.circular(9999),
-                              ),
-                            ),
-                          ),
+                          child: (widget.onCloseTap != null ||
+                                  widget.onMenuTap != null ||
+                                  widget.title != null)
+                              ? Row(
+                                  children: [
+                                    if (widget.onCloseTap != null)
+                                      IconButton(
+                                        key: const Key('floating-pdf-close-btn'),
+                                        tooltip: 'إغلاق الـ PDF',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        iconSize: 18,
+                                        color: const Color(0xFF111827),
+                                        icon: const Icon(Icons.close_rounded),
+                                        onPressed: widget.onCloseTap,
+                                      ),
+                                    Expanded(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Container(
+                                            width: 28,
+                                            height: 3,
+                                            margin: const EdgeInsets.only(
+                                              bottom: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF9CA3AF),
+                                              borderRadius:
+                                                  BorderRadius.circular(9999),
+                                            ),
+                                          ),
+                                          if (widget.title != null)
+                                            Text(
+                                              widget.pageLabel != null
+                                                  ? '${widget.title} (${widget.pageLabel})'
+                                                  : widget.title!,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF111827),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (widget.onDownloadTap != null)
+                                      IconButton(
+                                        tooltip: widget.isOfflineEnabled
+                                            ? 'محفوظ أوفلاين'
+                                            : 'تحميل PDF',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        iconSize: 17,
+                                        color: widget.isOfflineEnabled
+                                            ? const Color(0xFF10B981)
+                                            : const Color(0xFF111827),
+                                        icon: Icon(
+                                          widget.isOfflineEnabled
+                                              ? Icons.check_circle
+                                              : Icons.download_outlined,
+                                        ),
+                                        onPressed: widget.onDownloadTap,
+                                      ),
+                                    if (widget.onMenuTap != null)
+                                      IconButton(
+                                        key: const Key('floating-pdf-menu-btn'),
+                                        tooltip: 'قائمة الـ PDF',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        iconSize: 18,
+                                        color: const Color(0xFF111827),
+                                        icon: const Icon(Icons.menu_rounded),
+                                        onPressed: widget.onMenuTap,
+                                      ),
+                                  ],
+                                )
+                              : Center(
+                                  child: Container(
+                                    width: 36,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF9CA3AF),
+                                      borderRadius: BorderRadius.circular(9999),
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
                       Expanded(child: widget.child),

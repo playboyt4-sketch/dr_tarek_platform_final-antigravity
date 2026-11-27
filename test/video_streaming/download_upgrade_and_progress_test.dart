@@ -153,6 +153,46 @@ void main() {
         expect(find.text('45%'), findsOneWidget);
       },
     );
+
+    testWidgets(
+      'renders preparing spinner before bytes start streaming so tap never appears dead',
+      (tester) async {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              authProvider.overrideWith(() => _FakeAuthNotifier(_student)),
+              videoDownloadControllerProvider.overrideWith(
+                () => _ProgressDownloadController({
+                  'lec-1': const LectureDownloadState(
+                    isDownloading: true,
+                    isPreparing: true,
+                    progress: 0.0,
+                    subjectId: 'sub-1',
+                    isVideo: true,
+                  ),
+                }),
+              ),
+            ],
+            child: const MaterialApp(
+              home: Scaffold(
+                body: Center(
+                  child: LectureDownloadButton(
+                    lecture: _lecture,
+                    subjectId: 'sub-1',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final indicator = tester.widget<CircularProgressIndicator>(
+          find.byType(CircularProgressIndicator),
+        );
+        expect(indicator.value, isNull);
+      },
+    );
   });
 
   group('parseFlexibleLectureDuration', () {

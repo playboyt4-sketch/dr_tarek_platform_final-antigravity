@@ -1929,6 +1929,7 @@ export async function buildBunnyFileUrl(
 interface BunnyPosterCacheEntry {
   file: string | null;
   hasHQPreview: boolean;
+  durationSeconds: number | null;
   cachedAt: number;
 }
 const bunnyPosterCache = new Map<string, BunnyPosterCacheEntry>();
@@ -1961,18 +1962,26 @@ async function bunnyStreamApiConfig(
 async function fetchBunnyVideoMeta(
   videoId: string,
   libraryId: string = DEFAULT_BUNNY_LIBRARY_ID,
-): Promise<{file: string | null; hasHQPreview: boolean} | null> {
+): Promise<{
+  file: string | null;
+  hasHQPreview: boolean;
+  durationSeconds: number | null;
+} | null> {
   const now = Date.now();
   // Cache key is per library: the same video id in two libraries is two
   // different videos, so a shared key would leak metadata across libraries.
   const cacheKey = bunnyPosterCacheKey(libraryId, videoId);
   const cached = bunnyPosterCache.get(cacheKey);
   if (cached) {
-    const ttl = cached.file || cached.hasHQPreview ?
+    const ttl = cached.file || cached.hasHQPreview || cached.durationSeconds ?
       BUNNY_POSTER_CACHE_TTL_MS :
       BUNNY_POSTER_NEG_TTL_MS;
     if (now - cached.cachedAt < ttl) {
-      return {file: cached.file, hasHQPreview: cached.hasHQPreview};
+      return {
+        file: cached.file,
+        hasHQPreview: cached.hasHQPreview,
+        durationSeconds: cached.durationSeconds,
+      };
     }
   }
   const config = await bunnyStreamApiConfig(libraryId);
@@ -1991,13 +2000,19 @@ async function fetchBunnyVideoMeta(
       clearTimeout(timer);
     }
     if (!response.ok) {
-      bunnyPosterCache.set(cacheKey, {file: null, hasHQPreview: false, cachedAt: now});
+      bunnyPosterCache.set(cacheKey, {
+        file: null,
+        hasHQPreview: false,
+        durationSeconds: null,
+        cachedAt: now,
+      });
       return null;
     }
     const data = (await response.json()) as {
       thumbnailFileName?: unknown;
       thumbnailUrl?: unknown;
       hasHighQualityPreview?: unknown;
+      length?: unknown;
     };
     const direct = getString(data.thumbnailFileName);
     let file: string | null = null;
@@ -2008,11 +2023,23 @@ async function fetchBunnyVideoMeta(
       const last = thumbUrl?.split("?")[0].split("/").pop();
       if (last) file = last;
     }
-    const meta = {file, hasHQPreview: data.hasHighQualityPreview === true};
+    const rawLength = getNumber(data.length);
+    const durationSeconds =
+      rawLength != null && rawLength > 0 ? Math.round(rawLength) : null;
+    const meta = {
+      file,
+      hasHQPreview: data.hasHighQualityPreview === true,
+      durationSeconds,
+    };
     bunnyPosterCache.set(cacheKey, {...meta, cachedAt: now});
     return meta;
   } catch {
-    bunnyPosterCache.set(cacheKey, {file: null, hasHQPreview: false, cachedAt: now});
+    bunnyPosterCache.set(cacheKey, {
+      file: null,
+      hasHQPreview: false,
+      durationSeconds: null,
+      cachedAt: now,
+    });
     return null;
   }
 }
@@ -2051,7 +2078,11 @@ async function resolveResourceThumbnailUrl(
 // windows/issuance/sessions.
 async function resolveVideoDisplayMedia(
   resource: DocumentData,
-): Promise<{thumbnailUrl: string | null; previewUrl: string | null}> {
+): Promise<{
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  durationSeconds: number | null;
+}> {
   let thumbnailUrl = await resolveResourceThumbnailUrl(resource);
   let previewUrl: string | null = null;
   const storedBunnyId = getString(resource.bunny_video_id);
@@ -2064,7 +2095,11 @@ async function resolveVideoDisplayMedia(
   // library's pull zone).
   const mediaLibrary = posterId ? resolveBestEffortBunnyLibraryId(resource) : null;
   const mediaLibraryId = mediaLibrary ?? null;
-  let meta: {file: string | null; hasHQPreview: boolean} | null = null;
+  let meta: {
+    file: string | null;
+    hasHQPreview: boolean;
+    durationSeconds: number | null;
+  } | null = null;
   if (posterId && mediaLibraryId) {
     try {
       meta = await fetchBunnyVideoMeta(posterId, mediaLibraryId);
@@ -2099,7 +2134,11 @@ async function resolveVideoDisplayMedia(
       previewUrl = null;
     }
   }
-  return {thumbnailUrl, previewUrl};
+  return {
+    thumbnailUrl,
+    previewUrl,
+    durationSeconds: meta?.durationSeconds ?? null,
+  };
 }
 
 const VIDEO_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -6197,12 +6236,22 @@ export const getSectionDisplayMedia = onCall({
              getNumber(firstVideoDoc.length_seconds) ??
              getNumber(firstVideoDoc.length))
           : null);
-      const durationSeconds =
+      let durationSeconds =
         rawDuration != null && rawDuration > 0 ? Math.round(rawDuration) : null;
+      const hadLectureDuration =
+        (getNumber(lectureData.duration_seconds) ?? 0) > 0;
       if (firstVideoDoc) {
         const media = await resolveVideoDisplayMedia(firstVideoDoc);
         if (!thumbnailUrl) thumbnailUrl = media.thumbnailUrl;
         previewUrl = media.previewUrl;
+        if (durationSeconds == null && media.durationSeconds != null && media.durationSeconds > 0) {
+          durationSeconds = media.durationSeconds;
+        }
+      }
+      if (!hadLectureDuration && durationSeconds != null && durationSeconds > 0) {
+        // Persist resolved Bunny Stream duration back onto the lecture doc so
+        // future Firestore snapshots deliver duration_seconds on frame 1.
+        ldoc.ref.set({duration_seconds: durationSeconds}, {merge: true}).catch(() => {});
       }
       return {lectureId: ldoc.id, thumbnailUrl, previewUrl, durationSeconds};
     } catch {
