@@ -1105,7 +1105,7 @@ class _LecturesBody extends ConsumerWidget {
 /// Glass lecture card (Figma 369x145 r15, white 25% + 1px white 40%,
 /// backdrop blur 17.5): thumbnail on top, info row (title / download /
 /// duration) pinned to the bottom 41px.
-class _LectureCard extends StatelessWidget {
+class _LectureCard extends ConsumerWidget {
   final LectureSummary lecture;
   final String subjectId;
   final VoidCallback? onOpen;
@@ -1119,10 +1119,24 @@ class _LectureCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final radius = BorderRadius.circular(
       context.rs(_SubjectPageDesign.cardRadius),
     );
+    final sectionId = lecture.sectionId;
+    final mediaDuration = (sectionId != null && sectionId.isNotEmpty)
+        ? ref.watch(
+            sectionDisplayMediaProvider(sectionId).select(
+              (asyncMap) => asyncMap.value?[lecture.id]?.duration,
+            ),
+          )
+        : null;
+    final cachedDuration = ref.watch(
+      lectureResolvedDurationProvider.select((map) => map[lecture.id]),
+    );
+    final effectiveDuration =
+        lecture.duration ?? mediaDuration ?? cachedDuration;
+    final durationText = _formatDuration(effectiveDuration);
 
     return Material(
       color: Colors.transparent,
@@ -1206,26 +1220,27 @@ class _LectureCard extends StatelessWidget {
                               subjectId: subjectId,
                               onPlayOffline: onPlayOffline,
                             ),
-                            SizedBox(
-                              width: context.rs(
-                                _SubjectPageDesign.durationWidth,
-                              ),
-                              child: Text(
-                                _formatDuration(lecture.duration),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontFamily:
-                                      AppFontFamilies.googleSansFlex,
-                                  color: Colors.black,
-                                  fontSize: context.rsFont(
-                                    _SubjectPageDesign.metaSize,
+                            if (durationText != null)
+                              SizedBox(
+                                width: context.rs(
+                                  _SubjectPageDesign.durationWidth,
+                                ),
+                                child: Text(
+                                  durationText,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontFamily:
+                                        AppFontFamilies.googleSansFlex,
+                                    color: Colors.black,
+                                    fontSize: context.rsFont(
+                                      _SubjectPageDesign.metaSize,
+                                    ),
+                                    fontWeight: FontWeight.w100,
+                                    height: 1.43,
                                   ),
-                                  fontWeight: FontWeight.w100,
-                                  height: 1.43,
                                 ),
                               ),
-                            ),
                           ],
                         ),
                       ),
@@ -1589,12 +1604,17 @@ class _MessageState extends StatelessWidget {
   }
 }
 
-/// Figma "52:43" duration format (mm:ss).
-String _formatDuration(Duration? duration) {
-  if (duration == null) return '--:--';
-  final minutes = duration.inMinutes;
+/// Clean duration formatting (`MM:SS` or `HH:MM:SS`). Returns `null` when
+/// missing or zero so the card never displays `--:--` or `00:00`.
+String? _formatDuration(Duration? duration) {
+  if (duration == null || duration <= Duration.zero) return null;
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes % 60;
   final seconds = duration.inSeconds % 60;
-  return '${_twoDigits(minutes)}:${_twoDigits(seconds)}';
+  if (hours > 0) {
+    return '${_twoDigits(hours)}:${_twoDigits(minutes)}:${_twoDigits(seconds)}';
+  }
+  return '${_twoDigits(duration.inMinutes)}:${_twoDigits(seconds)}';
 }
 
 // NOTE: written without String.padStart because the environment's analyzer

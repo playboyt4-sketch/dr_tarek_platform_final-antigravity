@@ -364,10 +364,11 @@ void main() {
     final planCenter = tester.getCenter(find.text('PRO'));
     expect(titleCenter.dx, lessThan(planCenter.dx));
 
-    // 4. Row text is compact (<=16px) and the title wraps up to 4 lines,
-    // so long subject names render in full instead of truncating/eating.
+    // 4. Row text is compact (<=16px) and fits on a single horizontal line
+    // alongside the plan badge and Upgrade button.
     final titleText = tester.widget<Text>(find.text('مالية متقدمة'));
-    expect(titleText.maxLines, 4);
+    expect(titleText.maxLines, 1);
+    expect(titleText.overflow, TextOverflow.ellipsis);
     expect(titleText.style!.fontSize!, lessThanOrEqualTo(16.0));
     final planText = tester.widget<Text>(find.text('PRO'));
     expect(planText.style!.fontSize!, lessThanOrEqualTo(16.0));
@@ -377,12 +378,14 @@ void main() {
     final firstRowTop = tester.getTopLeft(find.text('مالية متقدمة')).dy;
     expect(firstRowTop, greaterThanOrEqualTo(tabBottom));
 
-    // 6. Title takes the full row width (plan is flex:0, intrinsic only):
-    // at 393 design width the title must be wider than ~200px. A 50/50
-    // Expanded/Flexible split squeezed it to ~140px on the left, wrapping
-    // + eating Arabic names while the right side sat empty.
+    // 6. Title, plan badge, and Upgrade button align cleanly on one row.
     final titleRect = tester.getRect(find.text('مالية متقدمة'));
-    expect(titleRect.width, greaterThan(200));
+    final upgradeRect = tester.getRect(
+      find.byKey(const ValueKey('upgrade_subject_subject-1')),
+    );
+    expect(titleRect.width, greaterThan(110));
+    expect(planCenter.dx, lessThan(upgradeRect.center.dx));
+    expect((titleCenter.dy - upgradeRect.center.dy).abs(), lessThan(8));
   });
 
   // NOTE: skipped while profile_edit_sheet.dart is under active parallel

@@ -34,13 +34,40 @@ final sectionLecturesProvider =
     );
 
 /// Display media for one lecture (cards + header cover): poster image
-/// plus Bunny's silent preview animation for header autoplay.
+/// plus Bunny's silent preview animation for header autoplay and optional
+/// server-resolved video duration.
 class LectureDisplayMedia {
   final String? thumbnailUrl;
   final String? previewUrl;
+  final Duration? duration;
 
-  const LectureDisplayMedia({this.thumbnailUrl, this.previewUrl});
+  const LectureDisplayMedia({
+    this.thumbnailUrl,
+    this.previewUrl,
+    this.duration,
+  });
 }
+
+/// Runtime cache of lecture durations observed by the video player when a
+/// Firestore lecture document did not carry a pre-populated duration field.
+class LectureResolvedDurationNotifier extends Notifier<Map<String, Duration>> {
+  @override
+  Map<String, Duration> build() {
+    ref.keepAlive();
+    return const <String, Duration>{};
+  }
+
+  void record(String lectureId, Duration duration) {
+    if (lectureId.isEmpty || duration <= Duration.zero) return;
+    if (state[lectureId] == duration) return;
+    state = <String, Duration>{...state, lectureId: duration};
+  }
+}
+
+final lectureResolvedDurationProvider =
+    NotifierProvider<LectureResolvedDurationNotifier, Map<String, Duration>>(
+      LectureResolvedDurationNotifier.new,
+    );
 
 /// Batched display media for a whole section (cards + header cover) in ONE
 /// callable round trip: lecture doc thumbnails first, otherwise the
@@ -72,6 +99,11 @@ final sectionDisplayMediaProvider =
             if (id == null || id.isEmpty) continue;
             final thumb = item['thumbnailUrl'] as String?;
             final preview = item['previewUrl'] as String?;
+            final rawDurationSeconds = item['durationSeconds'];
+            final parsedDuration =
+                rawDurationSeconds is num && rawDurationSeconds > 0
+                    ? Duration(seconds: rawDurationSeconds.round())
+                    : null;
             if (thumb != null && thumb.isNotEmpty) withThumb++;
             if (preview != null && preview.isNotEmpty) withPreview++;
             map[id] = LectureDisplayMedia(
@@ -79,6 +111,7 @@ final sectionDisplayMediaProvider =
                   (thumb != null && thumb.isNotEmpty) ? thumb : null,
               previewUrl:
                   (preview != null && preview.isNotEmpty) ? preview : null,
+              duration: parsedDuration,
             );
           }
           debugPrint(
@@ -143,9 +176,7 @@ Future<void> warmUpSubjectMedia(WidgetRef ref, BuildContext context) async {
             ]) {
               if (url == null || url.isEmpty) continue;
               unawaited(
-                precacheImage(NetworkImage(url), context).catchError((
-                  _,
-                ) {
+                precacheImage(NetworkImage(url), context).catchError((_) {
                   // A single undecodable image must never fail warm-up.
                 }),
               );
@@ -164,7 +195,6 @@ Future<void> warmUpSubjectMedia(WidgetRef ref, BuildContext context) async {
     'elapsedMs=${stopwatch.elapsedMilliseconds}',
   );
 }
-
 
 /// Refreshes subject, section, lecture, and display-media providers and
 /// evicts stale poster URLs from [ImageCache] so edits from the dashboard

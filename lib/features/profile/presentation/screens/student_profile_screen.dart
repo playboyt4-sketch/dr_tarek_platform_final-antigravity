@@ -1009,116 +1009,103 @@ class _SubjectsPanel extends StatelessWidget {
                     children: [
                       for (int i = 0; i < items.length; i++) ...[
                         if (i > 0) SizedBox(height: context.rsV(10)),
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        Row(
+                          mainAxisSize: MainAxisSize.max,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          textDirection: TextDirection.ltr,
                           children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.max,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              textDirection: TextDirection.ltr,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    items[i].title,
-                                    // Arabic titles need RTL paragraph direction
-                                    // for correct shaping; kept physically
-                                    // left-anchored (Figma: title LEFT).
-                                    // maxLines 4 + wrap shows full names instead
-                                    // of eating them with a 2-line ellipsis.
-                                    textDirection:
-                                        RegExp(r'[\u0600-\u06FF]').hasMatch(
-                                          items[i].title,
-                                        )
-                                        ? TextDirection.rtl
-                                        : TextDirection.ltr,
-                                    maxLines: 4,
-                                    overflow: TextOverflow.ellipsis,
-                                    softWrap: true,
-                                    textAlign: TextAlign.left,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: context.rsFont(14),
-                                      fontWeight: FontWeight.w400,
-                                      height: 1.5,
-                                    ),
-                                  ),
+                            Expanded(
+                              child: Text(
+                                items[i].title,
+                                textDirection:
+                                    RegExp(r'[\u0600-\u06FF]').hasMatch(
+                                      items[i].title,
+                                    )
+                                    ? TextDirection.rtl
+                                    : TextDirection.ltr,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.left,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: context.rsFont(14),
+                                  fontWeight: FontWeight.w400,
+                                  height: 1.4,
                                 ),
-                                SizedBox(width: context.rs(12)),
-                                // Plan badge: flex 0 so it only takes its
-                                // intrinsic width (FREE/PRO/MAX) and the title
-                                // keeps the full row width.
-                                Flexible(
-                                  flex: 0,
-                                  child: Text(
-                                    _StudentProfileScreenState._planLabel(
-                                      items[i].planKey,
-                                    ),
-                                    textDirection: TextDirection.ltr,
-                                    maxLines: 1,
-                                    softWrap: false,
-                                    overflow: TextOverflow.visible,
-                                    textAlign: TextAlign.right,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: context.rsFont(14),
-                                      fontWeight: FontWeight.w400,
-                                      height: 1.5,
-                                    ),
-                                  ),
+                              ),
+                            ),
+                            SizedBox(width: context.rs(8)),
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: context.rs(8),
+                                vertical: context.rsV(2),
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                _StudentProfileScreenState._planLabel(
+                                  items[i].planKey,
                                 ),
-                              ],
+                                textDirection: TextDirection.ltr,
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: context.rsFont(12),
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.3,
+                                ),
+                              ),
                             ),
                             if (_StudentProfileScreenState._isUpgradeEligible(
                               items[i].planKey,
                             )) ...[
-                              SizedBox(height: context.rsV(6)),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Material(
-                                  key: ValueKey(
-                                    'upgrade_subject_${items[i].id}',
+                              SizedBox(width: context.rs(6)),
+                              Material(
+                                key: ValueKey(
+                                  'upgrade_subject_${items[i].id}',
+                                ),
+                                color: Colors.white.withValues(alpha: 0.24),
+                                shape: const StadiumBorder(
+                                  side: BorderSide(color: Color(0x80FFFFFF)),
+                                ),
+                                child: InkWell(
+                                  customBorder: const StadiumBorder(),
+                                  onTap: () => _StudentProfileScreenState
+                                      ._showSubjectUpgradeSheet(
+                                    context,
+                                    subject: items[i],
+                                    planLabel: _StudentProfileScreenState
+                                        ._planLabel(items[i].planKey),
                                   ),
-                                  color: Colors.white.withValues(alpha: 0.22),
-                                  shape: const StadiumBorder(
-                                    side: BorderSide(color: Color(0x80FFFFFF)),
-                                  ),
-                                  child: InkWell(
-                                    customBorder: const StadiumBorder(),
-                                    onTap: () => _StudentProfileScreenState
-                                        ._showSubjectUpgradeSheet(
-                                      context,
-                                      subject: items[i],
-                                      planLabel: _StudentProfileScreenState
-                                          ._planLabel(items[i].planKey),
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: context.rs(8),
+                                      vertical: context.rsV(4),
                                     ),
-                                    child: Padding(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: context.rs(12),
-                                        vertical: context.rsV(6),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.arrow_upward_rounded,
-                                            size: context.rsFont(14),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.arrow_upward_rounded,
+                                          size: context.rsFont(12),
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: context.rs(3)),
+                                        Text(
+                                          'Upgrade',
+                                          maxLines: 1,
+                                          softWrap: false,
+                                          style: TextStyle(
                                             color: Colors.white,
+                                            fontSize: context.rsFont(11),
+                                            fontWeight: FontWeight.w700,
+                                            height: 1.2,
                                           ),
-                                          SizedBox(width: context.rs(4)),
-                                          Text(
-                                            'Upgrade',
-                                            maxLines: 1,
-                                            softWrap: false,
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: context.rsFont(12),
-                                              fontWeight: FontWeight.w700,
-                                              height: 1.2,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),

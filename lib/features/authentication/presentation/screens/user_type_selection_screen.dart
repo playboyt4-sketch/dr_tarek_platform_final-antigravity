@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../widgets/brand_signature_logo.dart';
 
 
@@ -29,9 +33,28 @@ import '../widgets/brand_signature_logo.dart';
 /// scrolls ([ClampingScrollPhysics]) only when OS insets or smaller
 /// viewports overflow the reference composition — at 393x852 it rests
 /// exactly on the Figma geometry.
-class UserTypeSelectionScreen extends StatelessWidget {
+class UserTypeSelectionScreen extends StatefulWidget {
   const UserTypeSelectionScreen({super.key});
 
+  @override
+  State<UserTypeSelectionScreen> createState() =>
+      _UserTypeSelectionScreenState();
+}
+
+class _UserTypeSelectionScreenState extends State<UserTypeSelectionScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final container = ProviderScope.containerOf(context, listen: false);
+        unawaited(preloadSubjectsAndCovers(container, context));
+      } catch (_) {
+        // Standalone widget tests without ProviderScope skip preloading cleanly.
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

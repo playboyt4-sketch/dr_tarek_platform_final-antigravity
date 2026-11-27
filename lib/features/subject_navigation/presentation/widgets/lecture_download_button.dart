@@ -4,10 +4,89 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
 import '../../../lecture/presentation/screens/pdf_viewer_screen.dart';
+import '../../../membership/presentation/widgets/center_phone_actions.dart';
 import '../../../video_streaming/data/services/video_download_service.dart';
+import '../../../video_streaming/presentation/components/video_states.dart';
 import '../../domain/entities/subject_learning_entities.dart';
+
+/// Displays an upgrade sheet for Free / ineligible plans when the student taps
+/// the download button on a lecture card or inside the video player.
+Future<void> showDownloadUpgradeSheet(
+  BuildContext context, {
+  required String title,
+  String? currentPlanLabel,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (ctx) {
+      return SafeArea(
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.workspace_premium_rounded,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'تحميل المحاضرات متاح لـ Pro و Max',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'إغلاق',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'باقتك الحالية (${currentPlanLabel ?? 'FREE'}) لا تشمل تحميل الفيديو أوفلاين. للترقية إلى Pro أو Max وتفعيل التحميل فوراً تواصل معنا:',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    height: 1.5,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const CenterPhoneActions(phoneNumber: kGuestWallContact),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
 
 /// Backwards-compatible wrapper over [VideoDownloadController] helpers.
 class LectureDownloadService {
@@ -58,8 +137,17 @@ class _LectureDownloadButtonState extends ConsumerState<LectureDownloadButton> {
     });
   }
 
+  bool _isChecking = false;
+
   Future<void> _startDownload() async {
-    final userId = ref.read(authProvider).value?.id;
+    if (_isChecking) return;
+    var userId = ref.read(authProvider).asData?.value?.id;
+    if (userId == null || userId.isEmpty) {
+      try {
+        userId = (await ref.read(authProvider.future))?.id;
+      } catch (_) {}
+    }
+    if (!mounted) return;
     if (userId == null || userId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('يرجى تسجيل الدخول أولاً.')),
@@ -67,18 +155,31 @@ class _LectureDownloadButtonState extends ConsumerState<LectureDownloadButton> {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
-    final outcome = await ref
-        .read(videoDownloadControllerProvider.notifier)
-        .downloadLecture(
-          userId: userId,
-          subjectId: widget.subjectId,
-          lecture: widget.lecture,
+    _isChecking = true;
+    try {
+      final messenger = ScaffoldMessenger.of(context);
+      final outcome = await ref
+          .read(videoDownloadControllerProvider.notifier)
+          .downloadLecture(
+            userId: userId,
+            subjectId: widget.subjectId,
+            lecture: widget.lecture,
+          );
+      if (!mounted) return;
+      if (outcome.requiresUpgrade) {
+        await showDownloadUpgradeSheet(
+          context,
+          title: widget.lecture.title,
+          currentPlanLabel: outcome.currentPlanLabel,
         );
-    if (!mounted) return;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(outcome.message)));
+        return;
+      }
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(outcome.message)));
+    } finally {
+      _isChecking = false;
+    }
   }
 
   void _showDownloadedOptions(LectureDownloadState downloadState) {
@@ -193,29 +294,30 @@ class _LectureDownloadButtonState extends ConsumerState<LectureDownloadButton> {
         const LectureDownloadState();
 
     if (downloadState.isDownloading) {
-      final percentage = (downloadState.progress * 100).toInt();
+      final clamped = downloadState.progress.clamp(0.01, 1.0);
+      final percentage = (clamped * 100).round().clamp(1, 100);
       return Tooltip(
         message: 'جارٍ التحميل $percentage%',
         child: SizedBox(
-          width: context.rs(26),
-          height: context.rs(26),
+          width: context.rs(32),
+          height: context.rs(32),
           child: Stack(
             alignment: Alignment.center,
             children: [
               CircularProgressIndicator(
-                value: downloadState.progress > 0 ? downloadState.progress : null,
-                strokeWidth: 2.5,
+                value: clamped,
+                strokeWidth: 2.6,
+                backgroundColor: Colors.black.withValues(alpha: 0.12),
                 color: const Color(0xFF1D4ED8),
               ),
-              if (downloadState.progress > 0)
-                Text(
-                  '$percentage%',
-                  style: TextStyle(
-                    fontSize: context.rsFont(8),
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
+              Text(
+                '$percentage%',
+                style: TextStyle(
+                  fontSize: context.rsFont(8.5),
+                  fontWeight: FontWeight.w800,
+                  color: Colors.black,
                 ),
+              ),
             ],
           ),
         ),

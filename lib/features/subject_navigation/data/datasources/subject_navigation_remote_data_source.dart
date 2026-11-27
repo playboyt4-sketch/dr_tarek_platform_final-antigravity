@@ -86,7 +86,7 @@ class SubjectNavigationRemoteDataSource {
             sectionId: _text(data['section_id']) ?? sectionId,
             thumbnailUrl:
                 _text(data['thumbnail_url']) ?? _text(data['thumbnail']),
-            duration: _duration(data['duration_seconds'] ?? data['duration']),
+            duration: parseFlexibleLectureDuration(data),
             skipIntroStart: _offset(
               data['skip_intro_start'] ?? data['intro_start'],
             ),
@@ -129,13 +129,90 @@ class SubjectNavigationRemoteDataSource {
   String? _text(Object? value) =>
       value is String && value.trim().isNotEmpty ? value.trim() : null;
 
-  Duration? _duration(Object? value) {
-    if (value is! num || value <= 0) return null;
-    return Duration(seconds: value.round());
-  }
-
   Duration? _offset(Object? value) {
     if (value is! num || value < 0) return null;
     return Duration(seconds: value.round());
   }
+}
+
+/// Resolves a lecture duration from any supported Firestore field or nested
+/// video/first_video metadata map, supporting numbers (seconds) and formatted
+/// strings (`MM:SS` / `HH:MM:SS` / numeric string). Returns `null` when missing
+/// or `<= 0` so cards never display `00:00` or `--:--`.
+Duration? parseFlexibleLectureDuration(Map<String, dynamic> data) {
+  final candidates = <Map<String, dynamic>>[
+    data,
+    if (data['first_video'] is Map)
+      Map<String, dynamic>.from(data['first_video'] as Map),
+    if (data['video'] is Map) Map<String, dynamic>.from(data['video'] as Map),
+  ];
+
+  const secondKeys = <String>[
+    'duration_seconds',
+    'durationSeconds',
+    'video_duration_seconds',
+    'videoDurationSeconds',
+    'video_duration',
+    'videoDuration',
+    'length_seconds',
+    'lengthSeconds',
+    'length',
+    'duration',
+  ];
+  const minuteKeys = <String>[
+    'duration_minutes',
+    'durationMinutes',
+  ];
+
+  for (final map in candidates) {
+    for (final key in secondKeys) {
+      final parsed = _parseDurationValue(map[key]);
+      if (parsed != null && parsed > Duration.zero) {
+        return parsed;
+      }
+    }
+    for (final key in minuteKeys) {
+      final raw = map[key];
+      if (raw is num && raw > 0) {
+        return Duration(seconds: (raw * 60).round());
+      }
+      if (raw is String) {
+        final numVal = num.tryParse(raw.trim());
+        if (numVal != null && numVal > 0) {
+          return Duration(seconds: (numVal * 60).round());
+        }
+      }
+    }
+  }
+  return null;
+}
+
+Duration? _parseDurationValue(Object? value) {
+  if (value == null) return null;
+  if (value is num) {
+    final secs = value.round();
+    return secs > 0 ? Duration(seconds: secs) : null;
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    if (trimmed.contains(':')) {
+      final parts = trimmed.split(':').map((e) => int.tryParse(e.trim())).toList();
+      if (parts.any((p) => p == null || p < 0)) return null;
+      if (parts.length == 2) {
+        final total = parts[0]! * 60 + parts[1]!;
+        return total > 0 ? Duration(seconds: total) : null;
+      }
+      if (parts.length == 3) {
+        final total = parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
+        return total > 0 ? Duration(seconds: total) : null;
+      }
+      return null;
+    }
+    final parsedNum = num.tryParse(trimmed);
+    if (parsedNum != null && parsedNum > 0) {
+      return Duration(seconds: parsedNum.round());
+    }
+  }
+  return null;
 }

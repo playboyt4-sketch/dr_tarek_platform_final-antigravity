@@ -62,11 +62,26 @@ class LectureDownloadState {
 class VideoDownloadActionOutcome {
   final bool success;
   final String message;
+  final bool requiresUpgrade;
+  final String? currentPlanLabel;
 
   const VideoDownloadActionOutcome({
     required this.success,
     required this.message,
+    this.requiresUpgrade = false,
+    this.currentPlanLabel,
   });
+}
+
+String _resolvePlanLabel(String planId) {
+  final lower = planId.trim().toLowerCase();
+  if (lower.endsWith('_max') || lower == 'max' || lower == 'maximum') {
+    return 'MAX';
+  }
+  if (lower.endsWith('_pro') || lower == 'pro') return 'PRO';
+  if (lower.endsWith('_guest') || lower == 'guest') return 'GUEST';
+  if (lower.endsWith('_free') || lower == 'free') return 'FREE';
+  return 'FREE';
 }
 
 /// Checks whether the student's active plan enables video offline downloads.
@@ -343,38 +358,37 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
       );
     }
 
-    _setLectureState(
-      lecture.id,
-      LectureDownloadState(
-        isDownloading: true,
-        progress: 0.0,
-        subjectId: subjectId,
-      ),
-    );
-
     try {
-      final subscription = await ref.read(
-        activeSubscriptionProvider((
-          studentId: userId,
-          subjectId: subjectId,
-        )).future,
-      );
+      // 1) Check subscription + plan features BEFORE setting isDownloading: true
+      //    so Free / unauthorized plans never flash or hang on a spinner.
+      final subscription = await ref
+          .read(
+            activeSubscriptionProvider((
+              studentId: userId,
+              subjectId: subjectId,
+            )).future,
+          )
+          .timeout(const Duration(seconds: 12));
       if (subscription == null ||
           (subscription.status != 'active' && subscription.status != 'trial') ||
           !subscription.isWithinAcademicTerm) {
-        _setLectureState(lecture.id, const LectureDownloadState());
         return const VideoDownloadActionOutcome(
           success: false,
-          message: 'يرجى التأكد من وجود اشتراك نشط للمادة قبل التحميل.',
+          requiresUpgrade: true,
+          currentPlanLabel: 'FREE',
+          message: 'يرجى التأكد من وجود اشتراك نشط للمادة أو الترقية للتحميل.',
         );
       }
 
-      final features = await ref.read(
-        planFeaturesProvider(subscription.planId).future,
-      );
+      final features = await ref
+          .read(planFeaturesProvider(subscription.planId).future)
+          .timeout(const Duration(seconds: 12));
+      final planLabel = _resolvePlanLabel(subscription.planId);
 
       final resolver = ref.read(videoSourceResolverProvider);
-      final resources = await resolver.loadResources(lecture.id);
+      final resources = await resolver
+          .loadResources(lecture.id)
+          .timeout(const Duration(seconds: 15));
       final videoResource = resources
           .cast<VideoResource?>()
           .firstWhere(
@@ -384,11 +398,11 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
 
       if (videoResource != null) {
         if (!isVideoDownloadFeatureEnabled(features)) {
-          _setLectureState(lecture.id, const LectureDownloadState());
-          return const VideoDownloadActionOutcome(
+          return VideoDownloadActionOutcome(
             success: false,
-            message:
-                'تحميل الفيديوهات أوفلاين متاح في باقتي Pro و Max فقط.',
+            requiresUpgrade: true,
+            currentPlanLabel: planLabel,
+            message: 'تحميل الفيديوهات أوفلاين متاح في باقتي Pro و Max فقط.',
           );
         }
 
@@ -405,7 +419,6 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
               )
               .length;
           if (downloadedCount >= maxCount) {
-            _setLectureState(lecture.id, const LectureDownloadState());
             return VideoDownloadActionOutcome(
               success: false,
               message:
@@ -413,6 +426,17 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
             );
           }
         }
+
+        _setLectureState(
+          lecture.id,
+          LectureDownloadState(
+            isDownloading: true,
+            progress: 0.01,
+            resourceId: videoResource.id,
+            subjectId: subjectId,
+            isVideo: true,
+          ),
+        );
 
         final candidates = resolveDownloadQualityCandidates(
           features: features,
@@ -446,7 +470,8 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
                     'libraryId': videoResource.bunnyLibraryId,
                   'format': 'mp4',
                   'deviceId': deviceId,
-                });
+                })
+                .timeout(const Duration(seconds: 20));
             final data = Map<String, dynamic>.from(response.data as Map);
             final rawUrl = data['url'] as String?;
             if (rawUrl == null || rawUrl.isEmpty) continue;
@@ -533,17 +558,31 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
       }
       if (!isPdfDownloadFeatureEnabled(features)) {
         _setLectureState(lecture.id, const LectureDownloadState());
-        return const VideoDownloadActionOutcome(
+        return VideoDownloadActionOutcome(
           success: false,
+          requiresUpgrade: true,
+          currentPlanLabel: planLabel,
           message: 'التحميل أوفلاين غير متاح في باقتك الحالية.',
         );
       }
 
       final doc = documents.first;
-      final result = await PdfRemoteDataSource().getDownloadUrl(
-        doc.resourceId,
-        storageProvider: doc.storageProvider,
+      _setLectureState(
+        lecture.id,
+        LectureDownloadState(
+          isDownloading: true,
+          progress: 0.01,
+          resourceId: doc.resourceId,
+          subjectId: subjectId,
+          isVideo: false,
+        ),
       );
+      final result = await PdfRemoteDataSource()
+          .getDownloadUrl(
+            doc.resourceId,
+            storageProvider: doc.storageProvider,
+          )
+          .timeout(const Duration(seconds: 15));
       final bytes = await _downloadSmallBytes(
         Uri.parse(result.url),
         onProgress: (pVal) {
@@ -588,6 +627,12 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
         success: true,
         message:
             'تم تحميل «${lecture.title}» بنجاح ومتاحة للمذاكرة بدون إنترنت.',
+      );
+    } on TimeoutException {
+      _setLectureState(lecture.id, const LectureDownloadState());
+      return const VideoDownloadActionOutcome(
+        success: false,
+        message: 'انتهت مهلة التحميل. يرجى التحقق من سرعة الإنترنت والمحاولة مرة أخرى.',
       );
     } on FirebaseFunctionsException catch (e) {
       _setLectureState(lecture.id, const LectureDownloadState());
@@ -642,11 +687,12 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
     required Map<String, String> headers,
     required void Function(double progress) onProgress,
   }) async {
-    final client = HttpClient();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
-      final req = await client.getUrl(url);
+      final req = await client.getUrl(url).timeout(const Duration(seconds: 15));
       headers.forEach(req.headers.set);
-      final response = await req.close();
+      final response = await req.close().timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await response.drain<void>();
         return false;
@@ -656,15 +702,41 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
         await targetPartFile.delete();
       }
       final sink = targetPartFile.openWrite();
-      final total = response.contentLength;
+      final headerLen = int.tryParse(
+        response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+      );
+      final total = response.contentLength > 0
+          ? response.contentLength
+          : (headerLen != null && headerLen > 0 ? headerLen : -1);
       var received = 0;
+      var lastPercent = -1;
+      var lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
 
+      void emit(double val) {
+        final clamped = val.clamp(0.01, 1.0);
+        final pct = (clamped * 100).round();
+        final now = DateTime.now();
+        if (pct != lastPercent ||
+            now.difference(lastEmit) >= const Duration(milliseconds: 200)) {
+          lastPercent = pct;
+          lastEmit = now;
+          onProgress(clamped);
+        }
+      }
+
+      emit(0.01);
       try {
-        await for (final chunk in response) {
+        await for (final chunk
+            in response.timeout(const Duration(seconds: 30))) {
           sink.add(chunk);
           received += chunk.length;
           if (total > 0) {
-            onProgress((received / total).clamp(0.0, 1.0));
+            emit(received / total);
+          } else {
+            // Chunked stream fallback without Content-Length: smooth asymptotic
+            // progress (1%..95%) so the UI keeps updating meaningfully.
+            final mb = received / (1024 * 1024);
+            emit(0.05 + (0.90 * (mb / (mb + 25.0))));
           }
         }
         await sink.flush();
@@ -681,6 +753,7 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
         await finalFile.delete();
       }
       await targetPartFile.rename(finalFile.path);
+      onProgress(1.0);
       return true;
     } finally {
       client.close(force: true);
@@ -691,23 +764,42 @@ class VideoDownloadController extends Notifier<Map<String, LectureDownloadState>
     Uri url, {
     required void Function(double progress) onProgress,
   }) async {
-    final client = HttpClient();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
-      final request = await client.getUrl(url);
-      final response = await request.close();
+      final request = await client
+          .getUrl(url)
+          .timeout(const Duration(seconds: 15));
+      final response = await request
+          .close()
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('HTTP ${response.statusCode}', uri: url);
       }
-      final total = response.contentLength;
+      final headerLen = int.tryParse(
+        response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+      );
+      final total = response.contentLength > 0
+          ? response.contentLength
+          : (headerLen != null && headerLen > 0 ? headerLen : -1);
       var received = 0;
+      var lastPercent = -1;
       final bytes = <int>[];
-      await for (final chunk in response) {
+      onProgress(0.01);
+      await for (final chunk
+          in response.timeout(const Duration(seconds: 30))) {
         bytes.addAll(chunk);
         received += chunk.length;
         if (total > 0) {
-          onProgress((received / total).clamp(0.0, 1.0));
+          final pVal = (received / total).clamp(0.01, 1.0);
+          final pct = (pVal * 100).round();
+          if (pct != lastPercent) {
+            lastPercent = pct;
+            onProgress(pVal);
+          }
         }
       }
+      onProgress(1.0);
       return bytes;
     } finally {
       client.close(force: true);

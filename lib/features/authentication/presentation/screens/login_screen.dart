@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/errors/failure_messages.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/routing/app_routes.dart';
+import '../../../../core/security/biometric_lock_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -18,6 +19,7 @@ import '../../../../core/widgets/primary_button.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../profile/data/repositories/profile_repository_impl.dart';
 import '../../../profile/data/services/pending_profile_photo_store.dart';
+import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../domain/entities/auth_user.dart';
 import '../../data/remember_me_prefs.dart';
 import '../../domain/entities/session_state.dart';
@@ -110,25 +112,46 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   /// "Remember me" choice. Defaults to true (current behavior: the session
   /// survives app restarts); restored from persistence on init.
   bool _rememberMe = true;
+  String? _rememberedPhone;
+  String? _rememberedPassword;
+  bool _switchingAccount = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final container = ProviderScope.containerOf(context, listen: false);
+        unawaited(preloadSubjectsAndCovers(container, context));
+      } catch (_) {}
+    });
+
+    final initialSession = ref.read(sessionProvider).asData?.value;
+    if (initialSession is SessionAuthenticated &&
+        _phoneController.text.isEmpty) {
+      _phoneController.text = initialSession.user.phoneNumber;
+    }
+
     loadRememberMeChoice().then((rememberMe) {
       if (!mounted || rememberMe == _rememberMe) return;
       setState(() => _rememberMe = rememberMe);
     });
     loadRememberedPhone().then((phone) {
       if (!mounted || phone == null || phone.isEmpty) return;
-      if (_phoneController.text.isEmpty) {
+      _rememberedPhone = phone;
+      if (_phoneController.text.isEmpty && !_switchingAccount) {
         _phoneController.text = phone;
       }
+      if (mounted) setState(() {});
     });
     loadRememberedPassword().then((password) {
       if (!mounted || password == null || password.isEmpty) return;
-      if (_passwordController.text.isEmpty) {
+      _rememberedPassword = password;
+      if (_passwordController.text.isEmpty && !_switchingAccount) {
         _passwordController.text = password;
       }
+      if (mounted) setState(() {});
     });
   }
 
@@ -213,8 +236,112 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return session;
   }
 
+  Future<void> _enterSavedSession(SessionAuthenticated session) async {
+    if (!mounted) return;
+    unawaited(_flushPendingPhoto(session.user));
+    try {
+      context.goNamed(_homeRouteForRole(session.user.role));
+    } catch (_) {}
+  }
+
+  Future<void> _switchToAnotherAccount() async {
+    setState(() {
+      _switchingAccount = true;
+      _terminalMessage = null;
+      _phoneController.clear();
+      _passwordController.clear();
+    });
+    final currentSession = ref.read(sessionProvider).asData?.value;
+    if (currentSession is SessionAuthenticated) {
+      unawaited(ref.read(sessionProvider.notifier).logout());
+    }
+  }
+
+  Future<void> _quickFaceIdLogin({SessionAuthenticated? savedSession}) async {
+    if (_isSubmitting) return;
+    setState(() {
+      _terminalMessage = null;
+      _isSubmitting = true;
+    });
+    try {
+      final verified = await ref
+          .read(biometricLockServiceProvider)
+          .authenticate(
+            localizedReason: 'تسجيل الدخول السريع باستخدام Face ID / البصمة',
+          );
+      if (!mounted || !verified) return;
+
+      final activeSession = savedSession ??
+          (ref.read(sessionProvider).asData?.value is SessionAuthenticated
+              ? ref.read(sessionProvider).asData?.value as SessionAuthenticated
+              : null);
+      final typedPhone = normalizeEgyptianPhone(_phoneController.text);
+      if (activeSession != null &&
+          !_switchingAccount &&
+          (typedPhone.isEmpty ||
+              typedPhone ==
+                  normalizeEgyptianPhone(activeSession.user.phoneNumber))) {
+        await _enterSavedSession(activeSession);
+        return;
+      }
+
+      final savedPhone = _rememberedPhone ?? await loadRememberedPhone();
+      final savedPassword =
+          _rememberedPassword ?? await loadRememberedPassword();
+      if (!mounted) return;
+      if (savedPhone == null ||
+          savedPhone.isEmpty ||
+          savedPassword == null ||
+          savedPassword.isEmpty) {
+        setState(() {
+          _terminalMessage = 'يرجى كتابة رقم الهاتف وكلمة المرور أولاً.';
+        });
+        return;
+      }
+      _phoneController.text = savedPhone;
+      _passwordController.text = savedPassword;
+      await ref.read(authProvider.notifier).login(
+            phoneNumber: savedPhone.trim(),
+            password: savedPassword,
+          );
+      if (!mounted) return;
+      final authState = ref.read(authProvider);
+      if (authState.hasError || authState.value == null) return;
+      final session = await _resolveSessionAfterAuth();
+      if (!mounted) return;
+      if (session is SessionAuthenticated) {
+        await _enterSavedSession(session);
+      } else if (session is! SessionError) {
+        setState(() => _terminalMessage = _messageFor(session));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
   Future<void> _login() async {
     if (_isSubmitting) return;
+    final activeSession = ref.read(sessionProvider).asData?.value;
+    final typedPhone = normalizeEgyptianPhone(_phoneController.text);
+    final hasPassword = _passwordController.text.isNotEmpty;
+
+    // Fast path: if an active authenticated session for this exact phone is
+    // already loaded on the device and either no password change is requested
+    // or it matches the remembered password, enter Home immediately without a
+    // redundant Cloud Function sign-in roundtrip.
+    if (!_switchingAccount &&
+        activeSession is SessionAuthenticated &&
+        typedPhone.isNotEmpty &&
+        typedPhone == normalizeEgyptianPhone(activeSession.user.phoneNumber) &&
+        ((_rememberedPassword != null &&
+                _passwordController.text == _rememberedPassword) ||
+            !hasPassword)) {
+      await _enterSavedSession(activeSession);
+      return;
+    }
+
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() {
@@ -361,9 +488,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AsyncValue<SessionState>>(sessionProvider, (_, next) {
+      final session = next.asData?.value;
+      if (session is SessionAuthenticated &&
+          !_switchingAccount &&
+          _phoneController.text.isEmpty) {
+        _phoneController.text = session.user.phoneNumber;
+      }
+    });
+
     final l10n = AppLocalizations.of(context);
     final authState = ref.watch(authProvider);
     final sessionState = ref.watch(sessionProvider);
+    final biometricSupported =
+        ref.watch(biometricSupportedProvider).asData?.value ?? false;
+    final biometricEnabled = ref.watch(biometricLockEnabledProvider);
+    final savedSession = (!_switchingAccount &&
+            sessionState.asData?.value is SessionAuthenticated)
+        ? sessionState.asData!.value as SessionAuthenticated
+        : null;
+    final hasRememberedCreds = (_rememberedPhone?.isNotEmpty ?? false) &&
+        (_rememberedPassword?.isNotEmpty ?? false);
+    final showFaceIdQuickAction = biometricSupported &&
+        biometricEnabled &&
+        (savedSession != null || hasRememberedCreds);
+    final showSavedSessionAction = savedSession != null;
+    final hasQuickAccessRow = showFaceIdQuickAction || showSavedSessionAction;
+
     final isLoading =
         _isSubmitting || authState.isLoading || sessionState.isLoading;
     final authError = authState.hasError
@@ -388,7 +539,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             final backY = heroY + context.rsV(12);
             final titleY = heroY + heroHeight + context.rsV(12);
             final phoneY = titleY + context.rsV(32);
-            final formEstimatedHeight = authError != null ? 240.0 : 208.0;
+            final formEstimatedHeight = 208.0 +
+                (authError != null ? 36.0 : 0.0) +
+                (hasQuickAccessRow ? 56.0 : 0.0);
             final buttonY = isKeyboardOpen
                 ? phoneY + formEstimatedHeight + context.rsV(20)
                 : math.max(
@@ -655,6 +808,112 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ],
                                 ),
                               ),
+                              if (hasQuickAccessRow) ...[
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    if (showFaceIdQuickAction)
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          key: const ValueKey(
+                                            'biometricQuickLoginButton',
+                                          ),
+                                          onPressed: isLoading
+                                              ? null
+                                              : () => _quickFaceIdLogin(
+                                                    savedSession: savedSession,
+                                                  ),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: semantic.primary,
+                                            side: BorderSide(
+                                              color: semantic.primary,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 10,
+                                            ),
+                                          ),
+                                          icon: const Icon(
+                                            Icons.face_rounded,
+                                            size: 18,
+                                          ),
+                                          label: const Text(
+                                            'الدخول بـ Face ID',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    else if (savedSession != null)
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          key: const ValueKey(
+                                            'savedSessionContinueButton',
+                                          ),
+                                          onPressed: isLoading
+                                              ? null
+                                              : () => _enterSavedSession(
+                                                    savedSession,
+                                                  ),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: semantic.primary,
+                                            side: BorderSide(
+                                              color: semantic.primary,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 10,
+                                            ),
+                                          ),
+                                          icon: const Icon(
+                                            Icons.bolt_rounded,
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            'دخول سريع (${savedSession.user.fullName.split(' ').first})',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    if (savedSession != null) ...[
+                                      const SizedBox(width: 8),
+                                      TextButton(
+                                        key: const ValueKey(
+                                          'switchAccountButton',
+                                        ),
+                                        onPressed: isLoading
+                                            ? null
+                                            : _switchToAnotherAccount,
+                                        child: Text(
+                                          'حساب آخر',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: semantic.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
                               if (authError != null) ...[
                                 const SizedBox(height: 12),
                                 Text(

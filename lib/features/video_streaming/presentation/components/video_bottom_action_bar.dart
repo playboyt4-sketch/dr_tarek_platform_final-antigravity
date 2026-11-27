@@ -210,33 +210,34 @@ class VideoBottomActionBar extends StatelessWidget {
 
   Widget _buildDownloadToolBtn(BuildContext context) {
     if (isDownloading) {
-      final percentage = (downloadProgress * 100).toInt();
+      final clamped = downloadProgress.clamp(0.01, 1.0);
+      final percentage = (clamped * 100).round().clamp(1, 100);
       return GestureDetector(
         onTap: onDownloadTap,
         behavior: HitTestBehavior.opaque,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: context.rsFont(16),
-              height: context.rsFont(16),
-              child: CircularProgressIndicator(
-                value: downloadProgress > 0 ? downloadProgress : null,
-                strokeWidth: 2,
+        child: SizedBox(
+          width: context.rsFont(34),
+          height: context.rsFont(34),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: clamped,
+                strokeWidth: 2.5,
+                backgroundColor: Colors.white.withValues(alpha: 0.24),
                 color: Colors.white,
               ),
-            ),
-            SizedBox(width: context.rs(6)),
-            Text(
-              downloadProgress > 0 ? '$percentage%' : 'Downloading',
-              style: TextStyle(
-                fontFamily: AppFontFamilies.googleSansFlex,
-                color: Colors.white,
-                fontSize: context.rsFont(13),
-                fontWeight: FontWeight.w600,
+              Text(
+                '$percentage%',
+                style: TextStyle(
+                  fontFamily: AppFontFamilies.googleSansFlex,
+                  color: Colors.white,
+                  fontSize: context.rsFont(9),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }

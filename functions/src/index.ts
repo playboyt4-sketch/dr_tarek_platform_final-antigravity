@@ -6184,14 +6184,29 @@ export const getSectionDisplayMedia = onCall({
         );
       let thumbnailUrl = (docThumb && docThumb.length > 0) ? docThumb : null;
       let previewUrl: string | null = null;
+      const rawDuration =
+        getNumber(lectureData.duration_seconds) ??
+        getNumber(lectureData.durationSeconds) ??
+        getNumber(lectureData.video_duration) ??
+        getNumber(lectureData.duration) ??
+        (firstVideoDoc
+          ? (getNumber(firstVideoDoc.duration_seconds) ??
+             getNumber(firstVideoDoc.durationSeconds) ??
+             getNumber(firstVideoDoc.video_duration) ??
+             getNumber(firstVideoDoc.duration) ??
+             getNumber(firstVideoDoc.length_seconds) ??
+             getNumber(firstVideoDoc.length))
+          : null);
+      const durationSeconds =
+        rawDuration != null && rawDuration > 0 ? Math.round(rawDuration) : null;
       if (firstVideoDoc) {
         const media = await resolveVideoDisplayMedia(firstVideoDoc);
         if (!thumbnailUrl) thumbnailUrl = media.thumbnailUrl;
         previewUrl = media.previewUrl;
       }
-      return {lectureId: ldoc.id, thumbnailUrl, previewUrl};
+      return {lectureId: ldoc.id, thumbnailUrl, previewUrl, durationSeconds};
     } catch {
-      return {lectureId: ldoc.id, thumbnailUrl: null, previewUrl: null};
+      return {lectureId: ldoc.id, thumbnailUrl: null, previewUrl: null, durationSeconds: null};
     }
   }));
   return {items};

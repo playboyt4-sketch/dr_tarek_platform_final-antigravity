@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../subject_navigation/domain/entities/subject_learning_entities.dart';
+import '../../../subject_navigation/presentation/providers/subject_navigation_providers.dart';
+import '../../../subject_navigation/presentation/widgets/lecture_download_button.dart';
 import '../../../student_dashboard/presentation/providers/dashboard_providers.dart';
 import '../../../authentication/presentation/providers/auth_provider.dart';
 import '../../../bookmarks/presentation/providers/bookmarks_providers.dart';
@@ -247,6 +249,19 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
         final watermarkText = (phone != null && phone.isNotEmpty)
             ? phone
             : _controller!.userId;
+        final resolvedDuration = _controller!.duration;
+        if (resolvedDuration > Duration.zero) {
+          final lectureId = _controller!.lectureId;
+          final cached = ref.read(lectureResolvedDurationProvider)[lectureId];
+          if (cached != resolvedDuration) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              ref
+                  .read(lectureResolvedDurationProvider.notifier)
+                  .record(lectureId, resolvedDuration);
+            });
+          }
+        }
         final downloadState = ref.watch(
               videoDownloadControllerProvider.select(
                 (map) => map[_controller!.lectureId],
@@ -431,6 +446,14 @@ class _VideoStreamingScreenState extends ConsumerState<VideoStreamingScreen>
           preferredQuality: controller.selectedQuality,
         );
     if (!mounted) return;
+    if (outcome.requiresUpgrade) {
+      await showDownloadUpgradeSheet(
+        context,
+        title: currentLecture.title,
+        currentPlanLabel: outcome.currentPlanLabel,
+      );
+      return;
+    }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(outcome.message)));
