@@ -7,6 +7,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_semantic_colors.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../admin/domain/admin_grades.dart';
+import '../../data/services/registration_device_info_resolver.dart';
 import 'new_student_password_screen.dart';
 
 /// Presentation details for one grade row.
@@ -143,6 +144,9 @@ class _NewStudentGradeScreenState extends State<NewStudentGradeScreen> {
     // Restore a previously selected grade when returning via Back.
     // normalizeAdminGradeKey keeps validation in the existing domain layer.
     _selectedGradeKey = normalizeAdminGradeKey(widget.initialGrade);
+    // Warm up deviceId/FCM token in the background while the student selects
+    // their grade and enters a password so final submission is instant.
+    RegistrationDeviceInfo.preWarm();
   }
 
   /// Teacher request: no "Next" button on this screen — tapping a capsule

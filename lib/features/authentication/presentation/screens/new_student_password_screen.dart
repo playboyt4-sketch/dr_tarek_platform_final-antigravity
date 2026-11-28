@@ -115,6 +115,12 @@ class _NewStudentPasswordScreenState
   bool _submitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    RegistrationDeviceInfo.preWarm();
+  }
+
+  @override
   void dispose() {
     _passwordController.dispose();
     _confirmController.dispose();
@@ -200,7 +206,7 @@ class _NewStudentPasswordScreenState
     try {
       pushInfo = RegistrationDeviceInfo.cached ??
           await RegistrationDeviceInfo.resolve().timeout(
-            const Duration(seconds: 4),
+            const Duration(milliseconds: 1200),
             onTimeout: () => const RegistrationDeviceInfo(),
           );
     } catch (_) {

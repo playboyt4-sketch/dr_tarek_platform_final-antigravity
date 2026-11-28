@@ -5,6 +5,7 @@ import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/entities/join_application.dart';
 import '../../../applications/domain/grade.dart';
 import '../../domain/live_student.dart';
+import 'live_users_streams.dart';
 
 /// One row of the grade pending-requests table.
 class PendingRequestRow {
@@ -93,13 +94,14 @@ Future<List<PendingRequestRow>> _fetchLive(
   String gradeKey,
 ) async {
   final FirebaseFirestore db = ref.watch(firebaseFirestoreProvider);
-
-  final QuerySnapshot<Map<String, dynamic>> snap = await db
-      .collection('users')
-      .where('role', isEqualTo: 'new_student')
-      .where('approval_status', isEqualTo: 'pending')
-      .limit(500)
-      .get();
+  final QuerySnapshot<Map<String, dynamic>> snap = await watchQuerySnapshot(
+    ref,
+    db
+        .collection('users')
+        .where('role', isEqualTo: 'new_student')
+        .where('approval_status', isEqualTo: 'pending')
+        .limit(500),
+  );
 
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs =
       <QueryDocumentSnapshot<Map<String, dynamic>>>[
@@ -111,13 +113,30 @@ Future<List<PendingRequestRow>> _fetchLive(
 
   if (docs.isEmpty) return <PendingRequestRow>[];
 
+  // Show newest registration requests at the top of the table.
+  docs.sort((a, b) {
+    final DateTime? aTime = (a.data()['created_at'] as Timestamp?)?.toDate();
+    final DateTime? bTime = (b.data()['created_at'] as Timestamp?)?.toDate();
+    if (aTime == null && bTime == null) return 0;
+    if (aTime == null) return 1;
+    if (bTime == null) return -1;
+    return bTime.compareTo(aTime);
+  });
+
   final Set<String> deviceIds = <String>{
     for (final doc in docs)
       if (doc.data()['device_id'] is String)
         (doc.data()['device_id'] as String),
   };
-  final Map<String, String> deviceLabels =
-      await _fetchDeviceLabels(db, deviceIds);
+  Map<String, String> deviceLabels = const <String, String>{};
+  if (deviceIds.isNotEmpty) {
+    try {
+      deviceLabels = await _fetchDeviceLabels(db, deviceIds);
+    } catch (_) {
+      // Best-effort: device metadata lookup failure must never hide pending
+      // registration requests from the dashboard table.
+    }
+  }
 
   return <PendingRequestRow>[
     for (final doc in docs)

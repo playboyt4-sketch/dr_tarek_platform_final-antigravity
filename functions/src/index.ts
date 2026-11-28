@@ -1595,12 +1595,14 @@ async function notifyAdminsWithPermission(
   body: string,
   options: Record<string, unknown> = {},
 ) {
-  await notifyUsersByRole("doctor", type, title, body, options);
+  const [, permissionsSnap] = await Promise.all([
+    notifyUsersByRole("doctor", type, title, body, options),
+    db.collection("admin_permissions")
+      .where("is_active", "==", true)
+      .get(),
+  ]);
 
-  const permissionsSnap = await db.collection("admin_permissions")
-    .where("is_active", "==", true)
-    .get();
-
+  const adminTasks: Promise<unknown>[] = [];
   for (const permDoc of permissionsSnap.docs) {
     const data = permDoc.data();
     const permissions = data.permissions;
@@ -1608,8 +1610,11 @@ async function notifyAdminsWithPermission(
       permissions &&
       (permissions[permissionKey] === true)
     ) {
-      await createNotification(permDoc.id, type, title, body, options);
+      adminTasks.push(createNotification(permDoc.id, type, title, body, options));
     }
+  }
+  if (adminTasks.length > 0) {
+    await Promise.allSettled(adminTasks);
   }
 }
 
@@ -2236,6 +2241,7 @@ async function resolveSubscriptionPeriodBinding(): Promise<{
 }
 
 export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
+  const startedAt = Date.now();
   const fullName = getString(request.data?.fullName);
   const phone = normalizeEgyptianPhone(request.data?.phoneNumber);
   const rawGrade = getString(request.data?.grade);
@@ -2290,13 +2296,20 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
   }
 
   // Soft-deleted (deactivated) accounts release their phone number: only a
-  // live account blocks reuse. See findLiveUserByPhone.
-  const existing = await findLiveUserByPhone(phone);
+  // live account blocks reuse. Run the pre-check and password scrypt in
+  // parallel to minimize registration latency.
+  const [existing, passwordHash] = await Promise.all([
+    findLiveUserByPhone(phone),
+    hashPassword(password),
+  ]);
   if (existing) {
+    console.warn("[registerNewStudent] rejected duplicate phone", {
+      grade,
+      elapsedMs: Date.now() - startedAt,
+    });
     throw new HttpsError("already-exists", "An account with this phone number already exists.");
   }
 
-  const passwordHash = await hashPassword(password);
   let authUser: Awaited<ReturnType<typeof auth.createUser>> | null = null;
 
   try {
@@ -2370,25 +2383,6 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
         ...(lockSnap.exists ? {} : {created_at: now}),
       }, {merge: true});
     });
-
-    await writeAnalyticsEvent(authUser.uid, "Registration Submitted", authUser.uid, {
-      phone_number: phone,
-      grade,
-      custom_group_id: customGroupId ?? null,
-      approval_status: "pending",
-    }, request);
-    await notifyAdminsWithPermission(
-      "admin_students",
-      "registration",
-      "New registration request",
-      `${fullName} submitted a new student registration request.`,
-      {priority: "normal"},
-    );
-
-    return {
-      userId: authUser.uid,
-      approvalStatus: "pending",
-    };
   } catch (error) {
     if (authUser) {
       await auth.deleteUser(authUser.uid).catch(() => undefined);
@@ -2401,9 +2395,53 @@ export const registerNewStudent = onCall(SECURE_CALL_OPTS, async (request) => {
         }
       }
     }
+    console.warn("[registerNewStudent] registration failed", {
+      grade,
+      code: error instanceof HttpsError ? error.code : "internal",
+      elapsedMs: Date.now() - startedAt,
+    });
     if (error instanceof HttpsError) throw error;
     throw new HttpsError("internal", "Registration could not be completed.");
   }
+
+  // Post-commit side effects run in parallel OUTSIDE the rollback try/catch
+  // so an analytics or FCM notification hiccup can never roll back or delete
+  // a committed student account, and never adds sequential latency.
+  await Promise.allSettled([
+    writeAnalyticsEvent(authUser.uid, "Registration Submitted", authUser.uid, {
+      phone_number: phone,
+      grade,
+      custom_group_id: customGroupId ?? null,
+      approval_status: "pending",
+    }, request).catch((err) => {
+      console.warn("[registerNewStudent] analytics write failed", {
+        grade,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }),
+    notifyAdminsWithPermission(
+      "admin_students",
+      "registration",
+      "New registration request",
+      `${fullName} submitted a new student registration request.`,
+      {priority: "normal"},
+    ).catch((err) => {
+      console.warn("[registerNewStudent] admin notification failed", {
+        grade,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }),
+  ]);
+
+  console.info("[registerNewStudent] registration succeeded", {
+    grade,
+    elapsedMs: Date.now() - startedAt,
+  });
+
+  return {
+    userId: authUser.uid,
+    approvalStatus: "pending",
+  };
 });
 
 const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_\-+=[\]/\\`~]).{8,}$/;

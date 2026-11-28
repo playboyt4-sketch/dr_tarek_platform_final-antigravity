@@ -7,6 +7,7 @@ import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/grade.dart';
 import '../../../students/data/mock_students.dart';
 import '../../../students/domain/live_student.dart';
+import '../../../students/presentation/providers/live_users_streams.dart';
 
 /// Live platform counters shown on the dashboard home "Analytics &
 /// Reports" section (Figma frame 457:421 — the crypto artwork there is a
@@ -31,11 +32,18 @@ class HomeStats {
 final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
   final FirebaseFirestore db = ref.watch(firebaseFirestoreProvider);
 
-  final studentSnap = await db
-      .collection('users')
-      .where('role', whereIn: <String>['student', 'new_student'])
-      .limit(5000)
-      .get();
+  final approvedSnap = await watchQuerySnapshot(
+    ref,
+    db.collection('users').where('role', isEqualTo: 'student').limit(5000),
+  );
+  final pendingSnap = await watchQuerySnapshot(
+    ref,
+    db
+        .collection('users')
+        .where('role', isEqualTo: 'new_student')
+        .where('approval_status', isEqualTo: 'pending')
+        .limit(500),
+  );
   final subjectsSnap = await db
       .collection('subjects')
       .where('is_deleted', isEqualTo: false)
@@ -46,19 +54,14 @@ final homeStatsProvider = FutureProvider<HomeStats>((ref) async {
       .count()
       .get();
 
-  // Aggregation counts cannot express `is_deleted != true &&
-  // account_status != 'disabled'` without a composite index, and the totals
-  // must never include soft-deleted or disabled records. One indexed
-  // role-filtered read plus the canonical client-side live filter is the
-  // same discipline the grade lists use.
   int students = 0;
+  for (final doc in approvedSnap.docs) {
+    if (isLiveStudent(doc.data())) students++;
+  }
   int pending = 0;
-  for (final doc in studentSnap.docs) {
-    final Map<String, dynamic> data = doc.data();
-    if (!isLiveStudent(data)) continue;
-    students++;
-    if (data['role'] == 'new_student' &&
-        data['approval_status'] == 'pending') {
+  for (final doc in pendingSnap.docs) {
+    if (isLiveStudent(doc.data())) {
+      students++;
       pending++;
     }
   }
@@ -174,17 +177,18 @@ final homeAnalyticsProvider = FutureProvider<HomeAnalytics>((ref) async {
   if (kUseMockGradeStudents) return _mockHomeAnalytics();
   final FirebaseFirestore db = ref.watch(firebaseFirestoreProvider);
 
-  final approvedSnap = await db
-      .collection('users')
-      .where('role', isEqualTo: 'student')
-      .limit(5000)
-      .get();
-  final pendingSnap = await db
-      .collection('users')
-      .where('role', isEqualTo: 'new_student')
-      .where('approval_status', isEqualTo: 'pending')
-      .limit(5000)
-      .get();
+  final approvedSnap = await watchQuerySnapshot(
+    ref,
+    db.collection('users').where('role', isEqualTo: 'student').limit(5000),
+  );
+  final pendingSnap = await watchQuerySnapshot(
+    ref,
+    db
+        .collection('users')
+        .where('role', isEqualTo: 'new_student')
+        .where('approval_status', isEqualTo: 'pending')
+        .limit(5000),
+  );
 
   final Map<String, int> totals = <String, int>{};
   final Map<String, int> centers = <String, int>{};

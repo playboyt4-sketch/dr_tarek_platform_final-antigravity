@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:drtarek_dashboard/core/di/firebase_providers.dart';
+import 'package:drtarek_dashboard/features/home/presentation/providers/home_stats_provider.dart';
 import 'package:drtarek_dashboard/features/students/presentation/providers/grade_pending_requests_provider.dart';
 
 /// Provider contract: live Firestore rows only. An empty queue yields an
@@ -80,6 +81,61 @@ void main() {
       expect(rows.first.application.phone, '01000000009');
       expect(rows.first.deviceLabel, 'Pixel 8');
       expect(rows.first.requestDate, '1/9/2026');
+    });
+
+    test(
+        'auto-updates grade_three pending requests and home analytics in real time without manual refresh',
+        () async {
+      final FakeFirebaseFirestore fake = FakeFirebaseFirestore();
+      final ProviderContainer container = ProviderContainer(
+        overrides: [
+          firebaseFirestoreProvider.overrideWithValue(fake),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      // Keep providers subscribed just like an open Dashboard screen.
+      final subPending = container.listen(
+        gradePendingRequestsProvider('grade_three'),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      final subAnalytics = container.listen(
+        homeAnalyticsProvider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subPending.close);
+      addTearDown(subAnalytics.close);
+
+      final initialRows =
+          await container.read(gradePendingRequestsProvider('grade_three').future);
+      expect(initialRows, isEmpty);
+
+      // Simulate a Grade 3 student registering while the Dashboard stays open.
+      await fake.collection('users').add(<String, dynamic>{
+        'role': 'new_student',
+        'approval_status': 'pending',
+        'grade': 'grade_three',
+        'full_name': 'طالب الفرقة الثالثة',
+        'phone_number': '01099887766',
+        'is_deleted': false,
+        'account_status': 'active',
+        'created_at': Timestamp.fromDate(DateTime(2026, 11, 28, 10, 0)),
+      });
+
+      // Allow Firestore stream + Riverpod recomputation to settle (no invalidate!).
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final updatedRows =
+          await container.read(gradePendingRequestsProvider('grade_three').future);
+      expect(updatedRows, hasLength(1));
+      expect(updatedRows.first.application.fullName, 'طالب الفرقة الثالثة');
+
+      final analytics = await container.read(homeAnalyticsProvider.future);
+      final gradeThree =
+          analytics.grades.firstWhere((g) => g.gradeKey == 'grade_three');
+      expect(gradeThree.pending, 1);
     });
   });
 }

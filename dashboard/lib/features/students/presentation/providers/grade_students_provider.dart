@@ -5,6 +5,7 @@ import '../../../../core/di/firebase_providers.dart';
 import '../../../applications/domain/grade.dart';
 import '../../data/mock_students.dart';
 import '../../domain/live_student.dart';
+import 'live_users_streams.dart';
 import 'student_profile_subjects_provider.dart'
     show
         extractSubscriptionPlanId,
@@ -222,17 +223,18 @@ final gradeStudentsProvider = FutureProvider.family<GradeStudentsData, String>(
 Future<GradeStudentsData> _fetchLive(Ref ref, String gradeKey) async {
   final FirebaseFirestore db = ref.watch(firebaseFirestoreProvider);
 
-  final approvedSnap = await db
-      .collection('users')
-      .where('role', isEqualTo: 'student')
-      .limit(5000)
-      .get();
-  final pendingSnap = await db
-      .collection('users')
-      .where('role', isEqualTo: 'new_student')
-      .where('approval_status', isEqualTo: 'pending')
-      .limit(5000)
-      .get();
+  final approvedSnap = await watchQuerySnapshot(
+    ref,
+    db.collection('users').where('role', isEqualTo: 'student').limit(5000),
+  );
+  final pendingSnap = await watchQuerySnapshot(
+    ref,
+    db
+        .collection('users')
+        .where('role', isEqualTo: 'new_student')
+        .where('approval_status', isEqualTo: 'pending')
+        .limit(5000),
+  );
 
   final List<GradeStudent> students = <GradeStudent>[];
   for (final doc in approvedSnap.docs) {
