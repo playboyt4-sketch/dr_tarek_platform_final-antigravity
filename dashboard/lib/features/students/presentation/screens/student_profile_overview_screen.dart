@@ -12,6 +12,7 @@ import '../../../archive/presentation/widgets/archive_confirm_dialog.dart';
 import '../providers/grade_students_provider.dart';
 import '../providers/student_profile_grade_provider.dart';
 import 'grade_students_screen.dart' show gradeAccent;
+import 'student_profile_activity_tab.dart';
 import 'student_profile_memberships_tab.dart';
 import 'student_profile_payments_tab.dart';
 import 'student_profile_device_tab.dart';
@@ -102,6 +103,7 @@ class _StudentProfileOverviewScreenState
     extends ConsumerState<StudentProfileOverviewScreen> {
   static const List<String> navItems = <String>[
     'Overview',
+    'Activity',
     'Subjects',
     'Memberships',
     'Payments',
@@ -137,7 +139,8 @@ class _StudentProfileOverviewScreenState
     super.initState();
     _gradeKey = GradeTheme.fromKey(widget.gradeKey).gradeId;
     _isCenter = widget.student.isCenter;
-    _nav = widget.initialNav == 'Subjects' ||
+    _nav = widget.initialNav == 'Activity' ||
+            widget.initialNav == 'Subjects' ||
             widget.initialNav == 'Memberships' ||
             widget.initialNav == 'Payments' ||
             widget.initialNav == 'Device' ||
@@ -181,6 +184,7 @@ class _StudentProfileOverviewScreenState
   /// land.
   void selectNav(String nav) {
     if (nav != 'Overview' &&
+        nav != 'Activity' &&
         nav != 'Subjects' &&
         nav != 'Memberships' &&
         nav != 'Payments' &&
@@ -408,6 +412,12 @@ class _StudentProfileOverviewScreenState
   }
 
   Widget _buildActiveTabBody() {
+    if (_nav == 'Activity') {
+      return StudentProfileActivityTab(
+        student: widget.student,
+        gradeKey: _gradeKey,
+      );
+    }
     if (_nav == 'Subjects') {
       return StudentProfileSubjectsTab(
         student: widget.student,
